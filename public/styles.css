@@ -410,3 +410,177 @@ select:focus, textarea:focus {
 
 .loaded-attachments:empty { display: none; }
 .loaded-attachments .attachment .remove { display: none; }
+
+/* ---------- Mobile / responsive ---------- */
+
+/* Mobile drawer affordances (hidden on desktop, only visible at <=768px) */
+.sidebar-toggle {
+  display: none;
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+/* iOS prevents auto-zoom on focus only if the input font-size is >= 16px.
+   Apply to all interactive form elements regardless of viewport, since users
+   on small laptops can still trigger the zoom-equivalent on touchscreens. */
+@media (max-width: 768px) {
+  select, textarea, button, input {
+    font-size: 16px;
+  }
+
+  /* Collapse the two-column layout to single column. */
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  /* Sidebar becomes an off-canvas drawer, hidden by default, slides in
+     from the left when .layout has .sidebar-open. */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(85vw, 320px);
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease-out;
+    padding-top: calc(1rem + env(safe-area-inset-top));
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+    padding-left: calc(1rem + env(safe-area-inset-left));
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.4);
+  }
+
+  .layout.sidebar-open .sidebar {
+    transform: translateX(0);
+  }
+
+  /* Backdrop covers the workspace when drawer is open; tap to close. */
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 40;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease-out;
+  }
+
+  .layout.sidebar-open .sidebar-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Hamburger button: fixed at top-left, always tappable. */
+  .sidebar-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: calc(0.5rem + env(safe-area-inset-top));
+    left: calc(0.5rem + env(safe-area-inset-left));
+    width: 44px;
+    height: 44px;
+    z-index: 30;
+    background: var(--bg-elev2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 18px;
+    cursor: pointer;
+  }
+
+  /* History items: bigger tap targets, always-visible delete (no hover on touch). */
+  .history-list li {
+    padding: 0.75rem 0.625rem;
+    font-size: 0.9375rem;
+    grid-template-columns: 1fr auto auto;
+  }
+
+  .history-list .delete {
+    opacity: 1;
+    padding: 0 0.5rem;
+    font-size: 1.25rem;
+  }
+
+  .history-list .meta {
+    font-size: 0.75rem;
+  }
+
+  /* Workspace: pull padding in, leave headroom for the hamburger button. */
+  .workspace {
+    padding: 1rem;
+    padding-top: calc(3.5rem + env(safe-area-inset-top));
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+    gap: 0.75rem;
+    grid-template-rows: auto auto auto 1fr;
+    overflow-y: auto;
+  }
+
+  /* Stack the model / system-prompt controls vertically. */
+  .controls {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  /* Buttons in the input area get bigger touch targets. */
+  #attach-btn {
+    padding: 0.625rem 0.875rem;
+    min-height: 44px;
+  }
+
+  #run {
+    padding: 0.625rem 1.25rem;
+    min-height: 44px;
+    font-size: 0.9375rem;
+  }
+
+  #new-chat {
+    padding: 0.5rem 0.875rem;
+    min-height: 36px;
+  }
+
+  /* Image / video frame previews in attachments: a bit smaller on mobile. */
+  .attachment {
+    max-width: 100%;
+    flex: 1 1 auto;
+  }
+
+  /* Generated image output: cap height tighter on mobile so it doesn't push
+     other content off-screen. */
+  .output-image {
+    max-height: 50vh;
+  }
+
+  /* Bottom row may need to wrap if model labels are long. */
+  .bottom-row {
+    flex-wrap: wrap;
+  }
+
+  /* On mobile, the attach hint is often too long; let it shrink to nothing. */
+  .hint {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Output text: bump readability. */
+  .output {
+    font-size: 0.875rem;
+  }
+}
+
+/* Narrower phones: pull more padding. */
+@media (max-width: 420px) {
+  .workspace {
+    padding-left: 0.625rem;
+    padding-right: 0.625rem;
+  }
+
+  .attachment .name {
+    max-width: 120px;
+  }
+}

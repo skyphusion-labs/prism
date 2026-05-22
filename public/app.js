@@ -27,6 +27,9 @@ const attachments       = $("#attachments");
 const loadedAttachments = $("#loaded-attachments");
 const outputArtifactEl  = $("#output-artifact");
 const attachRow         = $("#attach-row");
+const sidebarToggle     = $("#sidebar-toggle");
+const sidebarBackdrop   = $("#sidebar-backdrop");
+const layout            = document.querySelector(".layout");
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
@@ -500,6 +503,17 @@ async function run() {
   }
 }
 
+function closeSidebar() {
+  layout.classList.remove("sidebar-open");
+}
+
+function toggleSidebar() {
+  layout.classList.toggle("sidebar-open");
+}
+
+sidebarToggle.addEventListener("click", toggleSidebar);
+sidebarBackdrop.addEventListener("click", closeSidebar);
+
 historyList.addEventListener("click", (e) => {
   const del = e.target.closest(".delete");
   if (del) {
@@ -508,11 +522,17 @@ historyList.addEventListener("click", (e) => {
     return;
   }
   const li = e.target.closest("li[data-id]");
-  if (li) loadChat(Number(li.dataset.id));
+  if (li) {
+    loadChat(Number(li.dataset.id));
+    closeSidebar();
+  }
 });
 
 runBtn.addEventListener("click", run);
-newChatBtn.addEventListener("click", newChat);
+newChatBtn.addEventListener("click", () => {
+  newChat();
+  closeSidebar();
+});
 
 userInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {

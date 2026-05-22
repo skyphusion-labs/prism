@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.6.0
+
+- Mobile-responsive layout with breakpoints at 768px and 420px
+- Sidebar collapses into a slide-in drawer below 768px; hamburger toggle button fixed at top-left
+- Tap backdrop to close drawer; selecting a history item auto-closes it
+- Touch-friendly button sizes (44px minimum height where it matters)
+- Always-visible delete button on history items in mobile (no hover available on touch)
+- 16px input font to prevent iOS focus auto-zoom
+- `viewport-fit=cover` and `env(safe-area-inset-*)` padding for notched iPhones
+- Workspace padding pulls in on narrow phones (<420px)
+- Generated image output capped at 50vh on mobile (was 60vh) so other UI stays visible
+
 ## v0.5.0
 
 - Add Google Gemini models (Gemini 3.5 Flash, Gemini 3.1 Pro, Gemini 3.1 Flash, Gemini 2.5 Pro) via BYOK
