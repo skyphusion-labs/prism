@@ -620,8 +620,13 @@ async function run() {
     renderAttachments();
     await loadHistory();
 
+    // Clear the input so the next prompt can be typed immediately.
+    // Output, attachments, and system prompt all stay visible.
+    userInput.value = "";
+    userInput.focus();
+
     if (result.status === "pending") {
-      // Async video job; start polling.
+      // Async video / music job; start polling.
       startPolling(result.id, result.job_started_at);
     } else {
       output.textContent = result.output || "";

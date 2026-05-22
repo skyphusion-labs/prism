@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.7.4
+
+- Clear the user-input box and refocus it after a successful submit so the next prompt can be typed immediately. Output, attachments, and system prompt all remain visible.
+
 ## v0.7.3
 
 - Rename `Image gen` / `Music gen` / `Video gen` group labels to title case (`Image Gen` / `Music Gen` / `Video Gen`) for visual consistency in the model dropdown
