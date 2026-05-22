@@ -341,7 +341,54 @@ npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE ch
 npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN job_started_at TEXT"
 ```
 
+For v0.8.0 (RAG Pass 1), create the Vectorize index and apply the new tables. Run the full `schema.sql` against the remote D1 (the `CREATE TABLE IF NOT EXISTS` lines for `documents` and `chunks` will create them without touching `chats`):
+
+```
+npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
+npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
+```
+
 Then redeploy. Old rows default to `status='done'` so they render unchanged. Add the same statements with `--local` instead of `--remote` if you also have a local D1 instance to update.
+
+## Retrieval-Augmented Generation
+
+Pass 1 built the ingestion pipeline; Pass 2 wires it into chat. Upload `.txt` or `.md` files via the sidebar; the worker chunks them (~500 chars with 50-char overlap), embeds each chunk via `@cf/baai/bge-base-en-v1.5` (768-dim, free Workers AI), and upserts to a Vectorize index. Chunks are also stored in D1 keyed by their Vectorize vector_id so retrieval can look up source text from a vector hit.
+
+### Using docs in a chat
+
+Pick any chat model, check the "use my docs" box that appears next to the run button (only visible when you have at least one document uploaded), and hit Run. The worker embeds your prompt, queries Vectorize for the top 5 nearest chunks, looks up their text in D1, and folds them into the system prompt before calling the LLM.
+
+The retrieved chunks appear above the model's response with filename, chunk index, and similarity score, so you can see exactly what context was used. Click the score row to expand the chunk's full text. The retrieved context is persisted with the chat row, so reloading from history shows the same chunks.
+
+### Setup (one-time, before deploying v0.8.x for the first time)
+
+```
+# Create the Vectorize index (768 dimensions for BGE-base, cosine similarity)
+npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
+
+# Create the new D1 tables (documents + chunks) and add the retrieved_context column
+npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
+```
+
+### Pass 2 migration (if upgrading from v0.8.0)
+
+The `chats` table gained a `retrieved_context TEXT` column. Apply it with:
+
+```
+npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN retrieved_context TEXT"
+```
+
+The `VEC` binding is already in `wrangler.toml`. Redeploy after these commands.
+
+### Constraints
+
+- File types: `.txt`, `.md`, `.markdown` only. PDF support is a follow-on.
+- Max file size: 5MB per upload.
+- Knowledge base is per-user (scoped by `Cf-Access-Authenticated-User-Email`). All your uploaded docs are one corpus.
+- Retrieval default: top-K = 5 chunks. Change `RETRIEVE_TOP_K` in the worker if you want more or fewer.
+- Chunks store the raw text in D1. R2 keeps the original file too for audit and potential re-processing on a future model swap.
+- Deleting a document cleans up: vector IDs in Vectorize, chunk rows in D1, the document row in D1, and the original file in R2.
+- The "use my docs" toggle is only sent on chat models (image/tts/video/stt/music ignore it).
 
 ## Local type check
 

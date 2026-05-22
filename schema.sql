@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS chats (
   job_id            TEXT,
   job_provider      TEXT,
   job_error         TEXT,
-  job_started_at    TEXT
+  job_started_at    TEXT,
+  retrieved_context TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_chats_user_created
@@ -46,3 +47,43 @@ CREATE INDEX IF NOT EXISTS idx_chats_user_created
 
 CREATE INDEX IF NOT EXISTS idx_chats_pending
   ON chats(status, user_email) WHERE status = 'pending';
+
+-- ---------- RAG: documents and chunks ----------
+--
+-- A document is one user-uploaded file (.txt or .md). Its raw bytes live
+-- in R2 under the in/ prefix; this row tracks metadata. A document is
+-- chunked at upload time and each chunk gets embedded and stored in
+-- Vectorize. chunk rows link D1 text to Vectorize vector IDs so we can
+-- do vector -> text lookups at retrieval time.
+--
+-- D1 doesn't honor PRAGMA foreign_keys, so the FK relationship below is
+-- documentation only; the application code handles cascade-on-delete.
+
+CREATE TABLE IF NOT EXISTS documents (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_email      TEXT NOT NULL,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  filename        TEXT NOT NULL,
+  mime            TEXT NOT NULL,
+  r2_key          TEXT NOT NULL,
+  size_bytes      INTEGER NOT NULL,
+  total_chars     INTEGER NOT NULL DEFAULT 0,
+  chunk_count     INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_documents_user_created
+  ON documents(user_email, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS chunks (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id     INTEGER NOT NULL,
+  user_email      TEXT NOT NULL,
+  chunk_index     INTEGER NOT NULL,
+  text            TEXT NOT NULL,
+  vector_id       TEXT NOT NULL,
+  FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_doc    ON chunks(document_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_vector ON chunks(vector_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_user   ON chunks(user_email);

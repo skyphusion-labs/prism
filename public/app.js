@@ -27,6 +27,9 @@ const attachments       = $("#attachments");
 const loadedAttachments = $("#loaded-attachments");
 const outputArtifactEl  = $("#output-artifact");
 const attachRow         = $("#attach-row");
+const retrievedChunksEl = $("#retrieved-chunks");
+const useDocsRow        = $("#use-docs-row");
+const useDocsCheckbox   = $("#use-docs");
 const sidebarToggle     = $("#sidebar-toggle");
 const sidebarBackdrop   = $("#sidebar-backdrop");
 const layout            = document.querySelector(".layout");
@@ -47,6 +50,7 @@ const state = {
   pollChatId: null,
   pollStartedAt: 0,
   pollElapsedTimer: null,
+  documentCount: 0,  // tracks whether to show the "use my docs" toggle
 };
 
 // ---------- API helpers ----------
@@ -127,6 +131,10 @@ function updateAffordance() {
   const m = currentModel();
   if (!m) return;
 
+  // Default: hide the use-docs toggle. The chat branch turns it on when
+  // the user has uploaded at least one document.
+  useDocsRow.hidden = true;
+
   if (m.type === "image") {
     systemPromptLabel.textContent = "negative prompt";
     systemPrompt.placeholder = "things to avoid in the image (optional)";
@@ -185,6 +193,9 @@ function updateAffordance() {
       attachHint.textContent = "audio only (pick a vision-capable chat model for image/video)";
       attachHint.classList.add("warn");
     }
+    // RAG: show the toggle only when chat is selected AND the user has
+    // uploaded at least one document. Without docs there's nothing to retrieve.
+    useDocsRow.hidden = state.documentCount === 0;
   }
 }
 
@@ -410,6 +421,34 @@ function renderOutputArtifact(oa) {
   }
 }
 
+// Render the retrieved-chunks block that appears above the model's text
+// output when RAG was used for this turn. Pass null to clear.
+function renderRetrievedChunks(chunks) {
+  if (!chunks || chunks.length === 0) {
+    retrievedChunksEl.innerHTML = "";
+    retrievedChunksEl.style.display = "none";
+    return;
+  }
+  retrievedChunksEl.style.display = "block";
+  const items = chunks
+    .map((c, i) => {
+      const score = (typeof c.score === "number") ? c.score.toFixed(3) : "?";
+      return `
+        <details class="retrieved-chunk">
+          <summary>
+            <span class="rc-num">${i + 1}.</span>
+            <span class="rc-file">${escapeHtml(c.filename || "?")}</span>
+            <span class="rc-meta">chunk ${c.chunk_index} \u00b7 score ${score}</span>
+          </summary>
+          <pre class="rc-text">${escapeHtml(c.text || "")}</pre>
+        </details>`;
+    })
+    .join("");
+  retrievedChunksEl.innerHTML = `
+    <div class="rc-header">retrieved context (${chunks.length} chunk${chunks.length === 1 ? "" : "s"})</div>
+    ${items}`;
+}
+
 // ---------- Video job polling ----------
 //
 // When the worker returns status: "pending" from /api/chat (video models),
@@ -553,6 +592,7 @@ async function loadChat(id) {
     .map((att) => renderStoredAttachment(att))
     .join("");
   renderOutputArtifact(chat.output_artifact);
+  renderRetrievedChunks(chat.retrieved_context || null);
 
   // Resume polling if this chat is a still-pending async job (video or music).
   if (chat.status === "pending" && (chat.model_type === "video" || chat.model_type === "music")) {
@@ -580,6 +620,7 @@ function newChat() {
   renderAttachments();
   loadedAttachments.innerHTML = "";
   renderOutputArtifact(null);
+  renderRetrievedChunks(null);
   userInput.focus();
 }
 
@@ -604,16 +645,24 @@ async function run() {
   output.classList.remove("error");
   outputMeta.textContent = "";
   renderOutputArtifact(null);
+  renderRetrievedChunks(null);
 
   try {
+    const requestBody = {
+      model,
+      system_prompt,
+      user_input: user_input || "(no text, attachments only)",
+      attachments: (m.type === "chat" || m.type === "stt") ? state.pendingAttachments : [],
+    };
+    // RAG: only send the flag for chat models when the user has it toggled on
+    // AND has documents to retrieve from.
+    if (m.type === "chat" && useDocsCheckbox.checked && state.documentCount > 0) {
+      requestBody.use_docs = true;
+    }
+
     const result = await api("/api/chat", {
       method: "POST",
-      body: JSON.stringify({
-        model,
-        system_prompt,
-        user_input: user_input || "(no text, attachments only)",
-        attachments: (m.type === "chat" || m.type === "stt") ? state.pendingAttachments : [],
-      }),
+      body: JSON.stringify(requestBody),
     });
     state.currentChatId = result.id;
     state.pendingAttachments = [];
@@ -629,6 +678,7 @@ async function run() {
       // Async video / music job; start polling.
       startPolling(result.id, result.job_started_at);
     } else {
+      renderRetrievedChunks(result.retrieved_chunks || null);
       output.textContent = result.output || "";
       outputMeta.textContent = fmtMeta(result);
       renderOutputArtifact(result.output_artifact || null);
@@ -684,8 +734,108 @@ userInput.addEventListener("keydown", (e) => {
   try {
     await loadModels();
     await loadHistory();
+    await loadDocuments();
   } catch (err) {
     output.classList.add("error");
     output.textContent = "Failed to initialize: " + err.message;
   }
 })();
+
+// ---------- Documents (RAG Pass 1) ----------
+
+const documentsList = $("#documents-list");
+const docUploadBtn  = $("#doc-upload-btn");
+const docFileInput  = $("#doc-file-input");
+const docStatus     = $("#doc-status");
+
+function fmtDocSize(bytes) {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)}MB`;
+}
+
+async function loadDocuments() {
+  try {
+    const { documents } = await api("/api/documents");
+    state.documentCount = (documents || []).length;
+    documentsList.innerHTML = (documents || [])
+      .map((d) => {
+        const date = new Date(d.created_at.includes("Z") ? d.created_at : d.created_at + "Z");
+        const dateStr = date.toLocaleString(undefined, { month: "numeric", day: "numeric" });
+        return `
+          <li data-id="${d.id}">
+            <span class="doc-name" title="${escapeHtml(d.filename)}">${escapeHtml(d.filename)}</span>
+            <span class="doc-meta">${d.chunk_count} chunks \u00b7 ${fmtDocSize(d.size_bytes)} \u00b7 ${dateStr}</span>
+            <button class="delete" data-doc-delete="${d.id}" type="button" title="delete document">\u00d7</button>
+          </li>`;
+      })
+      .join("");
+    // Re-evaluate whether the "use my docs" toggle should be visible.
+    updateAffordance();
+    // If the user has zero docs, force the checkbox off so a stale check
+    // from a previous session doesn't get sent on the next submit.
+    if (state.documentCount === 0) useDocsCheckbox.checked = false;
+  } catch (err) {
+    docStatus.textContent = "Failed to load documents: " + err.message;
+    docStatus.classList.add("error");
+  }
+}
+
+async function uploadDocument(file) {
+  if (!file) return;
+  const allowedExt = /\.(txt|md|markdown)$/i;
+  if (!allowedExt.test(file.name)) {
+    docStatus.textContent = "Only .txt and .md files are accepted";
+    docStatus.classList.add("error");
+    return;
+  }
+
+  docStatus.classList.remove("error");
+  docStatus.textContent = `Uploading ${file.name}\u2026`;
+
+  try {
+    const dataUrl = await readAsDataUrl(file);
+    const result = await api("/api/documents", {
+      method: "POST",
+      body: JSON.stringify({
+        filename: file.name,
+        mime: file.type || "text/plain",
+        data: dataUrl,
+      }),
+    });
+    docStatus.textContent = `Uploaded ${result.filename}: ${result.chunk_count} chunks embedded`;
+    await loadDocuments();
+    // Clear status after a few seconds.
+    setTimeout(() => { if (docStatus.textContent.startsWith("Uploaded ")) docStatus.textContent = ""; }, 4000);
+  } catch (err) {
+    docStatus.classList.add("error");
+    docStatus.textContent = `Upload failed: ${err.message}`;
+  }
+}
+
+async function deleteDocument(id) {
+  try {
+    await api(`/api/documents/${id}`, { method: "DELETE" });
+    await loadDocuments();
+  } catch (err) {
+    docStatus.classList.add("error");
+    docStatus.textContent = `Delete failed: ${err.message}`;
+  }
+}
+
+docUploadBtn.addEventListener("click", () => docFileInput.click());
+docFileInput.addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  if (file) await uploadDocument(file);
+  docFileInput.value = "";  // allow re-uploading the same filename
+});
+
+documentsList.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-doc-delete]");
+  if (btn) {
+    const id = Number(btn.dataset.docDelete);
+    if (confirm("Delete this document and all its chunks? This cannot be undone.")) {
+      deleteDocument(id);
+    }
+  }
+});

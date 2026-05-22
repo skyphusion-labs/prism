@@ -21,6 +21,14 @@ database_id = "PLACEHOLDER_RUN_wrangler_d1_create_THEN_PASTE_HERE"
 binding = "R2"
 bucket_name = "skyphusion-llm-public"
 
+# Vectorize index for RAG document embeddings. 768 dimensions matches
+# @cf/baai/bge-base-en-v1.5; cosine similarity.
+# Create with:
+#   npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
+[[vectorize]]
+binding = "VEC"
+index_name = "skyphusion-llm-vec"
+
 # Static frontend (HTML, CSS, JS).
 [assets]
 directory = "./public"

@@ -36,6 +36,7 @@ interface Env {
   AI: Ai;
   DB: D1Database;
   R2: R2Bucket;
+  VEC: VectorizeIndex;
   ASSETS: Fetcher;
   GATEWAY_ID: string;
   ANTHROPIC_API_KEY?: string; // optional; preferred is to store in AI Gateway dashboard
@@ -180,6 +181,15 @@ interface ChatRequest {
   system_prompt?: string;
   user_input: string;
   attachments?: InputAttachment[];
+  use_docs?: boolean;   // Pass 2: when true, retrieve top-K chunks from Vectorize and inject as context
+}
+
+interface RetrievedChunk {
+  document_id: number;
+  filename: string;
+  chunk_index: number;
+  text: string;
+  score: number;
 }
 
 interface PersistedImageAttachment {
@@ -292,6 +302,18 @@ export default {
     }
     if (url.pathname === "/api/history" && request.method === "GET") {
       return handleHistoryList(request, env);
+    }
+
+    if (url.pathname === "/api/documents") {
+      if (request.method === "GET")  return handleDocumentList(request, env);
+      if (request.method === "POST") return handleDocumentUpload(request, env);
+    }
+
+    const d = url.pathname.match(/^\/api\/documents\/(\d+)$/);
+    if (d) {
+      const id = Number(d[1]);
+      if (request.method === "GET")    return handleDocumentGet(request, env, id);
+      if (request.method === "DELETE") return handleDocumentDelete(request, env, id);
     }
 
     const h = url.pathname.match(/^\/api\/history\/(\d+)$/);
@@ -409,9 +431,28 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
     ? [{ type: "text", text: userText }, ...imageDataUrls.map((url) => ({ type: "image_url", image_url: { url } }))]
     : userText;
 
+  // ---- RAG retrieval (Pass 2) ----
+  // When body.use_docs is true, embed the user's prompt, fetch top-K chunks
+  // from Vectorize, and fold them into the system prompt so the model sees
+  // them as reference material. We use body.user_input (the textual prompt)
+  // as the query - attachment transcripts could be added but for now this
+  // keeps retrieval signal focused on what the user actually typed.
+  let retrievedChunks: RetrievedChunk[] = [];
+  if (body.use_docs) {
+    retrievedChunks = await retrieveContext(env, userEmail, body.user_input);
+  }
+
+  // Build the effective system prompt: user-supplied prompt followed by
+  // the retrieval block. If only one is present, use that one alone.
+  const userSystemPrompt = body.system_prompt?.trim() ?? "";
+  const retrievalBlock = retrievedChunks.length ? formatRetrievalForSystemPrompt(retrievedChunks) : "";
+  const effectiveSystemPrompt =
+    userSystemPrompt && retrievalBlock ? `${userSystemPrompt}\n\n${retrievalBlock}` :
+    retrievalBlock || userSystemPrompt || "";
+
   const messages: Array<unknown> = [];
-  if (body.system_prompt && body.system_prompt.trim()) {
-    messages.push({ role: "system", content: body.system_prompt });
+  if (effectiveSystemPrompt) {
+    messages.push({ role: "system", content: effectiveSystemPrompt });
   }
   messages.push({ role: "user", content: userContent });
 
@@ -420,7 +461,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
   let logId: string | null = null;
   try {
     if (model.provider === "anthropic") {
-      const r = await callAnthropic(env, model, body.system_prompt, messages);
+      const r = await callAnthropic(env, model, effectiveSystemPrompt || undefined, messages);
       result = r.raw;
       logId = r.logId;
     } else if (model.provider === "xai") {
@@ -428,7 +469,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
       result = r.raw;
       logId = r.logId;
     } else if (model.provider === "google") {
-      const r = await callGoogle(env, model, body.system_prompt, messages);
+      const r = await callGoogle(env, model, effectiveSystemPrompt || undefined, messages);
       result = r.raw;
       logId = r.logId;
     } else {
@@ -457,6 +498,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
     tokens_out: usage.out_,
     latency_ms: latency,
     ai_gateway_log_id: logId,
+    retrieved_context: retrievedChunks.length ? retrievedChunks : null,
   });
 
   return json({
@@ -470,6 +512,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
     latency_ms: latency,
     ai_gateway_log_id: logId,
     transcripts: extraText,
+    retrieved_chunks: retrievedChunks,
   });
 }
 
@@ -828,6 +871,7 @@ interface PersistArgs {
   job_provider?: string | null;
   job_error?: string | null;
   job_started_at?: string | null;
+  retrieved_context?: RetrievedChunk[] | null;
 }
 
 async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; created_at: string }> {
@@ -836,8 +880,9 @@ async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; crea
        (user_email, model, model_type, system_prompt, user_input, output,
         output_artifact, attachments,
         tokens_in, tokens_out, latency_ms, ai_gateway_log_id,
-        status, job_id, job_provider, job_error, job_started_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        status, job_id, job_provider, job_error, job_started_at,
+        retrieved_context)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      RETURNING id, created_at`
   )
     .bind(
@@ -849,7 +894,8 @@ async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; crea
       a.job_id ?? null,
       a.job_provider ?? null,
       a.job_error ?? null,
-      a.job_started_at ?? null
+      a.job_started_at ?? null,
+      a.retrieved_context && a.retrieved_context.length ? JSON.stringify(a.retrieved_context) : null
     )
     .first<{ id: number; created_at: string }>();
   return row ?? { id: 0, created_at: new Date().toISOString() };
@@ -1693,7 +1739,7 @@ async function handleHistoryGet(request: Request, env: Env, id: number): Promise
     `SELECT * FROM chats WHERE id = ? AND user_email = ?`
   )
     .bind(id, userEmail)
-    .first<{ attachments: string | null; output_artifact: string | null }>();
+    .first<{ attachments: string | null; output_artifact: string | null; retrieved_context: string | null }>();
 
   if (!row) return json({ error: "Not found" }, { status: 404 });
 
@@ -1701,6 +1747,7 @@ async function handleHistoryGet(request: Request, env: Env, id: number): Promise
     ...row,
     attachments: row.attachments ? safeParseJson<PersistedAttachment[]>(row.attachments) : null,
     output_artifact: row.output_artifact ? safeParseJson<OutputArtifact>(row.output_artifact) : null,
+    retrieved_context: row.retrieved_context ? safeParseJson<RetrievedChunk[]>(row.retrieved_context) : null,
   });
 }
 
@@ -1749,6 +1796,391 @@ async function handleHistoryDelete(request: Request, env: Env, id: number): Prom
   for (const k of keysToDelete) await r2DeleteSafe(env, k);
 
   return json({ deleted: id, r2_keys_deleted: keysToDelete.length });
+}
+
+// ---------- RAG: document ingestion (Pass 1) ----------
+//
+// Pass 1 supports text/markdown only. Uploaded files are stored in R2,
+// chunked, embedded with @cf/baai/bge-base-en-v1.5 (768-dim), and the
+// resulting vectors are upserted into the Vectorize index. Chunks remain
+// in D1 keyed by their Vectorize vector_id so retrieval can look up the
+// original text from a vector hit.
+//
+// Chunking is character-based with ~50 char overlap. We try to break on
+// natural boundaries (paragraph breaks, then newlines, then sentences)
+// before falling back to a hard cut. Target 500 chars per chunk - small
+// enough that BGE-base does well, large enough that each chunk carries
+// usable context.
+//
+// Pass 2 will add the retrieval injection path into /api/chat. Pass 1
+// only builds the ingestion pipeline so we can validate Vectorize +
+// chunking + embedding end-to-end before touching chat.
+
+const EMBED_MODEL = "@cf/baai/bge-base-en-v1.5";
+const EMBED_DIMENSIONS = 768;
+const CHUNK_TARGET_CHARS = 500;
+const CHUNK_OVERLAP_CHARS = 50;
+const EMBED_BATCH_SIZE = 16;       // BGE accepts batches; 16 keeps requests small
+const DOC_MAX_BYTES = 5 * 1024 * 1024;  // 5MB upload cap
+const ALLOWED_DOC_MIMES = ["text/plain", "text/markdown", "text/x-markdown"];
+
+interface DocumentRow {
+  id: number;
+  user_email: string;
+  created_at: string;
+  filename: string;
+  mime: string;
+  r2_key: string;
+  size_bytes: number;
+  total_chars: number;
+  chunk_count: number;
+}
+
+interface ChunkRow {
+  id: number;
+  document_id: number;
+  user_email: string;
+  chunk_index: number;
+  text: string;
+  vector_id: string;
+}
+
+function chunkText(text: string): string[] {
+  const out: string[] = [];
+  if (!text) return out;
+
+  let pos = 0;
+  while (pos < text.length) {
+    const end = Math.min(pos + CHUNK_TARGET_CHARS, text.length);
+    let cut = end;
+
+    // If we're not at EOF, try to find a natural break in the last 1/3
+    // of the chunk window. Prefer paragraph break > newline > sentence end.
+    if (end < text.length) {
+      const windowStart = pos + Math.floor(CHUNK_TARGET_CHARS * 2 / 3);
+      const window = text.slice(windowStart, end);
+      const para = window.lastIndexOf("\n\n");
+      const nl = window.lastIndexOf("\n");
+      const dot = window.lastIndexOf(". ");
+      if (para >= 0)      cut = windowStart + para + 2;
+      else if (nl >= 0)   cut = windowStart + nl + 1;
+      else if (dot >= 0)  cut = windowStart + dot + 2;
+    }
+
+    const piece = text.slice(pos, cut).trim();
+    if (piece) out.push(piece);
+
+    if (cut >= text.length) break;
+    pos = Math.max(cut - CHUNK_OVERLAP_CHARS, pos + 1);
+  }
+  return out;
+}
+
+async function embedBatch(env: Env, texts: string[]): Promise<number[][]> {
+  if (texts.length === 0) return [];
+  const result = await aiRun(env, EMBED_MODEL, { text: texts }) as {
+    shape?: [number, number];
+    data?: number[][];
+  };
+  if (!result.data || !Array.isArray(result.data)) {
+    throw new Error("Embedding model returned no data array");
+  }
+  return result.data;
+}
+
+// ---------- RAG: retrieval (Pass 2) ----------
+//
+// Embeds the user prompt, queries Vectorize for the top-K nearest chunks,
+// then looks up source text in D1. We filter by user_email in the D1 JOIN
+// (not in the Vectorize filter param) so this works without a metadata
+// index on the Vectorize side - simpler for single-user deployments.
+// Vectorize score ordering is preserved.
+
+const RETRIEVE_TOP_K = 5;
+
+async function retrieveContext(
+  env: Env,
+  userEmail: string,
+  queryText: string,
+  topK: number = RETRIEVE_TOP_K
+): Promise<RetrievedChunk[]> {
+  if (!queryText || !queryText.trim()) return [];
+
+  // 1) Embed the query.
+  let queryVec: number[];
+  try {
+    const vectors = await embedBatch(env, [queryText]);
+    if (vectors.length === 0) return [];
+    queryVec = vectors[0];
+  } catch {
+    return [];
+  }
+
+  // 2) Query Vectorize. No metadata filter - we scope by user in D1 below.
+  let matches: { id: string; score: number }[];
+  try {
+    const q = await env.VEC.query(queryVec, { topK, returnMetadata: false });
+    matches = (q?.matches ?? []).map((m) => ({ id: m.id, score: m.score }));
+  } catch {
+    return [];
+  }
+  if (matches.length === 0) return [];
+
+  // 3) D1 lookup: join chunks to documents, scope by user_email so we
+  // never return another user's chunk even if their vector IDs would
+  // somehow collide.
+  const ids = matches.map((m) => m.id);
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = await env.DB.prepare(
+    `SELECT c.document_id, c.chunk_index, c.text, c.vector_id, d.filename
+       FROM chunks c
+       JOIN documents d ON c.document_id = d.id
+      WHERE c.user_email = ?
+        AND c.vector_id IN (${placeholders})`
+  )
+    .bind(userEmail, ...ids)
+    .all<{ document_id: number; chunk_index: number; text: string; vector_id: string; filename: string }>();
+
+  // 4) Merge scores back in, preserve Vectorize ordering.
+  const byId = new Map((rows.results ?? []).map((r) => [r.vector_id, r]));
+  const scoreById = new Map(matches.map((m) => [m.id, m.score]));
+  const out: RetrievedChunk[] = [];
+  for (const id of ids) {
+    const r = byId.get(id);
+    if (!r) continue;
+    out.push({
+      document_id: r.document_id,
+      filename: r.filename,
+      chunk_index: r.chunk_index,
+      text: r.text,
+      score: scoreById.get(id) ?? 0,
+    });
+  }
+  return out;
+}
+
+function formatRetrievalForSystemPrompt(chunks: RetrievedChunk[]): string {
+  if (chunks.length === 0) return "";
+  const body = chunks
+    .map((c, i) => `[Excerpt ${i + 1}, from ${c.filename} (chunk ${c.chunk_index})]\n${c.text}`)
+    .join("\n\n---\n\n");
+  return [
+    "You have access to the following excerpts from the user's uploaded documents.",
+    "Use them when they are relevant to the user's query. If they don't answer the question,",
+    "say so plainly rather than guessing or hallucinating.",
+    "",
+    body,
+  ].join("\n");
+}
+
+async function handleDocumentList(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const rows = await env.DB.prepare(
+    `SELECT id, created_at, filename, mime, size_bytes, total_chars, chunk_count
+       FROM documents
+      WHERE user_email = ?
+      ORDER BY created_at DESC`
+  )
+    .bind(userEmail)
+    .all<{
+      id: number;
+      created_at: string;
+      filename: string;
+      mime: string;
+      size_bytes: number;
+      total_chars: number;
+      chunk_count: number;
+    }>();
+  return json({ user: userEmail, documents: rows.results ?? [] });
+}
+
+async function handleDocumentGet(request: Request, env: Env, id: number): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const doc = await env.DB.prepare(
+    `SELECT id, created_at, filename, mime, size_bytes, total_chars, chunk_count
+       FROM documents
+      WHERE id = ? AND user_email = ?`
+  )
+    .bind(id, userEmail)
+    .first();
+  if (!doc) return json({ error: "Not found" }, { status: 404 });
+
+  // Include first ~10 chunks for inspection without dumping the whole doc.
+  const chunks = await env.DB.prepare(
+    `SELECT chunk_index, text FROM chunks
+      WHERE document_id = ? AND user_email = ?
+      ORDER BY chunk_index ASC
+      LIMIT 10`
+  )
+    .bind(id, userEmail)
+    .all();
+
+  return json({ document: doc, chunk_preview: chunks.results ?? [] });
+}
+
+async function handleDocumentUpload(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  // Accept JSON { filename, mime, data: base64 } - matches the existing
+  // attachment-upload convention used by the chat path.
+  let body: { filename?: string; mime?: string; data?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const filename = body.filename || "untitled.txt";
+  const mime = body.mime || "text/plain";
+  if (!ALLOWED_DOC_MIMES.includes(mime) && !filename.match(/\.(txt|md|markdown)$/i)) {
+    return json({ error: `Unsupported file type: ${mime}. Only .txt and .md allowed in Pass 1.` }, { status: 400 });
+  }
+  if (!body.data) {
+    return json({ error: "Missing file data" }, { status: 400 });
+  }
+
+  // Decode base64 data URL or raw base64.
+  let bytes: Uint8Array;
+  try {
+    const parsed = body.data.startsWith("data:") ? parseDataUrl(body.data) : null;
+    bytes = parsed ? base64ToBytes(parsed.base64) : base64ToBytes(body.data);
+  } catch (err) {
+    return json({ error: `Bad file data: ${err instanceof Error ? err.message : err}` }, { status: 400 });
+  }
+  if (bytes.length > DOC_MAX_BYTES) {
+    return json({ error: `File too large (${bytes.length} bytes, max ${DOC_MAX_BYTES})` }, { status: 413 });
+  }
+
+  // Decode as UTF-8 text.
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  } catch (err) {
+    return json({ error: `Could not decode as UTF-8: ${err instanceof Error ? err.message : err}` }, { status: 400 });
+  }
+  if (!text.trim()) {
+    return json({ error: "File is empty after decoding" }, { status: 400 });
+  }
+
+  // Chunk
+  const pieces = chunkText(text);
+  if (pieces.length === 0) {
+    return json({ error: "No chunks produced from text" }, { status: 400 });
+  }
+
+  // Store raw bytes in R2 for audit / future re-processing.
+  const r2Key = await r2Put(env, "in", mime, bytes, userEmail);
+
+  // Insert document row first so we have its ID for vector_id generation.
+  const docInsert = await env.DB.prepare(
+    `INSERT INTO documents
+       (user_email, filename, mime, r2_key, size_bytes, total_chars, chunk_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     RETURNING id, created_at`
+  )
+    .bind(userEmail, filename, mime, r2Key, bytes.length, text.length, pieces.length)
+    .first<{ id: number; created_at: string }>();
+  if (!docInsert) {
+    await r2DeleteSafe(env, r2Key);
+    return json({ error: "Failed to insert document row" }, { status: 500 });
+  }
+  const docId = docInsert.id;
+
+  // Embed in batches and upsert to Vectorize. We tag every vector with
+  // user_email + document_id so we can filter on retrieval and clean up on delete.
+  // Vector IDs are scoped: `${userEmail}:${docId}:${chunkIndex}`.
+  const vectorIdsWritten: string[] = [];
+  const chunkRowsToInsert: { chunk_index: number; text: string; vector_id: string }[] = [];
+
+  try {
+    for (let b = 0; b < pieces.length; b += EMBED_BATCH_SIZE) {
+      const batch = pieces.slice(b, b + EMBED_BATCH_SIZE);
+      const vectors = await embedBatch(env, batch);
+      if (vectors.length !== batch.length) {
+        throw new Error(`Embedding batch returned ${vectors.length} vectors for ${batch.length} texts`);
+      }
+
+      const vectorizePayload = batch.map((t, i) => {
+        const idx = b + i;
+        const vid = `${userEmail}:${docId}:${idx}`;
+        chunkRowsToInsert.push({ chunk_index: idx, text: t, vector_id: vid });
+        vectorIdsWritten.push(vid);
+        return {
+          id: vid,
+          values: vectors[i],
+          metadata: {
+            user_email: userEmail,
+            document_id: docId,
+            chunk_index: idx,
+          },
+        };
+      });
+
+      await env.VEC.upsert(vectorizePayload);
+    }
+  } catch (err) {
+    // Rollback: best-effort cleanup of partially-written state.
+    if (vectorIdsWritten.length) {
+      try { await env.VEC.deleteByIds(vectorIdsWritten); } catch { /* swallow */ }
+    }
+    await env.DB.prepare(`DELETE FROM documents WHERE id = ?`).bind(docId).run();
+    await r2DeleteSafe(env, r2Key);
+    const m = err instanceof Error ? err.message : String(err);
+    return json({ error: `Embedding failed: ${m}` }, { status: 502 });
+  }
+
+  // Now write all chunk rows in a single batched D1 statement.
+  if (chunkRowsToInsert.length) {
+    const stmts = chunkRowsToInsert.map((c) =>
+      env.DB.prepare(
+        `INSERT INTO chunks (document_id, user_email, chunk_index, text, vector_id)
+         VALUES (?, ?, ?, ?, ?)`
+      ).bind(docId, userEmail, c.chunk_index, c.text, c.vector_id)
+    );
+    await env.DB.batch(stmts);
+  }
+
+  return json({
+    id: docId,
+    created_at: docInsert.created_at,
+    filename,
+    mime,
+    size_bytes: bytes.length,
+    total_chars: text.length,
+    chunk_count: pieces.length,
+  });
+}
+
+async function handleDocumentDelete(request: Request, env: Env, id: number): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  const doc = await env.DB.prepare(
+    `SELECT r2_key FROM documents WHERE id = ? AND user_email = ?`
+  )
+    .bind(id, userEmail)
+    .first<{ r2_key: string }>();
+  if (!doc) return json({ error: "Not found" }, { status: 404 });
+
+  // Collect vector IDs first so we can clean them out of Vectorize.
+  const chunkRows = await env.DB.prepare(
+    `SELECT vector_id FROM chunks WHERE document_id = ? AND user_email = ?`
+  )
+    .bind(id, userEmail)
+    .all<{ vector_id: string }>();
+
+  const vectorIds = (chunkRows.results ?? []).map((r) => r.vector_id);
+  if (vectorIds.length) {
+    try { await env.VEC.deleteByIds(vectorIds); } catch { /* best effort */ }
+  }
+
+  // Cascade delete in D1 (no real FK enforcement, so explicit) and R2.
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM chunks    WHERE document_id = ? AND user_email = ?`).bind(id, userEmail),
+    env.DB.prepare(`DELETE FROM documents WHERE id          = ? AND user_email = ?`).bind(id, userEmail),
+  ]);
+  await r2DeleteSafe(env, doc.r2_key);
+
+  return json({ deleted: id, vectors_removed: vectorIds.length });
 }
 
 // ---------- Artifact serving ----------
