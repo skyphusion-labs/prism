@@ -262,6 +262,10 @@ function extFromMime(mime: string): string {
   if (m.includes("jpg"))  return "jpg";
   if (m.includes("webp")) return "webp";
   if (m.includes("gif"))  return "gif";
+  if (m.includes("mp4"))  return "mp4";
+  if (m.includes("quicktime")) return "mov";
+  if (m.includes("mov"))  return "mov";
+  if (m.includes("matroska") || m.includes("mkv")) return "mkv";
   if (m.includes("mp3"))  return "mp3";
   if (m.includes("mpeg")) return "mp3";
   if (m.includes("wav"))  return "wav";
@@ -1730,11 +1734,14 @@ async function handleJobPoll(request: Request, env: Env, id: number): Promise<Re
     }
 
     let bytes: Uint8Array;
-    let mime = "video/mp4";
+    // We know this is a video gen result, so force the mime to video/mp4
+    // regardless of what the upstream CDN reports. Many CDNs serve MP4 as
+    // application/octet-stream, which would cause the R2 key to end in .bin
+    // and downloads to save as <uuid>.bin instead of <uuid>.mp4.
+    const mime = "video/mp4";
     try {
       const aresp = await fetch(pollResult.video_url);
       if (!aresp.ok) throw new Error(`Fetch ${aresp.status}`);
-      mime = aresp.headers.get("content-type") || "video/mp4";
       bytes = new Uint8Array(await aresp.arrayBuffer());
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
@@ -2619,8 +2626,14 @@ async function handleArtifact(request: Request, env: Env, key: string): Promise<
     return new Response("Forbidden", { status: 403 });
   }
 
+  // Use the last path segment of the R2 key as a download filename hint, so
+  // <a download> on the client saves with the right extension (mp4/png/etc)
+  // rather than defaulting to .bin or no extension.
+  const filename = key.includes("/") ? key.slice(key.lastIndexOf("/") + 1) : key;
+
   const headers = new Headers();
   headers.set("content-type", obj.httpMetadata?.contentType || "application/octet-stream");
   headers.set("cache-control", "private, max-age=3600");
+  headers.set("content-disposition", `inline; filename="${filename}"`);
   return new Response(obj.body, { headers });
 }

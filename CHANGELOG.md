@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.10.3
+
+- Fix videos downloading as `.bin` instead of `.mp4`. Three compounding causes:
+  1. `extFromMime` had no entry for `mp4` (or `mov` / `mkv`), so any video mime fell through to the `"bin"` fallback. R2 keys got `out/<uuid>.bin`, and the browser's `<a download>` used the URL's filename, so saves went to disk as `.bin`.
+  2. In the BYOK video poll path, we were trusting the upstream CDN's `Content-Type` header. xAI's CDN can serve MP4 as `application/octet-stream`, which would have failed `extFromMime` even after fix #1. We know contextually it's a video gen result, so the mime is now hardcoded to `video/mp4` in this path.
+  3. `handleArtifact` wasn't setting a `Content-Disposition` header, so browsers had no filename hint other than the URL path. Now it sets `Content-Disposition: inline; filename="<r2 key tail>"`.
+- Limitation: existing video artifacts already stored in R2 with `.bin` keys won't be retroactively renamed. They'll still download as `.bin`. New videos generated after deploy will save as `.mp4` correctly.
+
 ## v0.10.2
 
 - Fix Grok Imagine Video failing for the actual underlying reason. The "not found" error was the *symptom*; the *cause* was Cloudflare Workers' `waitUntil()` having a ~30-second post-response budget, while video generation takes 1-3 minutes. The background poll loop was getting cancelled mid-run, leaving rows stuck in "pending" until the client gave up.
