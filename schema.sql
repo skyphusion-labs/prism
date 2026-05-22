@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS chunks (
   chunk_index     INTEGER NOT NULL,
   text            TEXT NOT NULL,
   vector_id       TEXT NOT NULL,
+  page            INTEGER,             -- for PDFs: the source page (1-indexed)
+  sheet           TEXT,                -- for XLSX/XLS: the source sheet name
   FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 );
 

@@ -11,6 +11,10 @@
 // Cf-Access-Authenticated-User-Email header to scope history per user.
 // Local dev has no Access in front of it; user_email defaults to 'anonymous'.
 // Do not deploy without Access in front.
+
+import { getDocumentProxy } from "unpdf";
+import * as XLSX from "xlsx";
+
 //
 // Multimodal model types:
 //   - chat: text-generation models. Accepts vision attachments if the model
@@ -190,6 +194,8 @@ interface RetrievedChunk {
   chunk_index: number;
   text: string;
   score: number;
+  page?: number | null;     // PDFs only
+  sheet?: string | null;    // XLSX/XLS only
 }
 
 interface PersistedImageAttachment {
@@ -1821,8 +1827,20 @@ const EMBED_DIMENSIONS = 768;
 const CHUNK_TARGET_CHARS = 500;
 const CHUNK_OVERLAP_CHARS = 50;
 const EMBED_BATCH_SIZE = 16;       // BGE accepts batches; 16 keeps requests small
-const DOC_MAX_BYTES = 5 * 1024 * 1024;  // 5MB upload cap
-const ALLOWED_DOC_MIMES = ["text/plain", "text/markdown", "text/x-markdown"];
+const DOC_MAX_BYTES = 10 * 1024 * 1024;  // 10MB upload cap
+
+// Phase 3A: extended file type support. The arrays are kept simple - both
+// mime check AND filename-extension check pass through if either matches,
+// so a .pdf uploaded with no mime still works.
+const ALLOWED_DOC_MIMES = [
+  "text/plain",
+  "text/markdown",
+  "text/x-markdown",
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  // .xlsx
+  "application/vnd.ms-excel",                                            // .xls
+];
+const ALLOWED_DOC_EXT_RE = /\.(txt|md|markdown|pdf|xlsx|xls)$/i;
 
 interface DocumentRow {
   id: number;
@@ -1843,6 +1861,16 @@ interface ChunkRow {
   chunk_index: number;
   text: string;
   vector_id: string;
+  page: number | null;
+  sheet: string | null;
+}
+
+// Output of the per-format extractors. Each ExtractedChunk has text plus
+// optional source-location metadata that gets persisted on the chunk row.
+interface ExtractedChunk {
+  text: string;
+  page?: number;     // PDF: 1-indexed page number
+  sheet?: string;    // XLSX/XLS: source sheet name
 }
 
 function chunkText(text: string): string[] {
@@ -1874,6 +1902,88 @@ function chunkText(text: string): string[] {
     pos = Math.max(cut - CHUNK_OVERLAP_CHARS, pos + 1);
   }
   return out;
+}
+
+// ---------- RAG Phase 3A: per-format text extraction ----------
+//
+// For PDFs we extract per-page using unpdf (a serverless-friendly PDF.js
+// wrapper) and tag each resulting chunk with its source page. Chunks never
+// cross page boundaries so the source-page metadata stays meaningful.
+//
+// For XLSX/XLS we use SheetJS's CSV exporter per sheet and tag each chunk
+// with its source sheet name. Same boundary rule: chunks never cross sheets.
+//
+// Scanned/image-only PDFs are not handled here; pdfjs extracts the empty
+// text layer they have, which gives few or zero chunks. A future Phase 3B
+// would render pages to PNG and run them through a vision model for OCR.
+
+async function extractPdfChunks(bytes: Uint8Array): Promise<ExtractedChunk[]> {
+  const pdf = await getDocumentProxy(bytes);
+  const out: ExtractedChunk[] = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    // pdfjs's text items have a .str field; join with spaces and collapse
+    // runs of whitespace that come from rendering positioning.
+    const raw = (content.items as Array<{ str?: string }>)
+      .map((it) => (it.str ?? "").trim())
+      .filter(Boolean)
+      .join(" ")
+      .replace(/[ \t]+/g, " ")
+      .replace(/\s+\n/g, "\n")
+      .trim();
+    if (!raw) continue;
+    for (const piece of chunkText(raw)) {
+      out.push({ text: piece, page: i });
+    }
+  }
+  return out;
+}
+
+function extractXlsxChunks(bytes: Uint8Array): ExtractedChunk[] {
+  // SheetJS read accepts ArrayBuffer-ish inputs; dense=true uses a
+  // 2D-array internal layout which is faster on sparse sheets.
+  const wb = XLSX.read(bytes, { type: "array", dense: true });
+  const out: ExtractedChunk[] = [];
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    if (!ws) continue;
+    const csv = XLSX.utils.sheet_to_csv(ws, { blankrows: false, strip: true });
+    const text = csv.trim();
+    if (!text) continue;
+    // For a small sheet, the whole CSV may be one chunk. For a large sheet,
+    // chunkText breaks on newlines (the row boundaries in CSV).
+    for (const piece of chunkText(text)) {
+      out.push({ text: piece, sheet: sheetName });
+    }
+  }
+  return out;
+}
+
+// Per-mime dispatcher. Returns ExtractedChunk[] regardless of input format.
+// The caller is responsible for storing the raw bytes in R2 and persisting
+// each chunk row with its page/sheet metadata.
+async function extractChunks(bytes: Uint8Array, mime: string, filename: string): Promise<ExtractedChunk[]> {
+  const ext = (filename.match(/\.([^.]+)$/)?.[1] ?? "").toLowerCase();
+
+  // PDF
+  if (mime === "application/pdf" || ext === "pdf") {
+    return await extractPdfChunks(bytes);
+  }
+
+  // XLSX or XLS
+  if (
+    mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    mime === "application/vnd.ms-excel" ||
+    ext === "xlsx" || ext === "xls"
+  ) {
+    return extractXlsxChunks(bytes);
+  }
+
+  // Text or markdown: decode and chunk. Default UTF-8 with replacement on
+  // invalid bytes (rather than throwing).
+  const text = new TextDecoder("utf-8").decode(bytes);
+  return chunkText(text).map((t) => ({ text: t }));
 }
 
 async function embedBatch(env: Env, texts: string[]): Promise<number[][]> {
@@ -1932,14 +2042,14 @@ async function retrieveContext(
   const ids = matches.map((m) => m.id);
   const placeholders = ids.map(() => "?").join(",");
   const rows = await env.DB.prepare(
-    `SELECT c.document_id, c.chunk_index, c.text, c.vector_id, d.filename
+    `SELECT c.document_id, c.chunk_index, c.text, c.vector_id, c.page, c.sheet, d.filename
        FROM chunks c
        JOIN documents d ON c.document_id = d.id
       WHERE c.user_email = ?
         AND c.vector_id IN (${placeholders})`
   )
     .bind(userEmail, ...ids)
-    .all<{ document_id: number; chunk_index: number; text: string; vector_id: string; filename: string }>();
+    .all<{ document_id: number; chunk_index: number; text: string; vector_id: string; filename: string; page: number | null; sheet: string | null }>();
 
   // 4) Merge scores back in, preserve Vectorize ordering.
   const byId = new Map((rows.results ?? []).map((r) => [r.vector_id, r]));
@@ -1954,6 +2064,8 @@ async function retrieveContext(
       chunk_index: r.chunk_index,
       text: r.text,
       score: scoreById.get(id) ?? 0,
+      page: r.page,
+      sheet: r.sheet,
     });
   }
   return out;
@@ -1962,7 +2074,13 @@ async function retrieveContext(
 function formatRetrievalForSystemPrompt(chunks: RetrievedChunk[]): string {
   if (chunks.length === 0) return "";
   const body = chunks
-    .map((c, i) => `[Excerpt ${i + 1}, from ${c.filename} (chunk ${c.chunk_index})]\n${c.text}`)
+    .map((c, i) => {
+      const loc =
+        c.page !== undefined && c.page !== null ? `, page ${c.page}` :
+        c.sheet ? `, sheet "${c.sheet}"` :
+        "";
+      return `[Excerpt ${i + 1}, from ${c.filename}${loc} (chunk ${c.chunk_index})]\n${c.text}`;
+    })
     .join("\n\n---\n\n");
   return [
     "You have access to the following excerpts from the user's uploaded documents.",
@@ -2032,8 +2150,8 @@ async function handleDocumentUpload(request: Request, env: Env): Promise<Respons
 
   const filename = body.filename || "untitled.txt";
   const mime = body.mime || "text/plain";
-  if (!ALLOWED_DOC_MIMES.includes(mime) && !filename.match(/\.(txt|md|markdown)$/i)) {
-    return json({ error: `Unsupported file type: ${mime}. Only .txt and .md allowed in Pass 1.` }, { status: 400 });
+  if (!ALLOWED_DOC_MIMES.includes(mime) && !ALLOWED_DOC_EXT_RE.test(filename)) {
+    return json({ error: `Unsupported file type: ${mime} (${filename}). Allowed: .txt, .md, .pdf, .xlsx, .xls` }, { status: 400 });
   }
   if (!body.data) {
     return json({ error: "Missing file data" }, { status: 400 });
@@ -2051,23 +2169,24 @@ async function handleDocumentUpload(request: Request, env: Env): Promise<Respons
     return json({ error: `File too large (${bytes.length} bytes, max ${DOC_MAX_BYTES})` }, { status: 413 });
   }
 
-  // Decode as UTF-8 text. Default behavior replaces invalid bytes with U+FFFD
-  // rather than throwing, which is what we want for graceful upload handling.
-  let text: string;
+  // Extract chunks based on the file type. For .txt/.md this is just a UTF-8
+  // decode + chunk. For .pdf it's per-page extraction. For .xlsx/.xls it's
+  // per-sheet CSV extraction. Each ExtractedChunk carries optional page/sheet
+  // location metadata that we persist on the chunk row.
+  let extracted: ExtractedChunk[];
   try {
-    text = new TextDecoder("utf-8").decode(bytes);
+    extracted = await extractChunks(bytes, mime, filename);
   } catch (err) {
-    return json({ error: `Could not decode as UTF-8: ${err instanceof Error ? err.message : err}` }, { status: 400 });
+    const m = err instanceof Error ? err.message : String(err);
+    return json({ error: `Extraction failed: ${m}` }, { status: 400 });
   }
-  if (!text.trim()) {
-    return json({ error: "File is empty after decoding" }, { status: 400 });
+  if (extracted.length === 0) {
+    return json({
+      error: "No chunks produced. The file may be empty, image-only (scanned PDFs need OCR which is not yet supported), or in an unexpected format.",
+    }, { status: 400 });
   }
 
-  // Chunk
-  const pieces = chunkText(text);
-  if (pieces.length === 0) {
-    return json({ error: "No chunks produced from text" }, { status: 400 });
-  }
+  const totalChars = extracted.reduce((sum, c) => sum + c.text.length, 0);
 
   // Store raw bytes in R2 for audit / future re-processing.
   const r2Key = await r2Put(env, "in", mime, bytes, userEmail);
@@ -2079,7 +2198,7 @@ async function handleDocumentUpload(request: Request, env: Env): Promise<Respons
      VALUES (?, ?, ?, ?, ?, ?, ?)
      RETURNING id, created_at`
   )
-    .bind(userEmail, filename, mime, r2Key, bytes.length, text.length, pieces.length)
+    .bind(userEmail, filename, mime, r2Key, bytes.length, totalChars, extracted.length)
     .first<{ id: number; created_at: string }>();
   if (!docInsert) {
     await r2DeleteSafe(env, r2Key);
@@ -2091,30 +2210,41 @@ async function handleDocumentUpload(request: Request, env: Env): Promise<Respons
   // user_email + document_id so we can filter on retrieval and clean up on delete.
   // Vector IDs are scoped: `${userEmail}:${docId}:${chunkIndex}`.
   const vectorIdsWritten: string[] = [];
-  const chunkRowsToInsert: { chunk_index: number; text: string; vector_id: string }[] = [];
+  const chunkRowsToInsert: {
+    chunk_index: number;
+    text: string;
+    vector_id: string;
+    page: number | null;
+    sheet: string | null;
+  }[] = [];
 
   try {
-    for (let b = 0; b < pieces.length; b += EMBED_BATCH_SIZE) {
-      const batch = pieces.slice(b, b + EMBED_BATCH_SIZE);
-      const vectors = await embedBatch(env, batch);
+    for (let b = 0; b < extracted.length; b += EMBED_BATCH_SIZE) {
+      const batch = extracted.slice(b, b + EMBED_BATCH_SIZE);
+      const vectors = await embedBatch(env, batch.map((c) => c.text));
       if (vectors.length !== batch.length) {
         throw new Error(`Embedding batch returned ${vectors.length} vectors for ${batch.length} texts`);
       }
 
-      const vectorizePayload = batch.map((t, i) => {
+      const vectorizePayload = batch.map((c, i) => {
         const idx = b + i;
         const vid = `${userEmail}:${docId}:${idx}`;
-        chunkRowsToInsert.push({ chunk_index: idx, text: t, vector_id: vid });
+        chunkRowsToInsert.push({
+          chunk_index: idx,
+          text: c.text,
+          vector_id: vid,
+          page: c.page ?? null,
+          sheet: c.sheet ?? null,
+        });
         vectorIdsWritten.push(vid);
-        return {
-          id: vid,
-          values: vectors[i],
-          metadata: {
-            user_email: userEmail,
-            document_id: docId,
-            chunk_index: idx,
-          },
+        const metadata: Record<string, string | number> = {
+          user_email: userEmail,
+          document_id: docId,
+          chunk_index: idx,
         };
+        if (c.page !== undefined) metadata.page = c.page;
+        if (c.sheet !== undefined) metadata.sheet = c.sheet;
+        return { id: vid, values: vectors[i], metadata };
       });
 
       await env.VEC.upsert(vectorizePayload);
@@ -2134,9 +2264,9 @@ async function handleDocumentUpload(request: Request, env: Env): Promise<Respons
   if (chunkRowsToInsert.length) {
     const stmts = chunkRowsToInsert.map((c) =>
       env.DB.prepare(
-        `INSERT INTO chunks (document_id, user_email, chunk_index, text, vector_id)
-         VALUES (?, ?, ?, ?, ?)`
-      ).bind(docId, userEmail, c.chunk_index, c.text, c.vector_id)
+        `INSERT INTO chunks (document_id, user_email, chunk_index, text, vector_id, page, sheet)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(docId, userEmail, c.chunk_index, c.text, c.vector_id, c.page, c.sheet)
     );
     await env.DB.batch(stmts);
   }
@@ -2147,8 +2277,8 @@ async function handleDocumentUpload(request: Request, env: Env): Promise<Respons
     filename,
     mime,
     size_bytes: bytes.length,
-    total_chars: text.length,
-    chunk_count: pieces.length,
+    total_chars: totalChars,
+    chunk_count: extracted.length,
   });
 }
 

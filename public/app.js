@@ -433,12 +433,16 @@ function renderRetrievedChunks(chunks) {
   const items = chunks
     .map((c, i) => {
       const score = (typeof c.score === "number") ? c.score.toFixed(3) : "?";
+      const loc =
+        (c.page !== undefined && c.page !== null) ? ` \u00b7 page ${c.page}` :
+        c.sheet ? ` \u00b7 sheet "${escapeHtml(c.sheet)}"` :
+        "";
       return `
         <details class="retrieved-chunk">
           <summary>
             <span class="rc-num">${i + 1}.</span>
             <span class="rc-file">${escapeHtml(c.filename || "?")}</span>
-            <span class="rc-meta">chunk ${c.chunk_index} \u00b7 score ${score}</span>
+            <span class="rc-meta">chunk ${c.chunk_index}${loc} \u00b7 score ${score}</span>
           </summary>
           <pre class="rc-text">${escapeHtml(c.text || "")}</pre>
         </details>`;
@@ -783,9 +787,9 @@ async function loadDocuments() {
 
 async function uploadDocument(file) {
   if (!file) return;
-  const allowedExt = /\.(txt|md|markdown)$/i;
+  const allowedExt = /\.(txt|md|markdown|pdf|xlsx|xls)$/i;
   if (!allowedExt.test(file.name)) {
-    docStatus.textContent = "Only .txt and .md files are accepted";
+    docStatus.textContent = "Allowed: .txt, .md, .pdf, .xlsx, .xls";
     docStatus.classList.add("error");
     return;
   }

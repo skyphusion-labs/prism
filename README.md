@@ -378,17 +378,31 @@ The `chats` table gained a `retrieved_context TEXT` column. Apply it with:
 npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN retrieved_context TEXT"
 ```
 
+### Phase 3A migration (if upgrading from v0.8.x)
+
+The `chunks` table gained two columns for source-location metadata: `page` (PDFs) and `sheet` (XLSX/XLS). The bundle also pulls in `unpdf` and `xlsx`, so you'll need to run `npm install` after pulling the new package.json.
+
+```
+npm install
+npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chunks ADD COLUMN page INTEGER"
+npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chunks ADD COLUMN sheet TEXT"
+```
+
+**Note on the xlsx dependency:** SheetJS stopped publishing to the npm registry several years ago; the `xlsx` name on npm is permanently stuck at 0.18.5. We use SheetJS's recommended pattern of installing directly from their CDN tarball URL (`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`), which gives us the current maintained version (0.20.3 as of this writing) with security patches. The package still imports as `xlsx` so the code is unchanged. To upgrade to a newer SheetJS release later, change the URL in `package.json` to point at the new version's tarball.
+
 The `VEC` binding is already in `wrangler.toml`. Redeploy after these commands.
 
 ### Constraints
 
-- File types: `.txt`, `.md`, `.markdown` only. PDF support is a follow-on.
-- Max file size: 5MB per upload.
-- Knowledge base is per-user (scoped by `Cf-Access-Authenticated-User-Email`). All your uploaded docs are one corpus.
-- Retrieval default: top-K = 5 chunks. Change `RETRIEVE_TOP_K` in the worker if you want more or fewer.
-- Chunks store the raw text in D1. R2 keeps the original file too for audit and potential re-processing on a future model swap.
-- Deleting a document cleans up: vector IDs in Vectorize, chunk rows in D1, the document row in D1, and the original file in R2.
-- The "use my docs" toggle is only sent on chat models (image/tts/video/stt/music ignore it).
+- **File types**: `.txt`, `.md`, `.markdown`, `.pdf`, `.xlsx`, `.xls`. Scanned/image-only PDFs are not yet supported (they need OCR, which is a future Phase 3B). Modern PDFs created from Word/Pages/LaTeX/Google Docs export work fine.
+- **Max file size**: 10MB per upload.
+- **Knowledge base**: per-user (scoped by `Cf-Access-Authenticated-User-Email`). All your uploaded docs are one corpus.
+- **Retrieval default**: top-K = 5 chunks. Change `RETRIEVE_TOP_K` in the worker if you want more or fewer.
+- **Chunks store the raw text in D1**. R2 keeps the original file too for audit and potential re-processing on a future model swap.
+- **Chunking boundaries**: For PDFs, chunks never cross page boundaries (so the "page X" metadata stays meaningful). For XLSX/XLS, chunks never cross sheet boundaries. For TXT/MD, no such boundary - chunks flow freely.
+- **Source location**: Retrieved chunks show their page (PDFs) or sheet name (spreadsheets) in the UI, and that location is also included in the system prompt the model sees.
+- **Deleting a document** cleans up: vector IDs in Vectorize, chunk rows in D1, the document row in D1, and the original file in R2.
+- **Worker bundle size**: with `unpdf` (~500KB) and `xlsx` (~500KB) bundled, the compressed worker exceeds the free-tier 1MB limit. **Workers paid plan ($5/month) is required as of Phase 3A.**
 
 ## Local type check
 
