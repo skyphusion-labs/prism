@@ -285,6 +285,9 @@ async function extractVideoFrames(file, n, maxDim) {
 async function handleFiles(files) {
   const m = currentModel();
   if (m.type !== "chat") return;
+  // Pegasus 1.2 (Bedrock) is a chat-type model but needs the FULL video file,
+  // not frame extraction. The model id starts with "bedrock/twelvelabs.pegasus".
+  const isPegasus = m.id.startsWith("bedrock/twelvelabs.pegasus");
 
   for (const file of files) {
     try {
@@ -299,10 +302,21 @@ async function handleFiles(files) {
         const data = await readAsDataUrl(file);
         state.pendingAttachments.push({ type: "audio", mime: file.type, filename: file.name, data });
       } else if (file.type.startsWith("video/")) {
-        if (!modelSupports("vision")) throw new Error("Current model doesn't support vision (required for video frames)");
-        if (file.size > MAX_VIDEO_BYTES) throw new Error(`Video too large (${fmtBytes(file.size)} > ${fmtBytes(MAX_VIDEO_BYTES)})`);
-        const { frames, duration } = await extractVideoFrames(file, VIDEO_FRAMES, VIDEO_FRAME_MAX_DIM);
-        state.pendingAttachments.push({ type: "video_frames", filename: file.name, duration, frames });
+        if (isPegasus) {
+          // Pegasus: upload the full video file. Bedrock InvokeModel has a 25MB
+          // request limit (about 18MB binary after base64), so we cap here too.
+          const PEGASUS_MAX_VIDEO_BYTES = 18 * 1024 * 1024;
+          if (file.size > PEGASUS_MAX_VIDEO_BYTES) {
+            throw new Error(`Video too large for Pegasus (${fmtBytes(file.size)} > ${fmtBytes(PEGASUS_MAX_VIDEO_BYTES)}). Bedrock's request limit forces this. For larger videos, S3 integration would be needed.`);
+          }
+          const data = await readAsDataUrl(file);
+          state.pendingAttachments.push({ type: "video_full", mime: file.type, filename: file.name, data });
+        } else {
+          if (!modelSupports("vision")) throw new Error("Current model doesn't support vision (required for video frames)");
+          if (file.size > MAX_VIDEO_BYTES) throw new Error(`Video too large (${fmtBytes(file.size)} > ${fmtBytes(MAX_VIDEO_BYTES)})`);
+          const { frames, duration } = await extractVideoFrames(file, VIDEO_FRAMES, VIDEO_FRAME_MAX_DIM);
+          state.pendingAttachments.push({ type: "video_frames", filename: file.name, duration, frames });
+        }
       } else {
         throw new Error(`Unsupported file type: ${file.type || "(unknown)"}`);
       }
@@ -358,6 +372,17 @@ function renderPendingPreview(att, idx) {
         ${remove}
       </div>`;
   }
+  if (att.type === "video_full") {
+    return `
+      <div class="attachment">
+        <div class="audio-icon">\u{1F3AC}</div>
+        <div>
+          <div class="name">${escapeHtml(att.filename || "video")}</div>
+          <div class="size">full video \u00b7 ${escapeHtml(att.mime || "video")}</div>
+        </div>
+        ${remove}
+      </div>`;
+  }
   return "";
 }
 
@@ -394,6 +419,16 @@ function renderStoredAttachment(att) {
         <div>
           <div class="name">${escapeHtml(att.filename || "video")}</div>
           <div class="size">${keys.length} frames \u00b7 ${dur}</div>
+        </div>
+      </div>`;
+  }
+  if (att.type === "video_full") {
+    return `
+      <div class="attachment">
+        <video class="thumb" src="${escapeHtml(artifactUrl(att.key))}" controls preload="metadata"></video>
+        <div>
+          <div class="name">${escapeHtml(att.filename || "video")}</div>
+          <div class="size">full video \u00b7 ${escapeHtml(att.mime || "video")}</div>
         </div>
       </div>`;
   }

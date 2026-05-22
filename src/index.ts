@@ -14,6 +14,8 @@
 
 import { getDocumentProxy } from "unpdf";
 import * as XLSX from "xlsx";
+import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
+import type { WorkflowEvent } from "cloudflare:workers";
 
 //
 // Multimodal model types:
@@ -43,6 +45,11 @@ interface Env {
   VEC: VectorizeIndex;
   ASSETS: Fetcher;
   GATEWAY_ID: string;
+  // v0.12.0: Workflow binding for Unified Billing video + music gen. The
+  // class is LongRunWorkflow, defined at the bottom of this file. Each
+  // instance invokes env.AI.run (long-running), downloads the artifact,
+  // uploads to R2, and finalizes the D1 row across retryable steps.
+  LONGRUN: Workflow;
   ANTHROPIC_API_KEY?: string; // optional; preferred is to store in AI Gateway dashboard
   XAI_API_KEY?: string;       // optional; preferred is to store in AI Gateway dashboard
   GOOGLE_API_KEY?: string;    // optional; preferred is to store in AI Gateway dashboard
@@ -992,22 +999,15 @@ async function sttOpenAI(env: Env, model: ModelEntry, audioBase64: string, mime:
 
 // ---------- Music generation (MiniMax via Unified Billing) ----------
 //
-// Same async architecture as video gen: write pending row, schedule the
-// actual env.AI.run call via ctx.waitUntil, fetch the result audio, store
-// in R2, mark done. Client polls /api/job/:id (no provider calls).
+// As of v0.12.0, music gen uses Cloudflare Workflows for durable execution.
+// The runMusic handler creates a LongRunWorkflow instance, persists its ID
+// on the chats row as job_id, and returns immediately. The workflow handles
+// the actual env.AI.run call (which blocks for ~30-90 seconds), downloads
+// the audio, uploads to R2, and finalizes the D1 row.
 //
 // User input maps to fields:
 //   body.user_input    -> "prompt" (style/mood description, ~10-300 chars)
 //   body.system_prompt -> "lyrics" (optional, supports [Verse]/[Chorus] tags)
-//
-// Output shape from the docs example: { audio: "https://...mp3" }
-
-interface MusicGenResult {
-  audio?: string;
-  state?: string;
-  result?: { audio?: string };
-  gatewayMetadata?: { keySource?: string };
-}
 
 async function runMusic(
   request: Request,
@@ -1016,6 +1016,9 @@ async function runMusic(
   model: ModelEntry,
   body: ChatRequest
 ): Promise<Response> {
+  // ctx unused now that we no longer schedule a waitUntil task; the workflow
+  // owns the long-running work. Kept in signature for router compatibility.
+  void ctx;
   const userEmail = getUserEmail(request);
   const startedAt = new Date().toISOString();
 
@@ -1039,9 +1042,36 @@ async function runMusic(
     job_started_at: startedAt,
   });
 
-  ctx.waitUntil(
-    generateMusicBackground(env, row.id, userEmail, model.id, body.user_input, body.system_prompt ?? "", startedAt)
-  );
+  // Kick off the workflow. The instance ID is stored on the row so we can
+  // look it up later for status/observability. If create() itself fails
+  // (e.g., quota exceeded), fail the row synchronously so the client sees
+  // an error rather than an indefinite pending state.
+  let instanceId: string;
+  try {
+    const instance = await env.LONGRUN.create({
+      params: {
+        rowId: row.id,
+        userEmail,
+        modelId: model.id,
+        prompt: body.user_input,
+        lyrics: body.system_prompt ?? "",
+        kind: "music",
+        startedAtIso: startedAt,
+      } satisfies LongRunParams,
+    });
+    instanceId = instance.id;
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
+      .bind(`Workflow create failed: ${m}`.slice(0, 1000), row.id)
+      .run();
+    return json({ error: `Failed to start music generation: ${m}` }, { status: 502 });
+  }
+
+  // Persist the workflow instance ID on the row for traceability.
+  await env.DB.prepare(`UPDATE chats SET job_id = ? WHERE id = ?`)
+    .bind(instanceId, row.id)
+    .run();
 
   return json({
     id: row.id,
@@ -1052,88 +1082,10 @@ async function runMusic(
     output_artifact: null,
     status: "pending",
     job_started_at: startedAt,
+    job_id: instanceId,
     conversation_id: row.conversation_id,
     turn_index: 0,
   });
-}
-
-async function generateMusicBackground(
-  env: Env,
-  rowId: number,
-  userEmail: string,
-  modelId: string,
-  prompt: string,
-  lyrics: string,
-  startedAtIso: string
-): Promise<void> {
-  const failRow = async (msg: string) => {
-    try {
-      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
-        .bind(msg.slice(0, 1000), rowId)
-        .run();
-    } catch { /* swallow - background task */ }
-  };
-
-  // Build the request body. Send `lyrics` only if non-empty; some wrappers
-  // may reject empty strings.
-  const params: Record<string, unknown> = { prompt };
-  if (lyrics && lyrics.trim()) params.lyrics = lyrics;
-
-  let result: MusicGenResult;
-  try {
-    result = await aiRun(env, modelId, params) as MusicGenResult;
-  } catch (err) {
-    const m = err instanceof Error ? err.message : String(err);
-    await failRow(`env.AI.run failed: ${m}`);
-    return;
-  }
-
-  // Extract audio URL. The docs show flat shape `{ audio: "..." }`; we also
-  // accept `{ result: { audio: "..." } }` and `{ state: "Completed", result: {...} }`
-  // in case CF normalizes other providers' shapes.
-  const audioUrl = result?.audio ?? result?.result?.audio;
-  if (!audioUrl) {
-    await failRow(`Gen returned no audio URL. Raw: ${JSON.stringify(result).slice(0, 500)}`);
-    return;
-  }
-
-  // Re-host in our R2 (the MiniMax-hosted URL on aliyuncs.com may be
-  // temporary; we control the lifecycle by storing locally).
-  let bytes: Uint8Array;
-  let mime = "audio/mpeg";
-  try {
-    const aresp = await fetch(audioUrl);
-    if (!aresp.ok) throw new Error(`Fetch ${aresp.status}`);
-    mime = aresp.headers.get("content-type") || "audio/mpeg";
-    bytes = new Uint8Array(await aresp.arrayBuffer());
-  } catch (err) {
-    const m = err instanceof Error ? err.message : String(err);
-    await failRow(`Audio download failed: ${m}`);
-    return;
-  }
-
-  let r2Key: string;
-  try {
-    r2Key = await r2Put(env, "out", mime, bytes, userEmail);
-  } catch (err) {
-    const m = err instanceof Error ? err.message : String(err);
-    await failRow(`R2 upload failed: ${m}`);
-    return;
-  }
-
-  const outputArtifact: OutputArtifact = { key: r2Key, mime, type: "audio" };
-  const latency = Date.now() - Date.parse(startedAtIso);
-
-  try {
-    await env.DB.prepare(
-      `UPDATE chats SET status = 'done', output_artifact = ?, latency_ms = ? WHERE id = ?`
-    )
-      .bind(JSON.stringify(outputArtifact), latency, rowId)
-      .run();
-  } catch (err) {
-    const m = err instanceof Error ? err.message : String(err);
-    await failRow(`D1 finalize failed: ${m}`);
-  }
 }
 
 // ---------- Persistence ----------
@@ -1726,25 +1678,23 @@ async function callBedrockPegasus(
 //   https://developers.cloudflare.com/ai-gateway/features/unified-billing/
 //   https://developers.cloudflare.com/ai/models/google/veo-3.1-fast/
 //
-// Video gen takes 30s-3min. Rather than hold the client's HTTP request open
-// that long, we:
-//   1. Write a status='pending' row to D1
-//   2. Use ctx.waitUntil() to run env.AI.run in the background after the
-//      response is sent
-//   3. The background task fetches the resulting video from CF's catalog R2
-//      bucket and re-uploads to our R2 bucket so we have a stable URL
-//   4. Frontend polls GET /api/job/:id which just reads D1
+// Video gen takes 30s-3min. env.AI.run for these models blocks until
+// completion. Two architectures coexist:
 //
-// env.AI.run for video models appears to block until completion based on the
-// docs example showing state="Completed" directly. If it ever returns a
-// non-terminal state, the background task marks the job failed with a clear
-// error so we can iterate.
-
-interface VideoGenResult {
-  state?: string;
-  result?: { video?: string };
-  gatewayMetadata?: { keySource?: string };
-}
+//   - BYOK path (xAI Grok video, Google Veo with API key): submit-and-poll.
+//     The submit returns a job_id in <30s; each client poll of /api/job/:id
+//     triggers ONE upstream poll in a fresh worker invocation. Download to
+//     R2 happens when upstream reports done.
+//
+//   - Unified Billing path (v0.12.0+): Cloudflare Workflows. The runVideo
+//     handler creates a LongRunWorkflow instance, persists its ID on the
+//     row, and returns immediately. The workflow class (defined at the
+//     bottom of this file) holds the long blocking env.AI.run call alive
+//     across step boundaries, then downloads and finalizes D1.
+//
+// Both paths populate chats.output_artifact and let the frontend poll
+// /api/job/:id for status (which just reads D1 in the Unified path; the
+// workflow itself updates D1 when done).
 
 async function runVideo(
   request: Request,
@@ -1753,6 +1703,9 @@ async function runVideo(
   model: ModelEntry,
   body: ChatRequest
 ): Promise<Response> {
+  // ctx is no longer used: BYOK paths are sync-submit, Unified Billing path
+  // delegates to LongRunWorkflow. Kept in the signature for router uniformity.
+  void ctx;
   const userEmail = getUserEmail(request);
   const startedAt = new Date().toISOString();
   const isBYOK = !!(model.byok_alias && (model.provider === "xai" || model.provider === "google"));
@@ -1810,12 +1763,12 @@ async function runVideo(
     });
   }
 
-  // Unified Billing path (env.AI.run for third-party video models). This
-  // remains a fire-and-forget design which can be cancelled by the Workers
-  // waitUntil time limit. It needs a Workflows-based refactor to be reliable
-  // for multi-minute generations. Left as-is so Conrad's BYOK use case isn't
-  // blocked - Unified Billing models won't reliably finish until Workflows
-  // (TODO) replaces the waitUntil pattern.
+  // Unified Billing path (env.AI.run for third-party video models). As of
+  // v0.12.0, this is handled by the LongRunWorkflow class for durable
+  // execution. env.AI.run blocks until the upstream provider finishes
+  // (30s-3min), which exceeds the ~30s waitUntil budget after an HTTP
+  // response. The workflow keeps the call alive across step boundaries
+  // and retries each step independently.
   const row = await persistChat(env, {
     userEmail,
     model: model.id,
@@ -1836,9 +1789,31 @@ async function runVideo(
     job_started_at: startedAt,
   });
 
-  ctx.waitUntil(
-    generateVideoUnified(env, row.id, userEmail, model.id, body.user_input, startedAt)
-  );
+  let instanceId: string;
+  try {
+    const instance = await env.LONGRUN.create({
+      params: {
+        rowId: row.id,
+        userEmail,
+        modelId: model.id,
+        prompt: body.user_input,
+        kind: "video",
+        startedAtIso: startedAt,
+      } satisfies LongRunParams,
+    });
+    instanceId = instance.id;
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
+      .bind(`Workflow create failed: ${m}`.slice(0, 1000), row.id)
+      .run();
+    return json({ error: `Failed to start video generation: ${m}` }, { status: 502 });
+  }
+
+  // Persist the workflow instance ID on the row for traceability.
+  await env.DB.prepare(`UPDATE chats SET job_id = ? WHERE id = ?`)
+    .bind(instanceId, row.id)
+    .run();
 
   return json({
     id: row.id,
@@ -1849,92 +1824,10 @@ async function runVideo(
     output_artifact: null,
     status: "pending",
     job_started_at: startedAt,
+    job_id: instanceId,
     conversation_id: row.conversation_id,
     turn_index: 0,
   });
-}
-
-async function generateVideoUnified(
-  env: Env,
-  rowId: number,
-  userEmail: string,
-  modelId: string,
-  prompt: string,
-  startedAtIso: string
-): Promise<void> {
-  const failRow = async (msg: string) => {
-    try {
-      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
-        .bind(msg.slice(0, 1000), rowId)
-        .run();
-    } catch { /* swallow - background task can't surface errors anyway */ }
-  };
-
-  let result: VideoGenResult;
-  try {
-    // Baseline params shape per the documented Veo example. Some models may
-    // accept additional or different params; their errors will surface in
-    // job_error and we can iterate per-model from there.
-    result = await aiRun(env, modelId, {
-      prompt,
-      duration: "8s",
-      aspect_ratio: "16:9",
-      resolution: "720p",
-      generate_audio: true,
-    }) as VideoGenResult;
-  } catch (err) {
-    const m = err instanceof Error ? err.message : String(err);
-    await failRow(`env.AI.run failed: ${m}`);
-    return;
-  }
-
-  if (!result || (result.state && result.state !== "Completed")) {
-    await failRow(`Unexpected gen state: ${result?.state ?? "missing"}`);
-    return;
-  }
-
-  const videoUrl = result.result?.video;
-  if (!videoUrl) {
-    await failRow("Gen completed but no video URL in result");
-    return;
-  }
-
-  // Re-host into our R2 for stable serving and uniform artifact access.
-  let bytes: Uint8Array;
-  let mime = "video/mp4";
-  try {
-    const vresp = await fetch(videoUrl);
-    if (!vresp.ok) throw new Error(`Fetch ${vresp.status}`);
-    mime = vresp.headers.get("content-type") || "video/mp4";
-    bytes = new Uint8Array(await vresp.arrayBuffer());
-  } catch (err) {
-    const m = err instanceof Error ? err.message : String(err);
-    await failRow(`Video download failed: ${m}`);
-    return;
-  }
-
-  let r2Key: string;
-  try {
-    r2Key = await r2Put(env, "out", mime, bytes, userEmail);
-  } catch (err) {
-    const m = err instanceof Error ? err.message : String(err);
-    await failRow(`R2 upload failed: ${m}`);
-    return;
-  }
-
-  const outputArtifact: OutputArtifact = { key: r2Key, mime, type: "video" };
-  const latency = Date.now() - Date.parse(startedAtIso);
-
-  try {
-    await env.DB.prepare(
-      `UPDATE chats SET status = 'done', output_artifact = ?, latency_ms = ? WHERE id = ?`
-    )
-      .bind(JSON.stringify(outputArtifact), latency, rowId)
-      .run();
-  } catch (err) {
-    const m = err instanceof Error ? err.message : String(err);
-    await failRow(`D1 finalize failed: ${m}`);
-  }
 }
 
 // ---------- Video generation BYOK path (per-provider endpoints) ----------
@@ -2198,9 +2091,10 @@ async function handleJobPoll(request: Request, env: Env, id: number): Promise<Re
     });
   }
 
-  // Other pending case (Unified Billing video, music gen). These still use
-  // the old waitUntil background task and may be stuck if it was cancelled.
-  // TODO: refactor to Workflows for reliability.
+  // Other pending case (Unified Billing video, music gen). As of v0.12.0
+  // these are owned by LongRunWorkflow instances which update D1 directly
+  // when their work completes. No active polling here - just return the
+  // current D1 state; the workflow will eventually flip it to done/failed.
   return json({ id: row.id, status: "pending" });
 }
 
@@ -3077,4 +2971,166 @@ async function handleArtifact(request: Request, env: Env, key: string): Promise<
   headers.set("cache-control", "private, max-age=3600");
   headers.set("content-disposition", `inline; filename="${filename}"`);
   return new Response(obj.body, { headers });
+}
+
+// ---------- LongRunWorkflow (v0.12.0) ----------
+//
+// Cloudflare Workflow that handles Unified Billing video and music generation.
+// Both surfaces (runVideo Unified path, runMusic) hand off to this class via
+// env.LONGRUN.create({ params }). The workflow is responsible for:
+//   1. Invoking env.AI.run (blocking call, 30s-3min)
+//   2. Downloading the resulting artifact from CF's catalog R2 bucket
+//   3. Uploading the bytes to our own R2 bucket
+//   4. Finalizing the D1 row (status, output_artifact, latency)
+//
+// Why Workflows rather than ctx.waitUntil:
+//   - waitUntil has a ~30s budget after the HTTP response is sent. env.AI.run
+//     for Veo/Seedance/Hailuo etc. takes 1-3 minutes, so the task gets
+//     cancelled mid-call. That cancellation was the failure mode in v0.11.x.
+//   - Workflows have unlimited wall-clock time per step (CPU time still
+//     capped, but env.AI.run is I/O-bound).
+//   - Each step retries independently with built-in backoff, so a transient
+//     R2 upload failure doesn't force re-running the (expensive) gen call.
+//
+// Step 2 (download + R2 upload) is one combined step because step.do return
+// values are capped at 1 MiB; video files are 5-15MB, music 3-5MB - we can't
+// pass bytes between steps. So we fold the download and R2 put into a single
+// step and return just the small R2 key. The trade-off: if R2 upload fails
+// after a successful download, the retry re-downloads the same source URL
+// (CF's catalog R2 - cheap and reliable). Acceptable.
+//
+// Response shapes per https://developers.cloudflare.com/ai/models/:
+//   Veo:     { state:"Completed", result:{ video:"..." }, gatewayMetadata }
+//   MiniMax: { audio:"..." } (flat) - some normalized providers may wrap in
+//            { state, result:{ audio }, gatewayMetadata } so we accept both.
+//   Other UB video providers (bytedance/runway/alibaba/pixverse/vidu) are
+//   expected to follow the Veo-style wrapper but have NOT been runtime-
+//   verified as of v0.12.0. Per-provider param shapes may also differ from
+//   the Veo baseline (prompt/duration/aspect_ratio/resolution/generate_audio);
+//   errors surface in job_error for iteration.
+
+type LongRunKind = "video" | "music";
+
+interface LongRunParams extends Record<string, unknown> {
+  rowId: number;
+  userEmail: string;
+  modelId: string;
+  prompt: string;
+  lyrics?: string;          // music only
+  kind: LongRunKind;
+  startedAtIso: string;
+}
+
+// Shape we expect back from env.AI.run for video and music. Both share the
+// same envelope; only the inner field differs (video vs audio).
+interface LongRunResult {
+  state?: string;
+  result?: { video?: string; audio?: string };
+  audio?: string;          // flat shape for minimax/music-2.6
+  gatewayMetadata?: { keySource?: string };
+}
+
+export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
+  async run(event: WorkflowEvent<LongRunParams>, step: WorkflowStep): Promise<void> {
+    const { rowId, userEmail, modelId, prompt, lyrics, kind, startedAtIso } = event.payload;
+
+    // Best-effort row-fail helper. Used in the outer catch to surface
+    // workflow-level failures to the polling client. Failures inside this
+    // helper are intentionally swallowed - if D1 is down, there's nothing
+    // we can do from a background workflow anyway.
+    const failRow = async (msg: string): Promise<void> => {
+      try {
+        await this.env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
+          .bind(msg.slice(0, 1000), rowId)
+          .run();
+      } catch { /* swallow */ }
+    };
+
+    try {
+      // Step 1: invoke the model. Long-running blocking call.
+      //
+      // Retry policy: ONE retry only. Each attempt costs Unified Billing
+      // credits; if it fails twice with a 30s spacing, the third attempt is
+      // unlikely to help and we'd rather surface the error to the user.
+      const artifactUrl = await step.do(
+        "invoke-model",
+        { retries: { limit: 1, delay: "30 seconds", backoff: "linear" } },
+        async (): Promise<string> => {
+          const params: Record<string, unknown> = kind === "video"
+            ? {
+                prompt,
+                duration: "8s",
+                aspect_ratio: "16:9",
+                resolution: "720p",
+                generate_audio: true,
+              }
+            : { prompt };
+          if (kind === "music" && lyrics && lyrics.trim()) {
+            params.lyrics = lyrics;
+          }
+
+          const result = await aiRun(this.env, modelId, params) as LongRunResult;
+
+          if (result.state && result.state !== "Completed") {
+            throw new Error(`Unexpected gen state: ${result.state}`);
+          }
+          const url = kind === "video"
+            ? result.result?.video
+            : (result.audio ?? result.result?.audio);
+          if (!url) {
+            throw new Error(`Gen completed but no ${kind} URL. Raw: ${JSON.stringify(result).slice(0, 500)}`);
+          }
+          return url;
+        }
+      );
+
+      // Step 2: download artifact and upload to R2 (combined; can't pass
+      // bytes between steps due to the 1 MiB step return cap).
+      const { r2Key, mime } = await step.do(
+        "download-and-store",
+        { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
+        async (): Promise<{ r2Key: string; mime: string }> => {
+          const aresp = await fetch(artifactUrl);
+          if (!aresp.ok) throw new Error(`Fetch ${aresp.status} from ${artifactUrl.slice(0, 100)}`);
+          // For video, force video/mp4. CF's catalog R2 and many CDNs serve
+          // MP4 as application/octet-stream, which would cause R2 keys to
+          // end in .bin (matches the BYOK video fix in v0.10.3).
+          const upstreamMime = aresp.headers.get("content-type") || "";
+          const finalMime = kind === "video"
+            ? "video/mp4"
+            : (upstreamMime || "audio/mpeg");
+          const bytes = new Uint8Array(await aresp.arrayBuffer());
+          const key = await r2Put(this.env, "out", finalMime, bytes, userEmail);
+          return { r2Key: key, mime: finalMime };
+        }
+      );
+
+      // Step 3: finalize the D1 row.
+      await step.do(
+        "finalize-d1",
+        { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
+        async (): Promise<void> => {
+          const outputArtifact: OutputArtifact = {
+            key: r2Key,
+            mime,
+            type: kind === "video" ? "video" : "audio",
+          };
+          const latency = Date.now() - Date.parse(startedAtIso);
+          await this.env.DB.prepare(
+            `UPDATE chats SET status = 'done', output_artifact = ?, latency_ms = ? WHERE id = ?`
+          )
+            .bind(JSON.stringify(outputArtifact), latency, rowId)
+            .run();
+        }
+      );
+    } catch (err) {
+      // A step exhausted its retries (or some non-step code threw). Mark the
+      // D1 row failed so the polling client gets a clear error, then re-throw
+      // so the workflow instance itself is reported as errored in the
+      // dashboard (preserves observability).
+      const m = err instanceof Error ? err.message : String(err);
+      await failRow(m);
+      throw err;
+    }
+  }
 }

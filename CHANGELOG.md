@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.12.0
+
+- Unblock Unified Billing video and music generation by migrating from `ctx.waitUntil` to Cloudflare Workflows. Resolves the long-standing `waitUntil` cancellation issue: previously, jobs whose `env.AI.run` call exceeded the ~30-second post-response budget were cancelled mid-flight, leaving D1 rows stuck in `pending`. The new `LongRunWorkflow` class holds the blocking call alive across step boundaries (unlimited wall-clock per step for I/O-bound work) and retries each phase independently.
+- Affected providers (now durable): Google Veo 3 / Veo 3 Fast, ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0, PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, MiniMax Music 2.6. xAI Grok Imagine Video and Google Veo BYOK paths are unchanged (still use the submit-and-poll pattern from v0.10.2, which already works).
+- Workflow steps: (1) `invoke-model` calls `env.AI.run` with 1 retry on 30s linear backoff; (2) `download-and-store` fetches the upstream artifact and uploads to R2 in one combined step (Workflows cap step return values at 1 MiB so we can't pass bytes between steps - video files are 5-15MB, music 3-5MB); (3) `finalize-d1` writes status, `output_artifact`, and latency to the chats row.
+- D1 `chats.job_id` now stores the Workflow instance ID for Unified Billing jobs (BYOK rows still store the upstream provider's job ID). Useful for cross-referencing with `npx wrangler workflows instances describe skyphusion-longrun <id>`.
+- `wrangler.toml` adds the `[[workflows]]` binding (`LONGRUN`, class `LongRunWorkflow`) and `[observability]` block. The new binding requires a `wrangler deploy` to take effect; workflows are not supported on `wrangler dev --remote`.
+- Frontend unchanged: the existing `GET /api/job/:id` polling endpoint still works. The workflow updates D1 directly when complete, so the poll endpoint just reads the current state.
+- Removed: `generateVideoUnified`, `generateMusicBackground`, `MusicGenResult`, `VideoGenResult` (replaced by inline workflow logic).
+- No D1 migration required.
+
+**Known limitations carried into v0.12.0:**
+
+- Per-provider param mapping is still Veo-baseline (`prompt / duration / aspect_ratio / resolution / generate_audio`) for all video models. ByteDance/RunwayML/Alibaba/PixVerse/Vidu may reject or ignore some of those parameters; expect param-shape iteration as each provider is exercised in production. Errors will surface in `chats.job_error` rather than getting silently swallowed.
+- Bedrock Nova vision attachments are still text-only (`callBedrockNova` strips image content parts). Frontend gates uploads on the `vision` capability flag so the UI lets users attach images, but the worker drops them silently. Backlog item.
+
 ## v0.11.1
 
 - Expand OpenAI BYOK across model types per Conrad's confirmed model list:

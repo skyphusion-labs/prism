@@ -39,3 +39,21 @@ binding = "ASSETS"
 # in the URL path after /ai-gateway/.
 [vars]
 GATEWAY_ID = "PLACEHOLDER_PASTE_YOUR_AI_GATEWAY_SLUG_HERE"
+
+# Cloudflare Workflow for long-running Unified Billing video and music gen
+# (v0.12.0). env.AI.run for these models blocks until completion (30s-3min),
+# which exceeds the ~30s waitUntil budget after an HTTP response. Workflows
+# provide a durable execution primitive: the LongRunWorkflow class invokes the
+# model, downloads the result, uploads to R2, and finalizes the D1 row across
+# independently-retryable steps. Each instance is observable in the Cloudflare
+# dashboard.
+[[workflows]]
+name = "skyphusion-longrun"
+binding = "LONGRUN"
+class_name = "LongRunWorkflow"
+
+# Per-instance observability for the worker (lets you tail logs in the
+# dashboard). Workflows have their own dashboard surface; this enables it
+# for the rest of the worker too.
+[observability]
+enabled = true

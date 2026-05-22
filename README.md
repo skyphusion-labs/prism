@@ -130,6 +130,22 @@ The worker is the only public surface. R2 is private; the worker streams objects
 - `chat`: text generation. Accepts vision attachments on vision-capable models. Audio attachments are transcribed via Whisper. Video attachments are 8 client-extracted keyframes.
 - `image`: text-to-image generation. The system prompt field becomes the negative prompt. Output is a JPEG in R2.
 - `tts`: text-to-speech. Output is audio (MP3 or model-default container) in R2.
+- `stt`: speech-to-text transcription. Input audio, output text.
+- `video`: text-to-video generation. Long-running (30s-3min); see "Long-running jobs" below.
+- `music`: text-to-music generation. Long-running (30s-90s); see "Long-running jobs" below.
+
+### Long-running jobs
+
+Video and music generation can take 1-3 minutes per call, which exceeds the ~30-second post-response budget that Cloudflare Workers gives to `ctx.waitUntil`. Two architectures handle this:
+
+**BYOK video** (xAI Grok Imagine Video, Google Veo with your API key) uses submit-and-poll: the worker submits the job synchronously (one fast HTTP call), persists the upstream job ID, and returns immediately. Each client poll of `/api/job/:id` triggers ONE fresh worker invocation that checks upstream status; when done, that invocation downloads to R2 and finalizes D1.
+
+**Unified Billing video and music** (Veo/Seedance/Hailuo/Gen-4.5/HappyHorse/PixVerse/Vidu/MiniMax Music via Cloudflare credits) uses [Cloudflare Workflows](https://developers.cloudflare.com/workflows/). The `LongRunWorkflow` class (defined at the bottom of `src/index.ts`) holds the blocking `env.AI.run` call alive across step boundaries and retries each phase independently. Workflow instance IDs are stored on the chats row as `job_id` for traceability.
+
+The `[[workflows]]` binding in `wrangler.toml` declares this. Two operational notes:
+
+- Workflows are not supported in `wrangler dev --remote`. Local dev mode is fine; deploy to test the Unified Billing video and music paths.
+- To inspect a stuck job: `npx wrangler workflows instances describe skyphusion-longrun <job_id>` shows the per-step status, retry count, and any error messages.
 
 ## Multimodal handling
 
@@ -229,6 +245,76 @@ npm run deploy
 The worker sends `x-goog-api-key` on every request, overriding any stored key.
 
 Billing: Google charges your account directly. Gemini 3.5 Flash and Gemini 3.1 Flash are roughly $0.30/$2.50 per million input/output tokens, Gemini 3.1 Pro is higher (premium reasoning tier), Gemini 2.5 Pro is at the older 2.5-family pricing. Check https://ai.google.dev/pricing for current rates.
+
+## OpenAI models (BYOK)
+
+OpenAI chat models route through Cloudflare AI Gateway's OpenAI proxy, using the standard `messages` array format. v0.11.0 ships GPT-5.5, GPT-5.4, GPT-5.4 mini, and GPT-4.1 in the catalog.
+
+Set the API key as a worker secret:
+```
+npx wrangler secret put OPENAI_API_KEY
+npm run deploy
+```
+
+Billing: OpenAI charges your account directly per https://openai.com/api/pricing/. GPT-5.5 Pro is premium-tier; GPT-5.4 mini is a good speed/cost daily driver. The worker sends `Authorization: Bearer $OPENAI_API_KEY` on every request, no stored-key fallback.
+
+## Amazon Bedrock models (BYOK)
+
+v0.11.0 adds Bedrock support via AWS SigV4 signing using the `aws4fetch` library. Two model families are wired up:
+
+**Nova (Amazon's chat models)**: Nova 2 Lite, Nova 2 Pro, Nova Lite, Nova Pro. All routed through Bedrock's Converse API, which normalizes request/response shapes across model families.
+
+**Pegasus 1.2 (TwelveLabs video-Q&A)**: Single-shot video understanding. Takes a video file + prompt, returns text analysis. Uses Bedrock's `InvokeModel` endpoint with a video-specific request body.
+
+### Setup
+
+```
+npx wrangler secret put AWS_ACCESS_KEY_ID
+npx wrangler secret put AWS_SECRET_ACCESS_KEY
+```
+
+Optionally set `AWS_REGION` (defaults to `us-east-1`) and `AWS_REGION_PEGASUS` (defaults to `us-west-2`, since Pegasus has tighter regional availability than Nova):
+
+```
+npx wrangler secret put AWS_REGION
+npx wrangler secret put AWS_REGION_PEGASUS
+```
+
+### IAM scoping (recommended)
+
+Create an IAM user with only Bedrock invoke permissions. Attach a policy like:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": [
+      "bedrock:InvokeModel",
+      "bedrock:InvokeModelWithResponseStream"
+    ],
+    "Resource": "*"
+  }]
+}
+```
+
+The user must also have model access requested and approved in the Bedrock console (Console → Bedrock → Model access → Manage model access). Without explicit access, every invoke returns `AccessDeniedException`.
+
+### Pegasus regional limits
+
+Pegasus 1.2 is only generally available in `us-west-2` and `eu-west-1`. Cross-region inference from other US/EU regions can work but may add latency. If your Nova workloads run in `us-east-1` but you also want Pegasus, set `AWS_REGION=us-east-1` for Nova and `AWS_REGION_PEGASUS=us-west-2` for Pegasus.
+
+### Pegasus video size limit
+
+Bedrock's `InvokeModel` endpoint has a 25MB request payload limit. After base64 encoding, that's about 18MB of binary video. The frontend caps Pegasus uploads at 18MB and returns a clear error for larger files. To support bigger videos you'd integrate S3 (Pegasus accepts `s3Location` in `mediaSource` as an alternative to base64). Not implemented in this build.
+
+### Pegasus in multi-turn conversations
+
+Pegasus is fundamentally single-shot: one video + one prompt per call. If you continue a Pegasus conversation past the first turn, you must re-attach the video on each follow-up turn. The frontend will accept the upload but the worker won't reuse the prior turn's video from R2 automatically. A future iteration may auto-attach the prior turn's video on continuation.
+
+### Billing
+
+AWS charges your account directly per https://aws.amazon.com/bedrock/pricing/. Nova family is competitively priced (Nova 2 Lite is the cheapest at fractions of a cent per 1k tokens); Pegasus pricing is per-second of analyzed video duration.
 
 ## Video generation (dual-route: Unified Billing + BYOK)
 
