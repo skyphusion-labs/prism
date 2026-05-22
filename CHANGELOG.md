@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.10.0
+
+- Multi-turn conversations. Each conversation is a sequence of turns sharing a `conversation_id` and ordered by `turn_index`. Continuing a conversation pulls prior turns from D1 and assembles a `[system, user1, assistant1, user2, assistant2, ..., userN]` message array for the model.
+- New schema columns on `chats`: `conversation_id TEXT` and `turn_index INTEGER`. Backfill migration assigns `'legacy-<id>'` and `turn_index = 0` to existing rows so they remain accessible.
+- New API endpoints: `GET /api/conversations` (list, summarized), `GET /api/conversations/:id` (all turns of a conversation), `DELETE /api/conversations/:id` (cascade delete of all turns + R2 artifacts).
+- Frontend rework: the output area is now a scrolling transcript that renders alternating user / assistant turns instead of a single most-recent response. The sidebar lists conversations (one entry per conversation with first prompt + turn count + last activity) instead of individual chat rows. "+ new" starts a fresh conversation.
+- ChatRequest gained optional `conversation_id`. If omitted, the worker generates a UUID and starts a new conversation. If present, the worker continues the existing one (and writes the next turn under it).
+- Chat response gained `conversation_id` and `turn_index` so the frontend can track and continue.
+- Decisions made for v1: per-turn retrieval (each turn can independently use_docs); text-only history (image/audio/video attachments from prior turns are not re-sent on continuation, only the user's text and the assistant's text reply); mixed-model conversations allowed (switch models between turns freely); no automatic summarization of older turns.
+- Required migrations: `ALTER TABLE chats ADD COLUMN conversation_id TEXT`, `ALTER TABLE chats ADD COLUMN turn_index INTEGER`, then `UPDATE chats SET conversation_id = 'legacy-' || id, turn_index = 0 WHERE conversation_id IS NULL`, and `CREATE INDEX IF NOT EXISTS idx_chats_conversation ON chats(conversation_id, turn_index)`.
+
 ## v0.9.5
 
 - Added Claude Opus 4.7 (`claude-opus-4-7`) as the top Anthropic entry. Opus 4.7 is Anthropic's flagship as of April 16, 2026, with a 1M-token context window, 128K max output, and adaptive thinking. Existing Opus 4.6, Sonnet 4.6, and Haiku 4.5 entries are preserved. BYOK via the same Anthropic dispatch path; no code or config changes needed beyond the catalog entry.
@@ -10,7 +21,7 @@
 
 ## v0.9.3
 
-- Critical fix: `retrieveContext` was silently swallowing errors at every step (embed failure, Vectorize query failure). When anything in the retrieval pipeline threw, the function returned an empty array with no logging and no error surfaced to the user — making it look like retrieval just "wasn't finding anything" when in fact it was hard-failing.
+- Critical fix: `retrieveContext` was silently swallowing errors at every step (embed failure, Vectorize query failure). When anything in the retrieval pipeline threw, the function returned an empty array with no logging and no error surfaced to the user ,  making it look like retrieval just "wasn't finding anything" when in fact it was hard-failing.
 - New return shape: `retrieveContext` now returns `{ chunks, error }`. Errors are logged to `console.error`/`console.warn` (visible via `wrangler tail`) and surfaced in the chat response as `retrieval_error` when `use_docs` is on.
 - New explicit diagnostic case: when Vectorize returns matches but the D1 join returns nothing, the error message includes the user_email and sample vector_ids so a user_email mismatch (vectors written under one identity, query made under another) is immediately visible.
 

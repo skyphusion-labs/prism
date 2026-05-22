@@ -187,6 +187,7 @@ interface ChatRequest {
   user_input: string;
   attachments?: InputAttachment[];
   use_docs?: boolean;   // Pass 2: when true, retrieve top-K chunks from Vectorize and inject as context
+  conversation_id?: string;  // Multi-turn: when present, continue an existing conversation
 }
 
 interface RetrievedChunk {
@@ -323,6 +324,15 @@ export default {
       if (request.method === "DELETE") return handleDocumentDelete(request, env, id);
     }
 
+    if (url.pathname === "/api/conversations" && request.method === "GET") {
+      return handleConversationList(request, env);
+    }
+    const c = url.pathname.match(/^\/api\/conversations\/([A-Za-z0-9_:-]+)$/);
+    if (c) {
+      if (request.method === "GET")    return handleConversationGet(request, env, c[1]);
+      if (request.method === "DELETE") return handleConversationDelete(request, env, c[1]);
+    }
+
     const h = url.pathname.match(/^\/api\/history\/(\d+)$/);
     if (h) {
       const id = Number(h[1]);
@@ -438,12 +448,41 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
     ? [{ type: "text", text: userText }, ...imageDataUrls.map((url) => ({ type: "image_url", image_url: { url } }))]
     : userText;
 
-  // ---- RAG retrieval (Pass 2) ----
-  // When body.use_docs is true, embed the user's prompt, fetch top-K chunks
-  // from Vectorize, and fold them into the system prompt so the model sees
-  // them as reference material. We use body.user_input (the textual prompt)
-  // as the query - attachment transcripts could be added but for now this
-  // keeps retrieval signal focused on what the user actually typed.
+  // ---- Multi-turn conversation continuation (v0.10.0) ----
+  // If body.conversation_id is present, fetch prior turns of that conversation
+  // (filtered to this user, completed chat turns only) and assemble a history
+  // of user/assistant message pairs. The current turn appends to that history.
+  // If no conversation_id, generate a new one for the first turn.
+  let conversationId = body.conversation_id?.trim() || "";
+  let turnIndex = 0;
+  const priorTurns: Array<{ user_input: string; output: string }> = [];
+
+  if (conversationId) {
+    const prior = await env.DB.prepare(
+      `SELECT user_input, output, turn_index
+         FROM chats
+        WHERE conversation_id = ?
+          AND user_email = ?
+          AND status = 'done'
+          AND model_type = 'chat'
+        ORDER BY turn_index ASC`
+    )
+      .bind(conversationId, userEmail)
+      .all<{ user_input: string; output: string; turn_index: number }>();
+    const rows = prior.results ?? [];
+    for (const r of rows) {
+      // Skip empty/failed prior turns defensively.
+      if (r.user_input && r.output) {
+        priorTurns.push({ user_input: r.user_input, output: r.output });
+      }
+    }
+    turnIndex = rows.length ? (rows[rows.length - 1].turn_index + 1) : 0;
+  } else {
+    // crypto.randomUUID() is available in Workers runtime.
+    conversationId = crypto.randomUUID();
+  }
+
+  // RAG retrieval (Pass 2) - per-turn, applies only to THIS turn's system prompt
   let retrievedChunks: RetrievedChunk[] = [];
   let retrievalError: string | null = null;
   if (body.use_docs) {
@@ -465,10 +504,19 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
   // include the system role here - we pass effectiveSystemPrompt as the
   // param instead. For providers that take messages-only (xAI, Workers AI),
   // we DO include the system role.
+  //
+  // Prior turns of this conversation go in as alternating user/assistant
+  // text messages. Multimodal content (images) from prior turns is NOT
+  // re-included; if the user wants to reference earlier images they can
+  // re-attach. Current turn's attachments are still threaded into userContent.
   const wantsSystemInMessages = !(model.provider === "anthropic" || model.provider === "google");
   const messages: Array<unknown> = [];
   if (effectiveSystemPrompt && wantsSystemInMessages) {
     messages.push({ role: "system", content: effectiveSystemPrompt });
+  }
+  for (const t of priorTurns) {
+    messages.push({ role: "user", content: t.user_input });
+    messages.push({ role: "assistant", content: t.output });
   }
   messages.push({ role: "user", content: userContent });
 
@@ -515,6 +563,8 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
     latency_ms: latency,
     ai_gateway_log_id: logId,
     retrieved_context: retrievedChunks.length ? retrievedChunks : null,
+    conversation_id: conversationId,
+    turn_index: turnIndex,
   });
 
   return json({
@@ -529,6 +579,8 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
     ai_gateway_log_id: logId,
     transcripts: extraText,
     retrieved_chunks: retrievedChunks,
+    conversation_id: conversationId,
+    turn_index: turnIndex,
     // Diagnostic: when use_docs was on, include the exact text that went into
     // the model as the system prompt, plus any retrieval error. Inspect via
     // browser DevTools to verify the retrieval block reached the model.
@@ -893,17 +945,25 @@ interface PersistArgs {
   job_error?: string | null;
   job_started_at?: string | null;
   retrieved_context?: RetrievedChunk[] | null;
+  conversation_id?: string | null;
+  turn_index?: number | null;
 }
 
 async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; created_at: string }> {
+  // For non-chat model types (image/tts/video/etc), conversation_id is
+  // auto-assigned as a synthetic per-row key so the rows still group in the
+  // sidebar as single-turn entries.
+  const convId = a.conversation_id ?? null;
+  const turnIdx = a.turn_index ?? null;
+
   const row = await env.DB.prepare(
     `INSERT INTO chats
        (user_email, model, model_type, system_prompt, user_input, output,
         output_artifact, attachments,
         tokens_in, tokens_out, latency_ms, ai_gateway_log_id,
         status, job_id, job_provider, job_error, job_started_at,
-        retrieved_context)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        retrieved_context, conversation_id, turn_index)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      RETURNING id, created_at`
   )
     .bind(
@@ -916,9 +976,22 @@ async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; crea
       a.job_provider ?? null,
       a.job_error ?? null,
       a.job_started_at ?? null,
-      a.retrieved_context && a.retrieved_context.length ? JSON.stringify(a.retrieved_context) : null
+      a.retrieved_context && a.retrieved_context.length ? JSON.stringify(a.retrieved_context) : null,
+      convId,
+      turnIdx
     )
     .first<{ id: number; created_at: string }>();
+
+  // For non-chat rows that didn't get an explicit conversation_id, backfill
+  // a synthetic one so they appear in the conversation list.
+  if (row && !convId) {
+    await env.DB.prepare(
+      `UPDATE chats SET conversation_id = ?, turn_index = 0 WHERE id = ?`
+    )
+      .bind(`single-${row.id}`, row.id)
+      .run();
+  }
+
   return row ?? { id: 0, created_at: new Date().toISOString() };
 }
 
@@ -1774,6 +1847,139 @@ async function handleHistoryGet(request: Request, env: Env, id: number): Promise
 
 function safeParseJson<T>(s: string): T | null {
   try { return JSON.parse(s) as T; } catch { return null; }
+}
+
+// ---------- Multi-turn conversations ----------
+//
+// A conversation is a set of chat rows sharing the same conversation_id,
+// ordered by turn_index. Old single-turn chats with NULL conversation_id
+// were backfilled in the migration to 'legacy-<id>' so they still appear
+// in the list. Non-chat rows (image/tts/etc) get 'single-<id>' assigned
+// at persistChat time and show as single-turn entries.
+//
+// handleConversationList returns one row per distinct conversation_id with
+// a summary: turn count, first prompt, latest model, last activity. Used
+// by the sidebar as the replacement for the per-row history list.
+//
+// handleConversationGet returns all rows of a conversation in turn order.
+// Used when the user clicks a conversation to view the full transcript.
+
+async function handleConversationList(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  // Group by conversation_id. For each, give:
+  //   - turn_count, first/last timestamps
+  //   - the first user_input as a preview
+  //   - the model used in the latest turn
+  //   - whether any turn has a non-null output_artifact (for the icon)
+  //   - the model_type of the first turn (chat/image/tts/video/music/stt)
+  const rows = await env.DB.prepare(
+    `SELECT
+        c.conversation_id,
+        COUNT(*) AS turn_count,
+        MIN(c.created_at) AS first_created_at,
+        MAX(c.created_at) AS last_created_at,
+        (SELECT user_input FROM chats c2
+          WHERE c2.conversation_id = c.conversation_id AND c2.user_email = c.user_email
+          ORDER BY c2.turn_index ASC LIMIT 1) AS first_input,
+        (SELECT model FROM chats c2
+          WHERE c2.conversation_id = c.conversation_id AND c2.user_email = c.user_email
+          ORDER BY c2.turn_index DESC LIMIT 1) AS latest_model,
+        (SELECT model_type FROM chats c2
+          WHERE c2.conversation_id = c.conversation_id AND c2.user_email = c.user_email
+          ORDER BY c2.turn_index ASC LIMIT 1) AS first_model_type,
+        SUM(CASE WHEN output_artifact IS NOT NULL THEN 1 ELSE 0 END) AS artifact_count
+      FROM chats c
+      WHERE c.user_email = ?
+      GROUP BY c.conversation_id
+      ORDER BY last_created_at DESC
+      LIMIT 200`
+  )
+    .bind(userEmail)
+    .all<{
+      conversation_id: string;
+      turn_count: number;
+      first_created_at: string;
+      last_created_at: string;
+      first_input: string;
+      latest_model: string;
+      first_model_type: string;
+      artifact_count: number;
+    }>();
+  return json({ user: userEmail, conversations: rows.results ?? [] });
+}
+
+async function handleConversationGet(request: Request, env: Env, id: string): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const rows = await env.DB.prepare(
+    `SELECT * FROM chats
+      WHERE conversation_id = ? AND user_email = ?
+      ORDER BY turn_index ASC, created_at ASC`
+  )
+    .bind(id, userEmail)
+    .all<{
+      attachments: string | null;
+      output_artifact: string | null;
+      retrieved_context: string | null;
+    }>();
+
+  if ((rows.results ?? []).length === 0) {
+    return json({ error: "Not found" }, { status: 404 });
+  }
+
+  // Parse the JSON columns on each turn so the frontend doesn't have to.
+  const turns = (rows.results ?? []).map((row) => ({
+    ...row,
+    attachments: row.attachments ? safeParseJson<PersistedAttachment[]>(row.attachments) : null,
+    output_artifact: row.output_artifact ? safeParseJson<OutputArtifact>(row.output_artifact) : null,
+    retrieved_context: row.retrieved_context ? safeParseJson<RetrievedChunk[]>(row.retrieved_context) : null,
+  }));
+
+  return json({ conversation_id: id, turns });
+}
+
+async function handleConversationDelete(request: Request, env: Env, id: string): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  // Pull all R2 keys across all turns before deleting D1 rows.
+  const rows = await env.DB.prepare(
+    `SELECT attachments, output_artifact FROM chats
+      WHERE conversation_id = ? AND user_email = ?`
+  )
+    .bind(id, userEmail)
+    .all<{ attachments: string | null; output_artifact: string | null }>();
+
+  const results = rows.results ?? [];
+  if (results.length === 0) {
+    return json({ error: "Not found" }, { status: 404 });
+  }
+
+  const keysToDelete: string[] = [];
+  for (const row of results) {
+    if (row.attachments) {
+      const atts = safeParseJson<PersistedAttachment[]>(row.attachments) ?? [];
+      for (const a of atts) {
+        if (a.type === "image") keysToDelete.push(a.key);
+        else if (a.type === "video_frames") keysToDelete.push(...(a.keys ?? []));
+      }
+    }
+    if (row.output_artifact) {
+      const oa = safeParseJson<OutputArtifact>(row.output_artifact);
+      if (oa?.key) keysToDelete.push(oa.key);
+    }
+  }
+
+  await env.DB.prepare(
+    `DELETE FROM chats WHERE conversation_id = ? AND user_email = ?`
+  )
+    .bind(id, userEmail)
+    .run();
+
+  for (const k of keysToDelete) {
+    await r2DeleteSafe(env, k);
+  }
+
+  return json({ deleted: id, turns_removed: results.length, artifacts_removed: keysToDelete.length });
 }
 
 async function handleHistoryDelete(request: Request, env: Env, id: number): Promise<Response> {

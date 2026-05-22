@@ -342,10 +342,8 @@ select:focus, textarea:focus {
   flex-direction: column;
   gap: 0.5rem;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
-
-.output-area > .output { flex: 1 1 auto; }
 
 .output-header {
   display: flex;
@@ -356,29 +354,84 @@ select:focus, textarea:focus {
   color: var(--fg-dim);
 }
 
-.output {
+/* ---------- Transcript (multi-turn conversation view) ---------- */
+
+.transcript {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+  min-height: 0;
+}
+
+.transcript.empty::before {
+  content: "no messages yet \2014 type a prompt below to start";
+  display: block;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 0.875rem;
+  margin-top: 2rem;
+}
+
+.turn {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+}
+
+.turn-user {
   background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 1rem;
-  margin: 0;
+}
+
+.turn-assistant {
+  background: var(--bg-elev2);
+}
+
+.turn-role {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.turn-text {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 0.8125rem;
   white-space: pre-wrap;
   word-wrap: break-word;
-  overflow-y: auto;
-  min-height: 0;
+  margin: 0;
 }
 
-.output.error { color: var(--error); }
-.output:empty { display: none; }
+.turn-text.pending { color: var(--fg-dim); font-style: italic; }
+.turn-text.error   { color: var(--error); }
 
-.output-artifact {
-  display: none;
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
+.turn-meta {
+  font-size: 0.7rem;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-meta:empty { display: none; }
+
+.turn-artifact {
   border-radius: 4px;
-  padding: 0.75rem;
+  background: var(--bg);
+  padding: 0.5rem;
 }
 
 .output-image {
@@ -400,6 +453,11 @@ select:focus, textarea:focus {
   display: block;
   background: #000;
   border-radius: 4px;
+}
+
+.output-actions {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
 }
 
 .history-list .status-failed { color: var(--warn); }

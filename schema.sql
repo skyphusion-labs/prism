@@ -39,8 +39,16 @@ CREATE TABLE IF NOT EXISTS chats (
   job_provider      TEXT,
   job_error         TEXT,
   job_started_at    TEXT,
-  retrieved_context TEXT
+  retrieved_context TEXT,
+  -- Multi-turn (v0.10.0): chats with the same conversation_id form one thread.
+  -- turn_index is monotonically increasing within a conversation.
+  -- For backward compat, legacy rows are backfilled as conversation_id='legacy-<id>', turn_index=0.
+  conversation_id   TEXT,
+  turn_index        INTEGER
 );
+
+CREATE INDEX IF NOT EXISTS idx_chats_conversation
+  ON chats(conversation_id, turn_index);
 
 CREATE INDEX IF NOT EXISTS idx_chats_user_created
   ON chats(user_email, created_at DESC);

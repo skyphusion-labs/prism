@@ -1,7 +1,12 @@
-// skyphusion-llm-public frontend. Model-type aware:
-//   - chat: text + optional image/audio/video attachments, output is text
-//   - image: text prompt (system_prompt becomes negative prompt), output is image
-//   - tts: text only, output is audio
+// skyphusion-llm-public frontend. Multi-turn conversations:
+//   - Each "conversation" is a sequence of turns sharing a conversation_id.
+//   - The output area renders a transcript: user turn, assistant turn, etc.
+//   - Submitting continues the current conversation; the "+ new" button
+//     starts a fresh one.
+//
+// For non-chat model types (image gen, TTS, video, etc), each row still
+// shows in the sidebar as a single-turn conversation - the transcript
+// view degrades to one user + one assistant turn, which is fine.
 //
 // Input artifacts are sent as data URLs and stored server-side in R2. Output
 // artifacts (generated images, generated audio) are returned as R2 keys and
@@ -15,7 +20,8 @@ const systemPrompt      = $("#system-prompt");
 const userInputLabel    = $("#user-input-label");
 const userInput         = $("#user-input");
 const runBtn            = $("#run");
-const output            = $("#output");
+const transcriptEl      = $("#transcript");
+const convTitleEl       = $("#conv-title");
 const outputMeta        = $("#output-meta");
 const historyList       = $("#history-list");
 const userBadge         = $("#user-badge");
@@ -24,10 +30,7 @@ const fileInput         = $("#file-input");
 const attachBtn         = $("#attach-btn");
 const attachHint        = $("#attach-hint");
 const attachments       = $("#attachments");
-const loadedAttachments = $("#loaded-attachments");
-const outputArtifactEl  = $("#output-artifact");
 const attachRow         = $("#attach-row");
-const retrievedChunksEl = $("#retrieved-chunks");
 const useDocsRow        = $("#use-docs-row");
 const useDocsCheckbox   = $("#use-docs");
 const sidebarToggle     = $("#sidebar-toggle");
@@ -43,14 +46,15 @@ const VIDEO_FRAME_MAX_DIM = 1024;
 
 const state = {
   user: null,
-  currentChatId: null,
+  currentConversationId: null,
+  currentTurns: [],
   modelsById: {},
   pendingAttachments: [],
   pollTimer: null,
   pollChatId: null,
   pollStartedAt: 0,
   pollElapsedTimer: null,
-  documentCount: 0,  // tracks whether to show the "use my docs" toggle
+  documentCount: 0,
 };
 
 // ---------- API helpers ----------
@@ -396,40 +400,31 @@ function renderStoredAttachment(att) {
   return "";
 }
 
-function renderOutputArtifact(oa) {
-  if (!oa) {
-    outputArtifactEl.innerHTML = "";
-    outputArtifactEl.style.display = "none";
-    return;
-  }
-  outputArtifactEl.style.display = "block";
+// Render an output artifact (image / audio / video) as an HTML fragment.
+// Used inside an assistant turn block in the transcript.
+function renderOutputArtifactHTML(oa) {
+  if (!oa) return "";
   const url = artifactUrl(oa.key);
   if (oa.type === "image") {
-    outputArtifactEl.innerHTML = `
+    return `
       <img class="output-image" src="${escapeHtml(url)}" alt="generated image">
       <div class="output-actions"><a href="${escapeHtml(url)}" download>download</a></div>`;
   } else if (oa.type === "audio") {
-    outputArtifactEl.innerHTML = `
+    return `
       <audio class="output-audio" controls src="${escapeHtml(url)}"></audio>
       <div class="output-actions"><a href="${escapeHtml(url)}" download>download</a></div>`;
   } else if (oa.type === "video") {
-    outputArtifactEl.innerHTML = `
+    return `
       <video class="output-video" controls preload="metadata" src="${escapeHtml(url)}"></video>
       <div class="output-actions"><a href="${escapeHtml(url)}" download>download</a></div>`;
-  } else {
-    outputArtifactEl.innerHTML = "";
   }
+  return "";
 }
 
-// Render the retrieved-chunks block that appears above the model's text
-// output when RAG was used for this turn. Pass null to clear.
-function renderRetrievedChunks(chunks) {
-  if (!chunks || chunks.length === 0) {
-    retrievedChunksEl.innerHTML = "";
-    retrievedChunksEl.style.display = "none";
-    return;
-  }
-  retrievedChunksEl.style.display = "block";
+// Render retrieved chunks as an HTML fragment. Embedded inside a user turn
+// when RAG was used for that turn. Pass null/[] to get "".
+function renderRetrievedChunksHTML(chunks) {
+  if (!chunks || chunks.length === 0) return "";
   const items = chunks
     .map((c, i) => {
       const score = (typeof c.score === "number") ? c.score.toFixed(3) : "?";
@@ -448,9 +443,16 @@ function renderRetrievedChunks(chunks) {
         </details>`;
     })
     .join("");
-  retrievedChunksEl.innerHTML = `
-    <div class="rc-header">retrieved context (${chunks.length} chunk${chunks.length === 1 ? "" : "s"})</div>
-    ${items}`;
+  return `
+    <div class="retrieved-chunks">
+      <div class="rc-header">retrieved context (${chunks.length} chunk${chunks.length === 1 ? "" : "s"})</div>
+      ${items}
+    </div>`;
+}
+
+function renderStoredAttachmentsHTML(atts) {
+  if (!atts || atts.length === 0) return "";
+  return `<div class="loaded-attachments">${atts.map(renderStoredAttachment).join("")}</div>`;
 }
 
 // ---------- Video job polling ----------
@@ -466,11 +468,17 @@ function fmtElapsed(ms) {
   return min > 0 ? `${min}m ${sec}s` : `${sec}s`;
 }
 
+// While an async job is running, update the last assistant turn in place
+// to show elapsed time. The turn's status stays "pending" until the poll
+// resolves with done or failed.
 function renderPendingOutput(progress) {
   const elapsed = fmtElapsed(Date.now() - state.pollStartedAt);
   const pct = (typeof progress === "number" && progress > 0) ? ` (${progress}%)` : "";
-  output.classList.remove("error");
-  output.textContent = `Generating, this can take 1-3 minutes\u2026\n\nElapsed: ${elapsed}${pct}`;
+  const last = state.currentTurns[state.currentTurns.length - 1];
+  if (last && last.status === "pending") {
+    last.output = `Generating, this can take 1-3 minutes\u2026\n\nElapsed: ${elapsed}${pct}`;
+    renderTranscript(state.currentTurns);
+  }
 }
 
 function stopPolling() {
@@ -495,18 +503,22 @@ async function pollOnce() {
 
     if (result.status === "done") {
       stopPolling();
-      output.textContent = "";
-      renderOutputArtifact(result.output_artifact || null);
-      outputMeta.textContent = result.latency_ms ? `${result.latency_ms}ms` : "";
-      await loadHistory();
+      // Refetch the full conversation for the canonical resolved state.
+      if (state.currentConversationId) await loadConversation(state.currentConversationId);
+      await loadConversations();
       return;
     }
 
     if (result.status === "failed") {
       stopPolling();
-      output.classList.add("error");
-      output.textContent = `Video generation failed: ${result.job_error || "unknown error"}`;
-      await loadHistory();
+      // Update the last turn in place to a failed state.
+      const last = state.currentTurns[state.currentTurns.length - 1];
+      if (last) {
+        last.status = "failed";
+        last.job_error = result.job_error || "unknown error";
+        renderTranscript(state.currentTurns);
+      }
+      await loadConversations();
       return;
     }
   } catch (err) {
@@ -544,88 +556,144 @@ fileInput.addEventListener("change", async (e) => {
 
 modelSelect.addEventListener("change", updateAffordance);
 
-// ---------- History ----------
+// ---------- Conversations ----------
 
-async function loadHistory() {
-  const { chats } = await api("/api/history");
-  historyList.innerHTML = chats
+async function loadConversations() {
+  const { conversations } = await api("/api/conversations");
+  historyList.innerHTML = (conversations || [])
     .map((c) => {
-      const preview = (c.user_input || "").slice(0, 60).replace(/\s+/g, " ");
-      const date = new Date(c.created_at.includes("Z") ? c.created_at : c.created_at + "Z");
+      const preview = (c.first_input || "").slice(0, 60).replace(/\s+/g, " ");
+      const date = new Date((c.last_created_at || "").includes("Z") ? c.last_created_at : c.last_created_at + "Z");
       const dateStr = date.toLocaleString(undefined, {
         month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit",
       });
+
+      // Icons summarize the conversation: model type, turn count, artifacts.
       const icons = [];
-      if (c.has_attachments)     icons.push(`<span title="has input attachments">\u{1F4CE}</span>`);
-      if (c.status === "pending") icons.push(`<span title="generating, in progress">\u23F3</span>`);
-      if (c.status === "failed")  icons.push(`<span title="generation failed" class="status-failed">\u26A0</span>`);
-      if (c.has_output_artifact) {
-        if (c.model_type === "image") icons.push(`<span title="image output">\u{1F5BC}</span>`);
-        else if (c.model_type === "tts") icons.push(`<span title="audio output">\u{1F50A}</span>`);
-        else if (c.model_type === "video") icons.push(`<span title="video output">\u{1F3AC}</span>`);
-        else if (c.model_type === "music") icons.push(`<span title="music output">\u{1F3B5}</span>`);
-        else if (c.model_type === "stt")   icons.push(`<span title="transcript">\u{1F4DD}</span>`);
-        else icons.push(`<span title="artifact output">\u{1F4E6}</span>`);
-      }
+      if (c.first_model_type === "image") icons.push(`<span title="image gen">\u{1F5BC}</span>`);
+      else if (c.first_model_type === "tts") icons.push(`<span title="TTS">\u{1F50A}</span>`);
+      else if (c.first_model_type === "video") icons.push(`<span title="video gen">\u{1F3AC}</span>`);
+      else if (c.first_model_type === "music") icons.push(`<span title="music gen">\u{1F3B5}</span>`);
+      else if (c.first_model_type === "stt")   icons.push(`<span title="transcript">\u{1F4DD}</span>`);
+      if (c.turn_count > 1) icons.push(`<span class="turn-count" title="${c.turn_count} turns">${c.turn_count}\u00b7</span>`);
       const iconBlock = icons.length ? `<span class="attach-icon">${icons.join(" ")}</span>` : `<span></span>`;
+
       return `
-        <li data-id="${c.id}">
-          <span class="preview" title="${escapeHtml(c.user_input)}">${escapeHtml(preview)}</span>
+        <li data-conv-id="${escapeHtml(c.conversation_id)}">
+          <span class="preview" title="${escapeHtml(c.first_input || "")}">${escapeHtml(preview)}</span>
           ${iconBlock}
           <span class="meta">${dateStr}</span>
-          <button class="delete" data-id="${c.id}" type="button" title="delete">\u00d7</button>
+          <button class="delete" data-conv-delete="${escapeHtml(c.conversation_id)}" type="button" title="delete conversation">\u00d7</button>
         </li>`;
     })
     .join("");
 }
 
-async function loadChat(id) {
+async function loadConversation(id) {
   stopPolling();
-  const chat = await api(`/api/history/${id}`);
-  state.currentChatId = id;
-  modelSelect.value = chat.model;
-  updateAffordance();
-  systemPrompt.value = chat.system_prompt || "";
-  userInput.value = chat.user_input;
-  output.textContent = chat.output || "";
-  output.classList.remove("error");
-  outputMeta.textContent = fmtMeta(chat);
-  state.pendingAttachments = [];
-  renderAttachments();
-  loadedAttachments.innerHTML = (chat.attachments || [])
-    .map((att) => renderStoredAttachment(att))
-    .join("");
-  renderOutputArtifact(chat.output_artifact);
-  renderRetrievedChunks(chat.retrieved_context || null);
+  const { turns } = await api(`/api/conversations/${encodeURIComponent(id)}`);
+  state.currentConversationId = id;
+  state.currentTurns = turns || [];
 
-  // Resume polling if this chat is a still-pending async job (video or music).
-  if (chat.status === "pending" && (chat.model_type === "video" || chat.model_type === "music")) {
-    startPolling(id, chat.job_started_at);
-  } else if (chat.status === "failed") {
-    output.classList.add("error");
-    output.textContent = `Failed: ${chat.job_error || "unknown error"}`;
+  // Set the model picker to the most-recent turn's model so the user can
+  // continue with the same model by default (they can switch before submitting).
+  if (state.currentTurns.length) {
+    const lastTurn = state.currentTurns[state.currentTurns.length - 1];
+    if (state.modelsById[lastTurn.model]) {
+      modelSelect.value = lastTurn.model;
+      updateAffordance();
+    }
+    // Populate system_prompt from the first turn (it's typically conversation-wide intent).
+    systemPrompt.value = state.currentTurns[0].system_prompt || "";
+  }
+
+  renderTranscript(state.currentTurns);
+  updateConvTitle();
+
+  // If the latest turn is still pending (async video/music job), resume polling.
+  const last = state.currentTurns[state.currentTurns.length - 1];
+  if (last && last.status === "pending" && (last.model_type === "video" || last.model_type === "music")) {
+    startPolling(last.id, last.job_started_at);
   }
 }
 
-async function deleteChat(id) {
-  await api(`/api/history/${id}`, { method: "DELETE" });
-  if (state.currentChatId === id) newChat();
-  await loadHistory();
+async function deleteConversation(id) {
+  await api(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (state.currentConversationId === id) newChat();
+  await loadConversations();
 }
 
 function newChat() {
   stopPolling();
-  state.currentChatId = null;
+  state.currentConversationId = null;
+  state.currentTurns = [];
   userInput.value = "";
-  output.textContent = "";
-  output.classList.remove("error");
-  outputMeta.textContent = "";
   state.pendingAttachments = [];
   renderAttachments();
-  loadedAttachments.innerHTML = "";
-  renderOutputArtifact(null);
-  renderRetrievedChunks(null);
+  renderTranscript([]);
+  outputMeta.textContent = "";
+  updateConvTitle();
   userInput.focus();
+}
+
+function updateConvTitle() {
+  if (!state.currentConversationId || state.currentTurns.length === 0) {
+    convTitleEl.textContent = "new conversation";
+  } else {
+    const first = state.currentTurns[0]?.user_input || "";
+    const preview = first.slice(0, 60).replace(/\s+/g, " ");
+    const n = state.currentTurns.length;
+    convTitleEl.textContent = `${preview || "conversation"} \u00b7 ${n} turn${n === 1 ? "" : "s"}`;
+  }
+}
+
+// ---------- Transcript rendering ----------
+
+function renderTranscript(turns) {
+  if (!turns || turns.length === 0) {
+    transcriptEl.innerHTML = "";
+    transcriptEl.classList.add("empty");
+    return;
+  }
+  transcriptEl.classList.remove("empty");
+  transcriptEl.innerHTML = turns.map((t, i) => renderTurnHTML(t, i)).join("");
+  transcriptEl.scrollTop = transcriptEl.scrollHeight;
+}
+
+function renderTurnHTML(turn, index) {
+  // User side: prompt + attachments + retrieved chunks (if RAG was used this turn)
+  const userBlock = `
+    <div class="turn turn-user" data-turn="${index}">
+      <div class="turn-role">you</div>
+      <div class="turn-body">
+        <div class="turn-text">${escapeHtml(turn.user_input || "")}</div>
+        ${renderStoredAttachmentsHTML(turn.attachments)}
+        ${renderRetrievedChunksHTML(turn.retrieved_context)}
+      </div>
+    </div>`;
+
+  // Assistant side: output text (chat/stt) and/or output artifact (image/audio/video/music)
+  const isPending = turn.status === "pending";
+  const isFailed  = turn.status === "failed";
+  let assistantContent = "";
+  if (isPending) {
+    assistantContent = `<div class="turn-text pending">generating\u2026</div>`;
+  } else if (isFailed) {
+    assistantContent = `<div class="turn-text error">failed: ${escapeHtml(turn.job_error || "unknown error")}</div>`;
+  } else {
+    if (turn.output) assistantContent += `<div class="turn-text">${escapeHtml(turn.output)}</div>`;
+    if (turn.output_artifact) assistantContent += `<div class="turn-artifact">${renderOutputArtifactHTML(turn.output_artifact)}</div>`;
+  }
+  const assistantBlock = `
+    <div class="turn turn-assistant" data-turn="${index}">
+      <div class="turn-role">${escapeHtml(turn.model || "?")}</div>
+      <div class="turn-body">
+        ${assistantContent}
+        <div class="turn-meta">${escapeHtml(fmtMeta(turn) || "")}</div>
+      </div>
+    </div>`;
+
+  return userBlock + assistantBlock;
 }
 
 // ---------- Run ----------
@@ -640,16 +708,40 @@ async function run() {
   stopPolling();
   runBtn.disabled = true;
   attachBtn.disabled = true;
-  const runningMsg = m.type === "chat" ? "\u2026"
-    : m.type === "video" ? "submitting video job\u2026"
-    : m.type === "music" ? "submitting music job\u2026"
-    : m.type === "stt" ? "transcribing\u2026"
-    : `running ${m.type}\u2026`;
-  output.textContent = runningMsg;
-  output.classList.remove("error");
+
+  // Optimistic: append a user turn + a placeholder assistant turn to the
+  // transcript immediately so the UI feels responsive. After the response
+  // comes back we refetch the full conversation to get the canonical state.
+  const placeholderText =
+    m.type === "chat"  ? "\u2026"
+  : m.type === "video" ? "submitting video job\u2026"
+  : m.type === "music" ? "submitting music job\u2026"
+  : m.type === "stt"   ? "transcribing\u2026"
+  : `running ${m.type}\u2026`;
+
+  // Snapshot pending attachments for the optimistic user turn (re-render
+  // after success uses persisted server data).
+  const optimisticAttachments = (m.type === "chat" || m.type === "stt")
+    ? state.pendingAttachments.map((a) => ({
+        type: a.type,
+        filename: a.filename,
+        mime: a.mime,
+        transcript: null,
+      }))
+    : [];
+  const optimisticUserTurn = {
+    user_input: user_input || "(no text, attachments only)",
+    attachments: optimisticAttachments,
+    retrieved_context: null,
+  };
+  const optimisticAssistantTurn = {
+    model, model_type: m.type, output: "",
+    status: "pending",
+    output_artifact: null,
+  };
+  state.currentTurns.push(optimisticUserTurn, optimisticAssistantTurn);
+  renderTranscript(state.currentTurns);
   outputMeta.textContent = "";
-  renderOutputArtifact(null);
-  renderRetrievedChunks(null);
 
   try {
     const requestBody = {
@@ -657,6 +749,7 @@ async function run() {
       system_prompt,
       user_input: user_input || "(no text, attachments only)",
       attachments: (m.type === "chat" || m.type === "stt") ? state.pendingAttachments : [],
+      conversation_id: state.currentConversationId || undefined,
     };
     // RAG: only send the flag for chat models when the user has it toggled on
     // AND has documents to retrieve from.
@@ -668,28 +761,41 @@ async function run() {
       method: "POST",
       body: JSON.stringify(requestBody),
     });
-    state.currentChatId = result.id;
+
+    // Pop the optimistic pair we appended above.
+    state.currentTurns.pop();
+    state.currentTurns.pop();
+
+    // Update conversation id from the response (may have been server-generated).
+    state.currentConversationId = result.conversation_id;
     state.pendingAttachments = [];
     renderAttachments();
-    await loadHistory();
 
     // Clear the input so the next prompt can be typed immediately.
-    // Output, attachments, and system prompt all stay visible.
+    // The system prompt stays.
     userInput.value = "";
     userInput.focus();
 
-    if (result.status === "pending") {
-      // Async video / music job; start polling.
-      startPolling(result.id, result.job_started_at);
-    } else {
-      renderRetrievedChunks(result.retrieved_chunks || null);
-      output.textContent = result.output || "";
-      outputMeta.textContent = fmtMeta(result);
-      renderOutputArtifact(result.output_artifact || null);
+    // Refetch the full conversation from the server for canonical state
+    // (correct attachment records, retrieved_context, etc).
+    await loadConversation(state.currentConversationId);
+    await loadConversations();
+
+    // If the assistant turn is pending (async video/music job), start polling.
+    const last = state.currentTurns[state.currentTurns.length - 1];
+    if (last && last.status === "pending" && (last.model_type === "video" || last.model_type === "music")) {
+      startPolling(last.id, last.job_started_at);
     }
   } catch (err) {
-    output.classList.add("error");
-    output.textContent = err.message;
+    // Roll back optimistic turns; surface the error in a fresh assistant turn.
+    state.currentTurns.pop();
+    state.currentTurns.pop();
+    state.currentTurns.push(optimisticUserTurn, {
+      model, model_type: m.type, output: "",
+      status: "failed",
+      job_error: err.message,
+    });
+    renderTranscript(state.currentTurns);
   } finally {
     runBtn.disabled = false;
     attachBtn.disabled = false;
@@ -708,15 +814,17 @@ sidebarToggle.addEventListener("click", toggleSidebar);
 sidebarBackdrop.addEventListener("click", closeSidebar);
 
 historyList.addEventListener("click", (e) => {
-  const del = e.target.closest(".delete");
+  const del = e.target.closest("[data-conv-delete]");
   if (del) {
     e.stopPropagation();
-    deleteChat(Number(del.dataset.id));
+    if (confirm("Delete this entire conversation? All turns and artifacts will be removed.")) {
+      deleteConversation(del.dataset.convDelete);
+    }
     return;
   }
-  const li = e.target.closest("li[data-id]");
+  const li = e.target.closest("li[data-conv-id]");
   if (li) {
-    loadChat(Number(li.dataset.id));
+    loadConversation(li.dataset.convId);
     closeSidebar();
   }
 });
@@ -737,11 +845,11 @@ userInput.addEventListener("keydown", (e) => {
 (async () => {
   try {
     await loadModels();
-    await loadHistory();
+    await loadConversations();
     await loadDocuments();
+    updateConvTitle();
   } catch (err) {
-    output.classList.add("error");
-    output.textContent = "Failed to initialize: " + err.message;
+    transcriptEl.innerHTML = `<div class="turn turn-assistant"><div class="turn-role">error</div><div class="turn-body"><div class="turn-text error">Failed to initialize: ${escapeHtml(err.message)}</div></div></div>`;
   }
 })();
 

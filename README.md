@@ -392,6 +392,19 @@ npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE ch
 
 The `VEC` binding is already in `wrangler.toml`. Redeploy after these commands.
 
+### Multi-turn migration (if upgrading from v0.9.x to v0.10.0)
+
+The `chats` table gained `conversation_id` and `turn_index` columns. The frontend now groups chats into conversations in the sidebar, and the output area renders a transcript instead of a single response.
+
+```
+npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN conversation_id TEXT"
+npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN turn_index INTEGER"
+npx wrangler d1 execute skyphusion-llm-public --remote --command "UPDATE chats SET conversation_id = 'legacy-' || id, turn_index = 0 WHERE conversation_id IS NULL"
+npx wrangler d1 execute skyphusion-llm-public --remote --command "CREATE INDEX IF NOT EXISTS idx_chats_conversation ON chats(conversation_id, turn_index)"
+```
+
+Old chats stay accessible as single-turn conversations under `legacy-<id>` keys. Redeploy after migrating.
+
 ### Constraints
 
 - **File types**: `.txt`, `.md`, `.markdown`, `.pdf`, `.xlsx`, `.xls`. Scanned/image-only PDFs are not yet supported (they need OCR, which is a future Phase 3B). Modern PDFs created from Word/Pages/LaTeX/Google Docs export work fine.
