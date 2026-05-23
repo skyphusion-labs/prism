@@ -6,7 +6,13 @@
 - Affected providers (now durable): Google Veo 3 / Veo 3 Fast, ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0, PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, MiniMax Music 2.6. xAI Grok Imagine Video and Google Veo BYOK paths are unchanged (still use the submit-and-poll pattern from v0.10.2, which already works).
 - Workflow steps: (1) `invoke-model` calls `env.AI.run` with 1 retry on 30s linear backoff; (2) `download-and-store` fetches the upstream artifact and uploads to R2 in one combined step (Workflows cap step return values at 1 MiB so we can't pass bytes between steps - video files are 5-15MB, music 3-5MB); (3) `finalize-d1` writes status, `output_artifact`, and latency to the chats row.
 - D1 `chats.job_id` now stores the Workflow instance ID for Unified Billing jobs (BYOK rows still store the upstream provider's job ID). Useful for cross-referencing with `npx wrangler workflows instances describe skyphusion-longrun <id>`.
-- Frontend unchanged: the existing `GET /api/job/:id` polling endpoint still works. The workflow updates D1 directly when complete, so the poll endpoint just reads the current state.
+**Frontend:**
+
+- Per-turn action buttons: each completed (or failed) assistant message now shows small icon buttons for **copy** (clipboard) and **retry** (re-populate the prompt textarea). Copy only appears when the turn has output text (pure-artifact turns like image/audio/video without a text response hide it). Retry populates the textarea with the original prompt and focuses it; it does NOT auto-submit, so the user can review or tweak before re-running (avoids accidental credit burn on misclick). Click handler is delegated on `#transcript` since the transcript is re-rendered via `innerHTML` on each turn change. Clipboard write uses `navigator.clipboard.writeText` with an `execCommand` fallback for non-secure contexts.
+
+**Frontend unchanged:**
+
+- The existing `GET /api/job/:id` polling endpoint still works. The workflow updates D1 directly when complete, so the poll endpoint just reads the current state.
 - Removed: `generateVideoUnified`, `generateMusicBackground`, `MusicGenResult`, `VideoGenResult` (replaced by inline workflow logic).
 - No D1 migration required.
 

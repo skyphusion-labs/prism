@@ -44,6 +44,14 @@ const IMAGE_MAX_DIM   = 1280;
 const VIDEO_FRAMES    = 8;
 const VIDEO_FRAME_MAX_DIM = 1024;
 
+// Inline SVG icons for per-turn action buttons (v0.12.0+). Kept as raw strings
+// rather than fetched assets to avoid an extra request and to inherit the
+// surrounding text color via stroke="currentColor". Sized via CSS, not the
+// width/height attributes.
+const ICON_COPY = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="1"/><path d="M11 5V3a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h2"/></svg>`;
+const ICON_RETRY = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><polyline points="13.5 1.5 13.5 4.5 10.5 4.5"/></svg>`;
+const ICON_CHECK = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 8 7 12 13 4"/></svg>`;
+
 const state = {
   user: null,
   currentConversationId: null,
@@ -719,11 +727,35 @@ function renderTurnHTML(turn, index) {
     if (turn.output) assistantContent += `<div class="turn-text">${escapeHtml(turn.output)}</div>`;
     if (turn.output_artifact) assistantContent += `<div class="turn-artifact">${renderOutputArtifactHTML(turn.output_artifact)}</div>`;
   }
+
+  // Per-turn action buttons (v0.12.0+):
+  //   - Copy: shown when there is output text to copy. Pure-artifact turns
+  //     (image/audio/video without a text output) hide it.
+  //   - Retry: shown on completed or failed turns. Populates the input
+  //     textarea with this turn's user_input so the user can review or tweak
+  //     before resubmitting (intentionally not auto-submit, to avoid
+  //     burning credits on accidental clicks).
+  // Buttons are hidden while a turn is pending.
+  let actionsBlock = "";
+  if (!isPending) {
+    const buttons = [];
+    if (turn.output) {
+      buttons.push(`<button class="turn-action" data-action="copy" data-turn="${index}" type="button" aria-label="Copy response" title="Copy">${ICON_COPY}</button>`);
+    }
+    if (turn.user_input) {
+      buttons.push(`<button class="turn-action" data-action="retry" data-turn="${index}" type="button" aria-label="Retry: put this prompt back in the input" title="Retry">${ICON_RETRY}</button>`);
+    }
+    if (buttons.length) {
+      actionsBlock = `<div class="turn-actions">${buttons.join("")}</div>`;
+    }
+  }
+
   const assistantBlock = `
     <div class="turn turn-assistant" data-turn="${index}">
       <div class="turn-role">${escapeHtml(turn.model || "?")}</div>
       <div class="turn-body">
         ${assistantContent}
+        ${actionsBlock}
         <div class="turn-meta">${escapeHtml(fmtMeta(turn) || "")}</div>
       </div>
     </div>`;
@@ -869,6 +901,72 @@ newChatBtn.addEventListener("click", () => {
   newChat();
   closeSidebar();
 });
+
+// Per-turn action buttons (copy / retry). Delegated on transcriptEl because
+// the transcript is re-rendered via innerHTML on each turn change, which would
+// detach any directly-bound listeners.
+transcriptEl.addEventListener("click", handleTurnAction);
+
+async function handleTurnAction(e) {
+  const btn = e.target.closest(".turn-action");
+  if (!btn) return;
+  const action = btn.dataset.action;
+  const turnIdx = Number(btn.dataset.turn);
+  const turn = state.currentTurns[turnIdx];
+  if (!turn) return;
+
+  if (action === "copy") {
+    const text = turn.output || "";
+    let ok = false;
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      } catch {
+        // Fall through to legacy path.
+      }
+    }
+    if (!ok) {
+      // Legacy clipboard fallback for non-secure contexts (rare; e.g. plain
+      // HTTP local dev). Uses execCommand which is deprecated but still
+      // universally supported.
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); ok = true; } catch { /* swallow */ }
+      document.body.removeChild(ta);
+    }
+    if (ok) {
+      // Brief visual confirmation.
+      const orig = btn.innerHTML;
+      btn.innerHTML = ICON_CHECK;
+      btn.classList.add("turn-action-success");
+      btn.disabled = true;
+      setTimeout(() => {
+        btn.innerHTML = orig;
+        btn.classList.remove("turn-action-success");
+        btn.disabled = false;
+      }, 1200);
+    }
+    return;
+  }
+
+  if (action === "retry") {
+    // Populate the input with this turn's prompt and focus it. Deliberately
+    // not auto-submitting: lets the user inspect or tweak before re-running,
+    // and avoids accidental credit burn on misclick.
+    userInput.value = turn.user_input || "";
+    userInput.focus();
+    // Move cursor to end so a quick edit is natural.
+    const end = userInput.value.length;
+    userInput.setSelectionRange(end, end);
+    userInput.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+}
 
 userInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {

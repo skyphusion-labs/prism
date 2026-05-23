@@ -807,3 +807,53 @@ select:focus, textarea:focus {
   max-height: 12rem;
   overflow-y: auto;
 }
+
+/* ---------- Per-turn action buttons (v0.12.0+) ---------- */
+/* Copy and retry buttons that appear under each assistant response.
+   Subtle by default; brighten on hover. Square footprint with a small SVG
+   inside. Inherit color via stroke="currentColor" on the SVG. */
+
+.turn-actions {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+
+.turn-action {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  cursor: pointer;
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.turn-action svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.turn-action:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.turn-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.turn-action-success {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.turn-action:disabled {
+  cursor: default;
+}
