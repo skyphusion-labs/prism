@@ -141,29 +141,29 @@ const MODELS: ModelEntry[] = [
   { id: "google/gemini-2.5-pro",                        label: "Gemini 2.5 Pro (Google, BYOK)",              group: "Chat \u00b7 Google",    type: "chat", capabilities: ["vision"], provider: "google" },
 
   // Frontier
-  { id: "@cf/moonshotai/kimi-k2.6",                     label: "Kimi K2.6 (1T)",               group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"] },
-  { id: "@cf/openai/gpt-oss-120b",                      label: "GPT-OSS 120B (reasoning)",     group: "Chat \u00b7 Frontier", type: "chat", capabilities: [] },
-  { id: "@cf/meta/llama-4-scout-17b-16e-instruct",      label: "Llama 4 Scout (MoE, vision)",  group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"] },
-  { id: "@cf/google/gemma-4-26b-a4b-it",                label: "Gemma 4 26B (vision)",         group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"] },
+  { id: "@cf/moonshotai/kimi-k2.6",                     label: "Kimi K2.6 (1T)",               group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"], streaming: true },
+  { id: "@cf/openai/gpt-oss-120b",                      label: "GPT-OSS 120B (reasoning)",     group: "Chat \u00b7 Frontier", type: "chat", capabilities: [], streaming: true },
+  { id: "@cf/meta/llama-4-scout-17b-16e-instruct",      label: "Llama 4 Scout (MoE, vision)",  group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"], streaming: true },
+  { id: "@cf/google/gemma-4-26b-a4b-it",                label: "Gemma 4 26B (vision)",         group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"], streaming: true },
   // OpenAI open weights
-  { id: "@cf/openai/gpt-oss-20b",                       label: "GPT-OSS 20B",                  group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [] },
+  { id: "@cf/openai/gpt-oss-20b",                       label: "GPT-OSS 20B",                  group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], streaming: true },
   // Meta
-  { id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",     label: "Llama 3.3 70B (fp8)",          group: "Chat \u00b7 Meta",     type: "chat", capabilities: [] },
-  { id: "@cf/meta/llama-3.2-11b-vision-instruct",       label: "Llama 3.2 11B (vision)",       group: "Chat \u00b7 Meta",     type: "chat", capabilities: ["vision"] },
-  { id: "@cf/meta/llama-3.2-3b-instruct",               label: "Llama 3.2 3B",                 group: "Chat \u00b7 Meta",     type: "chat", capabilities: [] },
+  { id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",     label: "Llama 3.3 70B (fp8)",          group: "Chat \u00b7 Meta",     type: "chat", capabilities: [], streaming: true },
+  { id: "@cf/meta/llama-3.2-11b-vision-instruct",       label: "Llama 3.2 11B (vision)",       group: "Chat \u00b7 Meta",     type: "chat", capabilities: ["vision"], streaming: true },
+  { id: "@cf/meta/llama-3.2-3b-instruct",               label: "Llama 3.2 3B",                 group: "Chat \u00b7 Meta",     type: "chat", capabilities: [], streaming: true },
   // Qwen
-  { id: "@cf/qwen/qwen3-30b-a3b-fp8",                   label: "Qwen3 30B MoE",                group: "Chat \u00b7 Qwen",     type: "chat", capabilities: [] },
-  { id: "@cf/qwen/qwq-32b",                             label: "QwQ 32B (reasoning)",          group: "Chat \u00b7 Qwen",     type: "chat", capabilities: [] },
-  { id: "@cf/qwen/qwen2.5-coder-32b-instruct",          label: "Qwen2.5 Coder 32B",            group: "Chat \u00b7 Qwen",     type: "chat", capabilities: [] },
+  { id: "@cf/qwen/qwen3-30b-a3b-fp8",                   label: "Qwen3 30B MoE",                group: "Chat \u00b7 Qwen",     type: "chat", capabilities: [], streaming: true },
+  { id: "@cf/qwen/qwq-32b",                             label: "QwQ 32B (reasoning)",          group: "Chat \u00b7 Qwen",     type: "chat", capabilities: [], streaming: true },
+  { id: "@cf/qwen/qwen2.5-coder-32b-instruct",          label: "Qwen2.5 Coder 32B",            group: "Chat \u00b7 Qwen",     type: "chat", capabilities: [], streaming: true },
   // Other
-  { id: "@cf/deepseek/deepseek-r1-distill-qwen-32b",    label: "DeepSeek R1 32B",              group: "Chat \u00b7 Other",    type: "chat", capabilities: [] },
-  { id: "@cf/mistralai/mistral-small-3.1-24b-instruct", label: "Mistral Small 3.1 (vision)",   group: "Chat \u00b7 Other",    type: "chat", capabilities: ["vision"] },
-  { id: "@cf/zai-org/glm-4.7-flash",                    label: "GLM-4.7 Flash (Z.AI, 100+ lang)", group: "Chat \u00b7 Other", type: "chat", capabilities: [] },
-  { id: "@cf/nvidia/nemotron-3-120b-a12b",              label: "Nemotron 3 120B (NVIDIA, agentic)", group: "Chat \u00b7 Other", type: "chat", capabilities: [] },
-  { id: "@cf/google/gemma-3-12b-it",                    label: "Gemma 3 12B (vision, 128K)",   group: "Chat \u00b7 Google",   type: "chat", capabilities: ["vision"] },
-  { id: "@cf/ibm-granite/granite-4.0-h-micro",          label: "Granite 4.0 Micro (IBM)",      group: "Chat \u00b7 Other",    type: "chat", capabilities: [] },
-  { id: "@hf/nousresearch/hermes-2-pro-mistral-7b",     label: "Hermes 2 Pro (function calling)", group: "Chat \u00b7 Other", type: "chat", capabilities: [] },
-  { id: "@cf/meta/llama-3.2-1b-instruct",               label: "Llama 3.2 1B (tiny, cheap)",   group: "Chat \u00b7 Meta",     type: "chat", capabilities: [] },
+  { id: "@cf/deepseek/deepseek-r1-distill-qwen-32b",    label: "DeepSeek R1 32B",              group: "Chat \u00b7 Other",    type: "chat", capabilities: [], streaming: true },
+  { id: "@cf/mistralai/mistral-small-3.1-24b-instruct", label: "Mistral Small 3.1 (vision)",   group: "Chat \u00b7 Other",    type: "chat", capabilities: ["vision"], streaming: true },
+  { id: "@cf/zai-org/glm-4.7-flash",                    label: "GLM-4.7 Flash (Z.AI, 100+ lang)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
+  { id: "@cf/nvidia/nemotron-3-120b-a12b",              label: "Nemotron 3 120B (NVIDIA, agentic)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
+  { id: "@cf/google/gemma-3-12b-it",                    label: "Gemma 3 12B (vision, 128K)",   group: "Chat \u00b7 Google",   type: "chat", capabilities: ["vision"], streaming: true },
+  { id: "@cf/ibm-granite/granite-4.0-h-micro",          label: "Granite 4.0 Micro (IBM)",      group: "Chat \u00b7 Other",    type: "chat", capabilities: [], streaming: true },
+  { id: "@hf/nousresearch/hermes-2-pro-mistral-7b",     label: "Hermes 2 Pro (function calling)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
+  { id: "@cf/meta/llama-3.2-1b-instruct",               label: "Llama 3.2 1B (tiny, cheap)",   group: "Chat \u00b7 Meta",     type: "chat", capabilities: [], streaming: true },
 
   // ---- Image generation ----
   { id: "@cf/black-forest-labs/flux-2-klein-9b",        label: "FLUX 2 Klein 9B (frontier)",   group: "Image Gen",            type: "image", capabilities: [] },
@@ -497,9 +497,13 @@ async function handleChatStream(request: Request, env: Env, ctx: ExecutionContex
   if (!model.streaming) {
     return json({ error: `Model ${model.id} does not support streaming. Use /api/chat (non-streaming) or pick a streaming-capable model.` }, { status: 400 });
   }
-  // Pass 1: Anthropic only. Pass 2 will add Workers AI; Pass 3 xAI; Pass 4 Bedrock.
-  if (model.provider !== "anthropic") {
-    return json({ error: `Streaming for provider '${model.provider}' is not yet implemented (Pass 1 supports Anthropic only).` }, { status: 501 });
+  // Pass 2: Anthropic + Workers AI. Pass 3 will add xAI; Pass 4 Bedrock.
+  // Workers AI catalog entries omit `provider` (the type allows this and the
+  // ModelEntry default per the type comment is "workers-ai"); BYOK providers
+  // set it explicitly.
+  const isWorkersAI = !model.provider;
+  if (model.provider !== "anthropic" && !isWorkersAI) {
+    return json({ error: `Streaming for provider '${model.provider}' is not yet implemented (Pass 2 supports Anthropic and Workers AI; Pass 3+ will add xAI and Bedrock).` }, { status: 501 });
   }
 
   return runChatStream(request, env, model, body);
@@ -784,29 +788,112 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
       const r = await imageGenOpenAI(env, model, body.user_input);
       bytes = r.bytes; mime = r.mime;
     } else {
-      const params: Record<string, unknown> = {
-        prompt: body.user_input,
-        width: 1024,
-        height: 1024,
-        steps: 25,
-      };
-      if (body.system_prompt && body.system_prompt.trim()) {
-        params.negative_prompt = body.system_prompt;
+      // Two Cloudflare-side complications for Workers AI image gen as of
+      // 2026-Q1, both manifesting as either:
+      //   - AiError 5006 "required properties at '/' are 'multipart'", or
+      //   - "AI Gateway does not support ReadableStreams yet"
+      //
+      // The matrix:
+      //   FLUX-1 schnell, Lucid Origin   - JSON in,    JSON out (base64).   Gateway path works.
+      //   FLUX-2 (Klein 9b/4b, Dev)      - multipart in, JSON out (base64). Gateway can't proxy stream input.
+      //   Phoenix 1.0, Dreamshaper 8 LCM - JSON in,    ReadableStream out.  Gateway can't proxy stream output.
+      //
+      // Solution: bypass the AI Gateway for the five problematic models by
+      // calling env.AI.run directly without the gateway option, and detect
+      // the response shape at runtime so we can drain a ReadableStream into
+      // bytes or extract base64 from JSON as appropriate. Cost: no AI Gateway
+      // observability/caching for these specific models (ai_gateway_log_id
+      // stays null on the persisted row).
+      const isFlux2 = model.id.startsWith("@cf/black-forest-labs/flux-2-");
+      const bypassGateway = isFlux2
+        || model.id === "@cf/leonardo/phoenix-1.0"
+        || model.id === "@cf/lykon/dreamshaper-8-lcm";
+
+      let runParams: unknown;
+
+      if (isFlux2) {
+        // FLUX.2 requires multipart form data input. FormData doesn't expose
+        // its serialized body or boundary directly; wrap in a Response
+        // constructor to get the stream + the Content-Type header value
+        // with the boundary string.
+        const form = new FormData();
+        form.append("prompt", body.user_input);
+        form.append("width", "1024");
+        form.append("height", "1024");
+        if (body.system_prompt && body.system_prompt.trim()) {
+          // FLUX.2's public schema doesn't list negative_prompt, but the
+          // binding ignores unknown form fields rather than erroring.
+          form.append("negative_prompt", body.system_prompt);
+        }
+        const formResponse = new Response(form);
+        runParams = {
+          multipart: {
+            body: formResponse.body!,
+            contentType: formResponse.headers.get("content-type")!,
+          },
+        };
+      } else {
+        const params: Record<string, unknown> = {
+          prompt: body.user_input,
+          width: 1024,
+          height: 1024,
+          steps: 25,
+        };
+        if (body.system_prompt && body.system_prompt.trim()) {
+          params.negative_prompt = body.system_prompt;
+        }
+        // FLUX-1 schnell uses fewer steps and has no negative_prompt.
+        if (model.id === "@cf/black-forest-labs/flux-1-schnell") {
+          params.steps = 4;
+          delete params.negative_prompt;
+        }
+        runParams = params;
       }
-      // FLUX-1 schnell uses fewer steps and has no negative_prompt.
-      if (model.id === "@cf/black-forest-labs/flux-1-schnell") {
-        params.steps = 4;
-        delete params.negative_prompt;
+
+      // Run via the binding. Bypass the gateway for stream-incompatible
+      // models; everything else stays on the aiRun helper path (which
+      // populates ai_gateway_log_id for observability).
+      let result: unknown;
+      if (bypassGateway) {
+        result = await (env.AI as unknown as { run: RunFn }).run(model.id, runParams);
+      } else {
+        result = await aiRun(env, model.id, runParams);
+        logId = aiLogId(env);
       }
-      const result = await aiRun(env, model.id, params);
-      logId = aiLogId(env);
-      // Response shape is { image: base64 } for FLUX-1 / Lucid / Phoenix.
-      const b64 = (result as { image?: string })?.image;
-      if (!b64 || typeof b64 !== "string") {
-        return json({ error: "Image generation returned no image", raw: result }, { status: 502 });
+
+      // Two response shapes are possible:
+      //   1. JSON { image: "base64..." } - FLUX-1, FLUX-2, Lucid Origin
+      //   2. ReadableStream of raw PNG bytes - Phoenix, Dreamshaper
+      // Detect at runtime rather than mapping per-model; safer if Cloudflare
+      // shifts a model from one shape to the other.
+      if (result instanceof ReadableStream) {
+        const reader = result.getReader();
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            chunks.push(value);
+            total += value.length;
+          }
+        }
+        bytes = new Uint8Array(total);
+        let offset = 0;
+        for (const c of chunks) {
+          bytes.set(c, offset);
+          offset += c.length;
+        }
+        mime = "image/png";
+      } else {
+        const b64 = (result as { image?: string })?.image;
+        if (!b64 || typeof b64 !== "string") {
+          return json({ error: "Image generation returned no image", raw: result }, { status: 502 });
+        }
+        bytes = base64ToBytes(b64);
+        // FLUX.2 outputs PNG; the older JSON path returned JPEG historically.
+        mime = isFlux2 ? "image/png" : "image/jpeg";
       }
-      bytes = base64ToBytes(b64);
-      mime = "image/jpeg";
     }
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
@@ -1523,9 +1610,16 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
     userSystemPrompt && retrievalBlock ? `${userSystemPrompt}\n\n${retrievalBlock}` :
     retrievalBlock || userSystemPrompt || "";
 
-  // Anthropic accepts system as a top-level field, so we don't push a
-  // system-role message into the array.
+  // Build the message array. For providers that take system as a separate
+  // top-level param (Anthropic), we DON'T include a system role here;
+  // callAnthropicStream pulls effectiveSystemPrompt to a top-level field.
+  // For Workers AI (and any future provider that accepts role:"system" in
+  // messages, like xAI's OpenAI-compatible API), we DO push it.
+  const wantsSystemInMessages = !(model.provider === "anthropic");
   const messages: Array<unknown> = [];
+  if (effectiveSystemPrompt && wantsSystemInMessages) {
+    messages.push({ role: "system", content: effectiveSystemPrompt });
+  }
   for (const t of priorTurns) {
     messages.push({ role: "user", content: t.user_input });
     messages.push({ role: "assistant", content: t.output });
@@ -1561,9 +1655,14 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
     let usageOut: number | null = null;
 
     try {
-      for await (const ev of callAnthropicStream(
-        env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal
-      )) {
+      // Dispatch per provider. All generators yield the same ProviderStreamEvent
+      // shape so the consumer loop is provider-agnostic.
+      const streamGenerator: AsyncGenerator<ProviderStreamEvent> =
+        model.provider === "anthropic"
+          ? callAnthropicStream(env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal)
+          : callWorkersAIStream(env, model, messages, upstreamAbort.signal);
+
+      for await (const ev of streamGenerator) {
         if (ev.type === "text") {
           accumulated += ev.text;
           const ok = await emit({ type: "delta", text: ev.text });
@@ -1636,10 +1735,11 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
   });
 }
 
-// Normalized event shape yielded by callAnthropicStream. Future per-provider
-// stream adapters (callWorkersAIStream, callXaiStream, callBedrockNovaStream)
-// will yield the same shape so runChatStream's consumer loop stays generic.
-type AnthropicStreamEvent =
+// Normalized event shape yielded by every per-provider streaming adapter
+// (callAnthropicStream today; callWorkersAIStream as of Pass 2; future xAI
+// and Bedrock adapters in Pass 3/4). runChatStream's consumer loop stays
+// generic over this type.
+type ProviderStreamEvent =
   | { type: "text"; text: string }
   | { type: "usage"; in_: number | null; out_: number | null };
 
@@ -1660,7 +1760,7 @@ async function* callAnthropicStream(
   systemPrompt: string | undefined,
   messages: Array<unknown>,
   signal: AbortSignal
-): AsyncGenerator<AnthropicStreamEvent> {
+): AsyncGenerator<ProviderStreamEvent> {
   const { system, messages: aMessages } = transformToAnthropic(messages, systemPrompt);
 
   const baseUrl = await (env.AI as unknown as {
@@ -1763,6 +1863,107 @@ async function* callAnthropicStream(
       }
     }
   } finally {
+    try { reader.releaseLock(); } catch { /* fine */ }
+  }
+}
+
+// ---------- callWorkersAIStream (v0.13.0 Pass 2) ----------
+//
+// Async generator: drives a Workers AI chat model via env.AI.run with
+// stream:true and yields normalized text + usage events.
+//
+// Workers AI streaming returns a ReadableStream from env.AI.run, already
+// SSE-formatted. Event shape is OpenAI-compatible:
+//   data: {"response":"..."}                       // one per token chunk
+//   data: {"response":"","usage":{...}}            // optional final usage chunk
+//   data: [DONE]                                   // terminal sentinel
+//
+// Reasoning models (gpt-oss-120b, qwq-32b, deepseek-r1-distill-qwen-32b)
+// emit <think>...</think> blocks inside `response`. Pass 2 streams them
+// through as-is; future UX pass can strip or fold them into a toggle.
+//
+// Abort handling: env.AI.run doesn't accept an AbortSignal. We bridge
+// signal -> reader.cancel() so client disconnect propagates cancellation
+// up the binding pipeline and we stop being billed mid-generation.
+
+async function* callWorkersAIStream(
+  env: Env,
+  model: ModelEntry,
+  messages: Array<unknown>,
+  signal: AbortSignal
+): AsyncGenerator<ProviderStreamEvent> {
+  const result = await aiRun(env, model.id, { messages, stream: true });
+
+  if (!(result instanceof ReadableStream)) {
+    throw new Error(`Workers AI did not return a stream (got ${typeof result}). Ensure stream:true is honored by this model.`);
+  }
+
+  const reader = result.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  // Bridge AbortSignal -> reader.cancel(). If the signal is already aborted
+  // by the time we get here, cancel immediately.
+  const onAbort = () => { try { reader.cancel(); } catch { /* fine */ } };
+  if (signal.aborted) {
+    onAbort();
+  } else {
+    signal.addEventListener("abort", onAbort, { once: true });
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+
+      for (const part of parts) {
+        if (!part.trim()) continue;
+
+        let payload = "";
+        for (const line of part.split("\n")) {
+          if (line.startsWith("data: ")) payload = line.slice(6);
+          else if (line.startsWith("data:")) payload = line.slice(5);
+        }
+        if (!payload || payload === "[DONE]") continue;
+
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+
+        // Text delta. `response` is the OpenAI-style per-chunk field. Empty
+        // strings are normal on the final chunk (which carries usage); skip them.
+        const resp = data.response;
+        if (typeof resp === "string" && resp.length > 0) {
+          yield { type: "text", text: resp };
+        }
+
+        // Usage. Workers AI uses OpenAI naming; some adapters fall back to
+        // the Anthropic naming. Accept both, prefer OpenAI.
+        const usage = data.usage as {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+          input_tokens?: number;
+          output_tokens?: number;
+        } | undefined;
+        if (usage) {
+          yield {
+            type: "usage",
+            in_: usage.prompt_tokens ?? usage.input_tokens ?? null,
+            out_: usage.completion_tokens ?? usage.output_tokens ?? null,
+          };
+        }
+      }
+    }
+  } finally {
+    signal.removeEventListener("abort", onAbort);
     try { reader.releaseLock(); } catch { /* fine */ }
   }
 }
