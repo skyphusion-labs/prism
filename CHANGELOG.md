@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.15.0
+
+UI: replace the flat `<select>` model dropdown with a collapsible picker.
+
+The catalog reached ~50 models across 6 modalities; finding Opus 4.7 by scrolling past every video and music model became friction. The new picker groups by catalog `group` field with `<details>` accordion sections, expands the first group by default, and surfaces capability badges (vision, stream) next to each item.
+
+**Architecture:**
+
+- `<select id="model">` becomes `<div id="model" class="model-picker">`. The element ID stays so existing `document.getElementById("model")` lookups still resolve.
+- `modelSelect` is now a JS shim exposing the same surface the rest of `app.js` already uses: `.value` getter and setter, plus `addEventListener("change", fn)`. Programmatic `modelSelect.value = "..."` does NOT fire `change`, matching native `<select>` behavior; user-driven clicks do.
+- `loadModels()` switched from `modelSelect.innerHTML = ...` (assembling `<option>` / `<optgroup>` strings) to `modelSelect.populate(grouped)`. Every other call site (`loadConversation`, `loadTurnIntoComposer`, `currentModel`, the change listener wired to `updateAffordance`) needs no changes.
+
+**UI behavior:**
+
+- Trigger button shows the current model label and a chevron; click to open the panel.
+- Panel holds one `<details>` per catalog `group` field. First group open on load; rest collapsed. Click a group header to expand or collapse.
+- Each item shows the model label plus capability badges where relevant: `vision` (accent color) for image-accepting models, `stream` (warn color) for the 23 currently-streamable chat models (4 Anthropic + 19 Workers AI).
+- Selected item is highlighted in the accent color with a checkmark on the right.
+- Panel closes on outside click, item click (auto-close on select), or Escape (also returns focus to the trigger).
+
+**Styling:**
+
+- All colors via existing CSS custom properties (`--bg-elev`, `--bg-elev2`, `--fg`, `--fg-dim`, `--accent`, `--warn`, `--border`). No new design tokens.
+- Removed orphaned select-only rules (`select, textarea`, `select optgroup`, `select option`, `select:focus, textarea:focus`). The shared `select, textarea` rule was split: the `textarea` portion folded into the existing dedicated textarea block.
+- Panel uses `position: absolute` anchored to the picker root (the root is `position: relative`). Trigger spans the controls-grid cell width; panel matches.
+- Mobile: panel `max-height: 70vh` (up from 60vh desktop) since the controls grid collapses to single column at <=768px.
+
+**Touch points:**
+
+- `public/index.html`: 1 line changed (the `<select>` tag).
+- `public/app.js`: 2 hunks. Picker IIFE replaces the `modelSelect` declaration (~140 lines including comments); `loadModels` innerHTML block replaced with a one-liner.
+- `public/styles.css`: 1 hunk. Collapses 4 select-related rules into the textarea rule, then appends ~170 lines of picker styles.
+
+**Browser support:** uses `<details>` / `<summary>`, `CSS.escape()`, and `color-mix()`. Supported in Firefox 113+ and Chromium 111+ (May 2023 baseline). No fallback needed for a 2026 deployment.
+
+No D1 migration, no R2 migration, no new dependencies, no new worker secrets. Pure frontend change. Net diff: +274 / -26 across 5 hunks in 3 files.
+
 ## v0.14.0
 
 **Breaking:** removes OpenAI BYOK and the Gemini chat / Veo 3.1 video BYOK paths to consolidate around Anthropic + xAI + Bedrock BYOK and Unified Billing for everything else. Deployers who used OpenAI or Google BYOK will need to migrate to one of the remaining providers.
