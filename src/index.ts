@@ -199,14 +199,41 @@ const WHISPER_MODEL = "@cf/openai/whisper-large-v3-turbo";
 
 // ---------- Types ----------
 
-interface InputAttachment {
-  type: "image" | "audio" | "video_frames" | "video_full";
-  filename?: string;
+// v0.17.1: discriminated union to mirror PersistedAttachment's style. Each
+// variant declares its required payload field as non-optional; the type
+// discriminator (`type`) is what TypeScript uses to narrow inside type guards
+// like `if (att.type === "image") { att.data /* now string, not string|undefined */ }`.
+// Runtime validation still belongs at parse-time at the API boundary; the
+// type only describes the contract we expect from a well-formed request.
+interface InputImageAttachment {
+  type: "image";
+  data: string;        // data URL
   mime?: string;
-  data?: string;       // data URL (image / audio / video_full)
-  frames?: string[];   // data URLs (video_frames)
-  duration?: number;
+  filename?: string;
 }
+interface InputAudioAttachment {
+  type: "audio";
+  data: string;        // data URL
+  mime?: string;
+  filename?: string;
+}
+interface InputVideoFramesAttachment {
+  type: "video_frames";
+  frames: string[];    // array of data URLs (one per keyframe)
+  duration?: number;
+  filename?: string;
+}
+interface InputVideoFullAttachment {
+  type: "video_full";
+  data: string;        // data URL
+  mime?: string;
+  filename?: string;
+}
+type InputAttachment =
+  | InputImageAttachment
+  | InputAudioAttachment
+  | InputVideoFramesAttachment
+  | InputVideoFullAttachment;
 
 interface ChatRequest {
   model: string;
@@ -580,7 +607,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
       if (!parsed) return json({ error: "Invalid image data URL" }, { status: 400 });
       const bytes = base64ToBytes(parsed.base64);
       const key = await r2Put(env, "in", parsed.mime, bytes, userEmail);
-      imageDataUrls.push(att.data!);
+      imageDataUrls.push(att.data);
       persistedAtt.push({ type: "image", key, mime: parsed.mime, filename: att.filename });
     } else if (att.type === "audio") {
       const parsed = att.data ? parseDataUrl(att.data) : null;
@@ -1441,7 +1468,7 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
       if (!parsed) return json({ error: "Invalid image data URL" }, { status: 400 });
       const bytes = base64ToBytes(parsed.base64);
       const key = await r2Put(env, "in", parsed.mime, bytes, userEmail);
-      imageDataUrls.push(att.data!);
+      imageDataUrls.push(att.data);
       persistedAtt.push({ type: "image", key, mime: parsed.mime, filename: att.filename });
     } else if (att.type === "audio") {
       const parsed = att.data ? parseDataUrl(att.data) : null;
@@ -2398,14 +2425,18 @@ async function callBedrockPegasus(
   // Frontend uploads as "video_full" (the raw video file as a data URL) when
   // the selected model is Pegasus, rather than the default frame-extraction
   // behavior used for vision-capable chat models.
-  const videoAtt = attachments.find((a) => a.type === "video_full");
+  // v0.17.1: type predicate narrows the find result to InputVideoFullAttachment
+  // so videoAtt.data is typed `string` without needing a `?? ""` fallback.
+  const videoAtt = attachments.find(
+    (a): a is InputVideoFullAttachment => a.type === "video_full",
+  );
   if (!videoAtt) {
     throw new Error("Pegasus 1.2 requires a video attachment. Attach an .mp4 (or similar) file before sending the prompt.");
   }
 
   // Decode the data URL to raw bytes, then re-encode as base64 (no data: prefix).
-  // InputAttachment.data is a "data:video/mp4;base64,AAAA..." string.
-  const dataUrl = videoAtt.data ?? "";
+  // videoAtt.data is a "data:video/mp4;base64,AAAA..." string per the type.
+  const dataUrl = videoAtt.data;
   const commaIdx = dataUrl.indexOf(",");
   if (commaIdx < 0) {
     throw new Error("Pegasus: video attachment data URL is malformed");
