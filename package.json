@@ -1,6 +1,6 @@
 {
   "name": "skyphusion-llm-public",
-  "version": "0.17.2",
+  "version": "0.18.0",
   "description": "Multimodal AI on Cloudflare Workers: chat (39 models across 6 providers), image / TTS / STT / video / music generation, RAG over PDF and XLSX, multi-turn conversations, behind Cloudflare Access.",
   "license": "AGPL-3.0-only",
   "author": "Conrad Rockenhaus",
@@ -19,13 +19,17 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "db:create": "wrangler d1 create skyphusion-llm-public",
     "db:migrate:local": "wrangler d1 execute skyphusion-llm-public --local --file=schema.sql",
     "db:migrate:remote": "wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260501.0",
+    "@types/node": "^22.0.0",
     "typescript": "^5.4.0",
+    "vitest": "^2.1.0",
     "wrangler": "^4.0.0"
   },
   "dependencies": {
