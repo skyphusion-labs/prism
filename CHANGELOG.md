@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.17.2
+
+Internal refactor: extract shared request builders for the xAI and Bedrock Nova providers. Streaming and non-streaming callers for each pair now share their URL/headers/body construction instead of duplicating ~30 lines per pair. No behavior change.
+
+- New `prepareXaiRequest(env, model, messages, { stream })` returns `{ url, headers, body }`. Body fields (`stream: true`, `stream_options.include_usage: true`) conditional on `opts.stream`. Both `callXai` and `callXaiStream` now call this and differ only in how they consume the response body (one `await resp.json()`, the other a `ReadableStream` reader loop).
+- New `prepareBedrockNovaRequest(env, model, systemPrompt, messages, { stream })` returns `{ awsClient, url, bodyJson }`. Endpoint suffix (`converse` vs `converse-stream`) conditional on `opts.stream`. Both `callBedrockNova` and `callBedrockNovaStream` now call this. The Converse message transform (system message stripping, multi-part content flattening) lives in the builder, no longer duplicated.
+- `cf-aig-log-id` extraction stays in `callXai`'s non-streaming caller. AI Gateway doesn't surface that header on proxied SSE responses, so `callXaiStream` correctly continues to not look for it. Same for `logId: null` in `callBedrockNova`'s return shape; the streaming variant continues to not return a logId at all (different return shape from the non-streaming caller).
+- Anthropic helpers NOT yet deduped. `callAnthropic` and `callAnthropicStream` share the same pattern (both call `env.AI.gateway(...).getUrl("anthropic")` independently) but the transform is more involved (system prompt extraction, content-block flattening for vision attachments). Deferred to a follow-up commit so the diff stays surgical.
+- Workers AI helpers NOT deduped. `runAi` already abstracts the binding call; `callWorkersAIStream` is the only place that uses `env.AI.run({stream:true})`, so there's no duplication to factor out.
+- No new types exported. `awsClient` type inferred from the dynamic import, same as before.
+- Net diff: 8 hunks (+57 / -65, net -8 lines) in `src/index.ts`.
+- No behavior change. No D1 migration. No new dependencies.
+
+## v0.17.1
+
+Internal refactor: `InputAttachment` becomes a discriminated union, matching the existing `PersistedAttachment` style already used in the project. No behavior change.
+
+- The old shape was a flat interface with all variant-specific fields optional (`data?`, `frames?`), which forced inline narrowing (`if (att.type !== "image" || !att.data) continue`) and prevented filter-callback type predicates from working cleanly. A v0.16.0 attempt to cast against a fictional `InputImageAttachment` failed to compile and had to fall back to inline `att.type !== "image" || !att.data` narrowing.
+- New shape: four variant interfaces (`InputImageAttachment`, `InputAudioAttachment`, `InputVideoFramesAttachment`, `InputVideoFullAttachment`) discriminated on `type`, combined via a `type InputAttachment = | ... | ...` union alias. Mirrors the `PersistedAttachment` family exactly. TypeScript now narrows automatically inside `if (att.type === "image") { ... }` blocks, and type predicates on `find` / `filter` callbacks (e.g., `(a): a is InputVideoFullAttachment => a.type === "video_full"`) narrow the result.
+- Cleanups enabled by the new shape:
+  - `runChat` (around line 610): `imageDataUrls.push(att.data!)` becomes `imageDataUrls.push(att.data)`; the non-null assertion is no longer needed because the union narrows `att.data` to `string` after `att.type === "image"`.
+  - `runChatStream` (around line 1471): same.
+  - `runVideo` Pegasus `find` (around line 2428): added type predicate `(a): a is InputVideoFullAttachment => a.type === "video_full"`. The `?? ""` fallback on `videoAtt.data` is now superfluous (type is `string`, not `string | undefined`) and removed.
+- Defensive runtime checks (`att.data ? parseDataUrl(att.data) : null`, `att.frames ?? []`) kept in place. They guard against malformed JSON arriving at the API boundary, which the type system can't prevent. Removing them would shift behavior, not just types.
+- Net diff: 4 hunks (+40 / -9) in `src/index.ts`.
+- No behavior change. No D1 migration. No new dependencies.
+
 ## v0.17.0
 
 Adds web-search as an opt-in retrieval source alongside RAG. Tavily (general web) + Wikipedia (reference and lore) queried in parallel; results folded into the system prompt the same way RAG chunks already are. Designed for creative work and worldbuilding, where you want the model to do synthesis rather than a search engine's pre-summary.
