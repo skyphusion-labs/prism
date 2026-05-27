@@ -18,6 +18,8 @@ import { getDocumentProxy } from "unpdf";
 import * as XLSX from "xlsx";
 import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
 import type { WorkflowEvent } from "cloudflare:workers";
+import type { ProviderStreamEvent } from "./parsers/types";
+import { parseBedrockEventStreamFrames } from "./parsers/bedrock-eventstream";
 
 //
 // Multimodal model types:
@@ -1683,10 +1685,6 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
 // (callAnthropicStream today; callWorkersAIStream as of Pass 2; future xAI
 // and Bedrock adapters in Pass 3/4). runChatStream's consumer loop stays
 // generic over this type.
-type ProviderStreamEvent =
-  | { type: "text"; text: string }
-  | { type: "usage"; in_: number | null; out_: number | null };
-
 // Async generator: drives Anthropic's Messages API in streaming mode and
 // yields normalized events. Strips Anthropic's verbose SSE envelope
 // (message_start, content_block_start, content_block_delta, content_block_stop,
@@ -2253,136 +2251,24 @@ async function* callBedrockNovaStream(
   }
 
   const reader = resp.body.getReader();
-  let buf = new Uint8Array(0);
-
-  function append(bytes: Uint8Array) {
-    const merged = new Uint8Array(buf.length + bytes.length);
-    merged.set(buf, 0);
-    merged.set(bytes, buf.length);
-    buf = merged;
-  }
-
-  function readU32BE(at: number): number {
-    return (
-      ((buf[at] << 24) |
-        (buf[at + 1] << 16) |
-        (buf[at + 2] << 8) |
-        buf[at + 3]) >>> 0
-    );
-  }
-
-  function parseHeaders(start: number, end: number): Record<string, string> {
-    const out: Record<string, string> = {};
-    const td = new TextDecoder();
-    let p = start;
-    while (p < end) {
-      const nameLen = buf[p]; p += 1;
-      if (p + nameLen > end) break;
-      const name = td.decode(buf.subarray(p, p + nameLen)); p += nameLen;
-      if (p >= end) break;
-      const valType = buf[p]; p += 1;
-      if (valType === 7) {
-        // String: 2-byte BE length, then UTF-8 data.
-        if (p + 2 > end) break;
-        const valLen = (buf[p] << 8) | buf[p + 1]; p += 2;
-        if (p + valLen > end) break;
-        out[name] = td.decode(buf.subarray(p, p + valLen)); p += valLen;
-      } else {
-        // Skip non-string header types defensively per the AWS EventStream spec.
-        if (valType === 0 || valType === 1) {
-          // boolean, no payload bytes
-        } else if (valType === 2) {
-          p += 1;
-        } else if (valType === 3) {
-          p += 2;
-        } else if (valType === 4) {
-          p += 4;
-        } else if (valType === 5 || valType === 8) {
-          p += 8;
-        } else if (valType === 6) {
-          if (p + 2 > end) break;
-          const dlen = (buf[p] << 8) | buf[p + 1];
-          p += 2 + dlen;
-        } else if (valType === 9) {
-          p += 16;
-        } else {
-          // Unknown type, give up cleanly with what we have.
-          return out;
-        }
-      }
-    }
-    return out;
-  }
-
-  const td = new TextDecoder();
+  let buf: Uint8Array = new Uint8Array(0);
 
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      append(value);
 
-      // Drain as many complete frames as the buffer holds.
-      while (buf.length >= 12) {
-        const totalLen = readU32BE(0);
-        if (totalLen < 16 || totalLen > 16 * 1024 * 1024) {
-          throw new Error(`Bedrock Nova streaming: bogus frame length ${totalLen}`);
-        }
-        if (buf.length < totalLen) break; // wait for more bytes
+      // Append new bytes to accumulated buffer.
+      const merged = new Uint8Array(buf.length + value.length);
+      merged.set(buf, 0);
+      merged.set(value, buf.length);
+      buf = merged;
 
-        const headersLen = readU32BE(4);
-        const headersStart = 12; // skip prelude_crc at bytes 8..11
-        const headersEnd = headersStart + headersLen;
-        const payloadStart = headersEnd;
-        const payloadEnd = totalLen - 4; // message_crc trails
-        const headers = parseHeaders(headersStart, headersEnd);
-
-        const messageType = headers[":message-type"];
-        const eventType = headers[":event-type"];
-
-        const payloadText = td.decode(buf.subarray(payloadStart, payloadEnd));
-
-        // Advance past this frame in the buffer.
-        buf = buf.slice(totalLen);
-
-        if (messageType === "exception") {
-          let msg = payloadText;
-          try {
-            const obj = JSON.parse(payloadText) as { message?: string; Message?: string };
-            msg = obj.message ?? obj.Message ?? payloadText;
-          } catch { /* keep raw */ }
-          throw new Error(`Bedrock Nova stream exception (${eventType ?? "unknown"}): ${msg.slice(0, 500)}`);
-        }
-
-        if (messageType !== "event") continue;
-
-        let data: {
-          delta?: { text?: string };
-          usage?: { inputTokens?: number; outputTokens?: number };
-        };
-        try {
-          data = JSON.parse(payloadText);
-        } catch {
-          continue;
-        }
-
-        if (eventType === "contentBlockDelta") {
-          const text = data.delta?.text;
-          if (typeof text === "string" && text.length > 0) {
-            yield { type: "text", text };
-          }
-        } else if (eventType === "metadata") {
-          if (data.usage) {
-            yield {
-              type: "usage",
-              in_: data.usage.inputTokens ?? null,
-              out_: data.usage.outputTokens ?? null,
-            };
-          }
-        }
-        // messageStart, contentBlockStart, contentBlockStop, messageStop
-        // carry no info we need for the flat envelope.
-      }
+      // Extract whatever complete frames are now available; remainder waits
+      // for more bytes on the next read.
+      const { events, remainder } = parseBedrockEventStreamFrames(buf);
+      buf = remainder;
+      for (const event of events) yield event;
     }
   } finally {
     try { reader.releaseLock(); } catch { /* fine */ }

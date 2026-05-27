@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.18.0
+
+Adds test infrastructure (Vitest) and unit tests for the Bedrock Nova binary eventstream parser. The parser was extracted from `callBedrockNovaStream` into its own module to make it testable in isolation without loading the entire 4000-line worker module graph (which imports `cloudflare:workers`, unavailable in Node Vitest). 22 tests cover frame extraction, ignored frame types, error handling, and the realistic conversation event sequence.
+
+### Worker
+
+- New `src/parsers/types.ts` exports `ProviderStreamEvent`, the normalized envelope every streaming parser yields. Moved from `src/index.ts` so parsers can import it without circular reference. This is the contract for `/api/chat/stream` envelope events; adding a field is a breaking change for the wire format.
+- New `src/parsers/bedrock-eventstream.ts` exports `parseBedrockEventStreamFrames(buf)` returning `{ events, remainder }`. Pure function with no I/O. Handles: partial frames split across reads, unknown header types (length-tabulated and skipped per AWS spec), `:message-type=exception` frames (throws), bogus frame lengths (throws), malformed JSON payloads (silently ignored), empty text deltas (ignored), and all event types Nova currently emits (`messageStart`, `contentBlockStart`, `contentBlockDelta`, `contentBlockStop`, `messageStop`, `metadata`, plus the `tool_use`-style delta variant that has no text field).
+- `callBedrockNovaStream` in `src/index.ts` is now a thin shell that handles fetch I/O and AbortSignal, then delegates parsing to the pure function via one call to `parseBedrockEventStreamFrames(buf)`. The inline `append`/`readU32BE`/`parseHeaders` closure helpers are gone; the generator body is ~20 lines now instead of ~140.
+- One incidental type fix: `let buf` in `callBedrockNovaStream` got an explicit `Uint8Array` annotation. Without it, TypeScript 5.7+ infers `Uint8Array<ArrayBuffer>` from `new Uint8Array(0)` but the parser's `remainder` return is `Uint8Array<ArrayBufferLike>` (the default generic), so reassignment fails strict typecheck. Pre-existing line-880 error on `new Blob([Uint8Array])` is untouched and not part of this change (it's a TS5.7 ergonomics issue tracked separately).
+
+### Test infrastructure
+
+- New `vitest.config.ts` at repo root. Node environment, `tests/**/*.test.ts` pattern. No `@cloudflare/vitest-pool-workers` adapter; pure-function parser tests don't need a Workers runtime. The adapter would slot in later if we wanted to test the worker fetch handler end-to-end.
+- New `tests/bedrock-eventstream.test.ts` with 22 tests organized into 5 `describe` blocks: buffer states (3), event extraction (5), ignored frames (6), error frames with synchronous throws (5), and a realistic conversation stream walking the messageStart -> contentBlockDelta x N -> messageStop -> metadata sequence. Fixtures are hand-crafted per the AWS EventStream binary format spec via a `buildFrame(headers, payload)` helper.
+- New `package.json` scripts: `test` (one-shot, for CI) and `test:watch` (continuous, for development).
+- New devDeps: `vitest@^2.1.0` and `@types/node@^22.0.0`. `npm install` after applying the patch will pull both.
+
+### Why split parsers into their own module
+
+Originally I planned to keep parsers in `src/index.ts` and just `export` them, on the principle of preserving the single-Worker-file property. That broke in practice when Vitest tried to load the test file: Vite resolves the entire module graph during transform, and `src/index.ts` imports `cloudflare:workers` (Workers-runtime-only, unavailable in Node). Three ways out:
+
+1. Stub `cloudflare:workers` via Vitest `resolve.alias` config.
+2. Add `@cloudflare/vitest-pool-workers`, requiring miniflare just to run pure-function tests.
+3. Split parsers out so tests only load what they need.
+
+Option 3 is cleanest: faster test runs (no transform of xlsx/unpdf/aws4fetch), no test-only adapters or stubs, and v0.18.1 SSE parsers slot in alongside this one in the same directory.
+
+The "one Worker file" property was about deployment simplicity (still preserved; esbuild bundles `src/index.ts` and its imports into one Worker .js bundle), not about literally one source file. The `src/parsers/` directory is the natural seam.
+
+### What's deferred to v0.18.1
+
+SSE parser extraction and tests for xAI, Workers AI, and Anthropic streaming. All three currently share the same `\n\n`-delimited SSE framer with provider-specific JSON interpretation; the pattern will follow the same shape as Bedrock (pure functions in `src/parsers/`, tests in `tests/`).
+
+### Touch points
+
+- `src/index.ts`: 4 hunks (+5 / -126, net -121 lines). Imports at top of file (+2 lines), `ProviderStreamEvent` local type removed (-3 lines), `callBedrockNovaStream` body collapsed (+0 / -125 effective).
+- `src/parsers/types.ts`: new file, ~20 lines.
+- `src/parsers/bedrock-eventstream.ts`: new file, ~150 lines (parser body identical to the old inline implementation, factored as exported function with imported type).
+- `tests/bedrock-eventstream.test.ts`: new file, ~280 lines (22 tests + frame-construction helper).
+- `vitest.config.ts`: new file, ~22 lines.
+- `package.json`: version bump 0.17.2 -> 0.18.0, +2 devDeps, +2 scripts.
+
+No D1 migration. No R2 migration. No new worker secrets. No behavior change (parser logic is byte-identical to the v0.17.2 inline implementation; pure mechanical extraction validated by 22 tests).
+
 ## v0.17.2
 
 Internal refactor: extract shared request builders for the xAI and Bedrock Nova providers. Streaming and non-streaming callers for each pair now share their URL/headers/body construction instead of duplicating ~30 lines per pair. No behavior change.
