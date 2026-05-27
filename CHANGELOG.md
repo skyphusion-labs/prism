@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.18.1
+
+Completes the parser test story started in v0.18.0. Extracts SSE parsing for xAI, Workers AI, and Anthropic streaming into pure functions, refactors the three streaming generators to delegate to them, and adds 43 tests across four new test files. All three generators now share one SSE framer; per-provider event-type semantics live in dedicated interpreters.
+
+### Worker
+
+- New `src/parsers/sse-framer.ts` exports `extractSSEDataPayloads(buffer)` returning `{ payloads, remainder }`. Pure string-in/string-out function with no I/O. Handles the `\n\n` event-boundary split, `data:` line extraction (both spaced and compact prefix), `[DONE]` sentinel filtering, whitespace-only event filtering, and partial-event-as-remainder behavior. Multi-line `data:` "last wins" semantics preserved (none of our three providers emit multi-line data, but the inline implementations behaved that way and the framer matches exactly).
+- New `src/parsers/xai-sse.ts` exports `interpretXaiSSEFrame(data)`. OpenAI-compatible chat completions delta format: extracts text from `choices[0].delta.content` and usage from `usage.prompt_tokens` / `usage.completion_tokens`. Empty-string deltas (typical for the final pre-usage frame) are dropped.
+- New `src/parsers/workers-ai-sse.ts` exports `interpretWorkersAISSEFrame(data)`. Workers AI's flat `response` field rather than OpenAI's nested choices. Usage naming varies by underlying adapter; the interpreter accepts both `prompt_tokens`/`completion_tokens` and `input_tokens`/`output_tokens`, preferring OpenAI naming when both are present. Reasoning-model `<think>` blocks pass through unchanged for the UI to fold.
+- New `src/parsers/anthropic-sse.ts` exports `interpretAnthropicSSEFrame(data)`. Named-event semantics distinguished by `data.type`: `message_start` (initial usage), `content_block_delta` with `delta.type=text_delta` (text), `message_delta` (final usage). `content_block_start`, `content_block_stop`, `message_stop`, `ping`, and unknown types ignored.
+- `callXaiStream`, `callWorkersAIStream`, and `callAnthropicStream` in `src/index.ts` collapse to thin shells around `extractSSEDataPayloads` + JSON.parse + per-provider interpreter. Each generator's parsing loop is now ~10 lines instead of ~30-40.
+
+### Test infrastructure
+
+- `tests/sse-framer.test.ts`: 13 tests covering buffer states (empty, no-boundary, partial trailing), payload extraction (single, multiple, compact prefix, mixed prefixes, ignored `event:`/`id:`/`retry:` lines), dropped events (`[DONE]`, whitespace-only, empty `data:`), multi-data-line "last wins" semantics, and split-across-reads behavior.
+- `tests/xai-sse.test.ts`: 7 tests covering text delta extraction, usage extraction, both-in-one-frame (rare but supported), empty content filtering, missing choices, missing delta content, and null token fallback.
+- `tests/workers-ai-sse.test.ts`: 8 tests covering text via `response`, empty response filtering, OpenAI-naming usage, Anthropic-naming usage fallback, OpenAI-wins-when-both, reasoning-model `<think>` passthrough, and combined text+usage frames.
+- `tests/anthropic-sse.test.ts`: 15 tests covering `message_start` usage (with and without), `content_block_delta` text vs tool-use vs missing text, `message_delta` usage (with and without, with null fallbacks), all five ignored event types, and a realistic eight-frame conversation sequence.
+
+Total test count across the suite is now 65 (22 Bedrock from v0.18.0 + 43 new in v0.18.1), running in ~60ms.
+
+### Touch points
+
+- `src/index.ts`: 5 hunks (+47 / -134, net -87 lines). Imports gain four new lines for the new parser modules; three generator parsing loops each shrink by ~30 lines.
+- `src/parsers/sse-framer.ts`: new file, ~35 lines.
+- `src/parsers/xai-sse.ts`: new file, ~35 lines.
+- `src/parsers/workers-ai-sse.ts`: new file, ~45 lines.
+- `src/parsers/anthropic-sse.ts`: new file, ~50 lines.
+- `tests/sse-framer.test.ts`: new file, ~115 lines.
+- `tests/xai-sse.test.ts`: new file, ~55 lines.
+- `tests/workers-ai-sse.test.ts`: new file, ~70 lines.
+- `tests/anthropic-sse.test.ts`: new file, ~135 lines.
+- `package.json`: version bump 0.18.0 -> 0.18.1. No new devDeps (Vitest already installed by v0.18.0).
+
+No D1 migration. No R2 migration. No new worker secrets. No behavior change (parser logic is byte-identical to the v0.18.0 inline implementations; pure mechanical extraction validated by 43 new tests).
+
 ## v0.18.0
 
 Adds test infrastructure (Vitest) and unit tests for the Bedrock Nova binary eventstream parser. The parser was extracted from `callBedrockNovaStream` into its own module to make it testable in isolation without loading the entire 4000-line worker module graph (which imports `cloudflare:workers`, unavailable in Node Vitest). 22 tests cover frame extraction, ignored frame types, error handling, and the realistic conversation event sequence.

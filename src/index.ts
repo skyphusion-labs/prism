@@ -20,6 +20,10 @@ import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
 import type { WorkflowEvent } from "cloudflare:workers";
 import type { ProviderStreamEvent } from "./parsers/types";
 import { parseBedrockEventStreamFrames } from "./parsers/bedrock-eventstream";
+import { extractSSEDataPayloads } from "./parsers/sse-framer";
+import { interpretXaiSSEFrame } from "./parsers/xai-sse";
+import { interpretWorkersAISSEFrame } from "./parsers/workers-ai-sse";
+import { interpretAnthropicSSEFrame } from "./parsers/anthropic-sse";
 
 //
 // Multimodal model types:
@@ -1756,52 +1760,17 @@ async function* callAnthropicStream(
       // retry:) we ignore. Anthropic uses `event:` for the type and `data:`
       // for the payload; the payload's own `type` field also carries the
       // event kind, so we can rely on that alone.
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() ?? "";
+      const { payloads, remainder } = extractSSEDataPayloads(buffer);
+      buffer = remainder;
 
-      for (const part of parts) {
-        if (!part.trim()) continue;
-
-        let dataPayload = "";
-        for (const line of part.split("\n")) {
-          if (line.startsWith("data: ")) dataPayload = line.slice(6);
-          else if (line.startsWith("data:")) dataPayload = line.slice(5);
-        }
-        if (!dataPayload || dataPayload === "[DONE]") continue;
-
-        let data: Record<string, unknown>;
+      for (const payload of payloads) {
+        let data: unknown;
         try {
-          data = JSON.parse(dataPayload);
+          data = JSON.parse(payload);
         } catch {
           continue;
         }
-
-        const evType = data.type as string | undefined;
-        if (evType === "content_block_delta") {
-          const delta = data.delta as { type?: string; text?: string } | undefined;
-          if (delta?.type === "text_delta" && typeof delta.text === "string") {
-            yield { type: "text", text: delta.text };
-          }
-        } else if (evType === "message_start") {
-          const msg = data.message as { usage?: { input_tokens?: number; output_tokens?: number } } | undefined;
-          if (msg?.usage) {
-            yield {
-              type: "usage",
-              in_: msg.usage.input_tokens ?? null,
-              out_: msg.usage.output_tokens ?? null,
-            };
-          }
-        } else if (evType === "message_delta") {
-          const usage = data.usage as { input_tokens?: number; output_tokens?: number } | undefined;
-          if (usage) {
-            yield {
-              type: "usage",
-              in_: usage.input_tokens ?? null,
-              out_: usage.output_tokens ?? null,
-            };
-          }
-        }
-        // content_block_start, content_block_stop, message_stop, ping: ignored
+        for (const event of interpretAnthropicSSEFrame(data)) yield event;
       }
     }
   } finally {
@@ -1860,48 +1829,17 @@ async function* callWorkersAIStream(
 
       buffer += decoder.decode(value, { stream: true });
 
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() ?? "";
+      const { payloads, remainder } = extractSSEDataPayloads(buffer);
+      buffer = remainder;
 
-      for (const part of parts) {
-        if (!part.trim()) continue;
-
-        let payload = "";
-        for (const line of part.split("\n")) {
-          if (line.startsWith("data: ")) payload = line.slice(6);
-          else if (line.startsWith("data:")) payload = line.slice(5);
-        }
-        if (!payload || payload === "[DONE]") continue;
-
-        let data: Record<string, unknown>;
+      for (const payload of payloads) {
+        let data: unknown;
         try {
           data = JSON.parse(payload);
         } catch {
           continue;
         }
-
-        // Text delta. `response` is the OpenAI-style per-chunk field. Empty
-        // strings are normal on the final chunk (which carries usage); skip them.
-        const resp = data.response;
-        if (typeof resp === "string" && resp.length > 0) {
-          yield { type: "text", text: resp };
-        }
-
-        // Usage. Workers AI uses OpenAI naming; some adapters fall back to
-        // the Anthropic naming. Accept both, prefer OpenAI.
-        const usage = data.usage as {
-          prompt_tokens?: number;
-          completion_tokens?: number;
-          input_tokens?: number;
-          output_tokens?: number;
-        } | undefined;
-        if (usage) {
-          yield {
-            type: "usage",
-            in_: usage.prompt_tokens ?? usage.input_tokens ?? null,
-            out_: usage.completion_tokens ?? usage.output_tokens ?? null,
-          };
-        }
+        for (const event of interpretWorkersAISSEFrame(data)) yield event;
       }
     }
   } finally {
@@ -2038,40 +1976,17 @@ async function* callXaiStream(
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() ?? "";
+      const { payloads, remainder } = extractSSEDataPayloads(buffer);
+      buffer = remainder;
 
-      for (const part of parts) {
-        if (!part.trim()) continue;
-        let payload = "";
-        for (const line of part.split("\n")) {
-          if (line.startsWith("data: ")) payload = line.slice(6);
-          else if (line.startsWith("data:")) payload = line.slice(5);
-        }
-        if (!payload || payload === "[DONE]") continue;
-
-        let data: {
-          choices?: Array<{ delta?: { content?: string } }>;
-          usage?: { prompt_tokens?: number; completion_tokens?: number };
-        };
+      for (const payload of payloads) {
+        let data: unknown;
         try {
           data = JSON.parse(payload);
         } catch {
           continue;
         }
-
-        const text = data.choices?.[0]?.delta?.content;
-        if (typeof text === "string" && text.length > 0) {
-          yield { type: "text", text };
-        }
-
-        if (data.usage) {
-          yield {
-            type: "usage",
-            in_: data.usage.prompt_tokens ?? null,
-            out_: data.usage.completion_tokens ?? null,
-          };
-        }
+        for (const event of interpretXaiSSEFrame(data)) yield event;
       }
     }
   } finally {
