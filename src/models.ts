@@ -62,6 +62,7 @@ export const MODELS: ModelEntry[] = [
   // ---- Chat (text generation) ----
   // Anthropic (BYOK via x-api-key or stored keys, routed through AI Gateway)
   // v0.13.0: streaming: true makes these eligible for POST /api/chat/stream.
+  { id: "anthropic/claude-opus-4-8",                    label: "Claude Opus 4.8 (Anthropic, BYOK)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
   { id: "anthropic/claude-opus-4-7",                    label: "Claude Opus 4.7 (Anthropic, BYOK)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
   { id: "anthropic/claude-opus-4-6",                    label: "Claude Opus 4.6 (Anthropic, BYOK)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
   { id: "anthropic/claude-sonnet-4-6",                  label: "Claude Sonnet 4.6 (Anthropic, BYOK)",        group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
@@ -137,6 +138,8 @@ export const MODELS: ModelEntry[] = [
   // ---- Video generation (Cloudflare Unified Billing via env.AI.run) ----
   // All routed through env.AI.run("provider/model", ...) - CF handles auth and
   // billing. No BYOK to xAI/Google/etc needed for these models.
+  { id: "google/veo-3.1",                               label: "Veo 3.1 (Google, needs CF credits)",               group: "Video Gen", type: "video", capabilities: [], provider: "google" },
+  { id: "google/veo-3.1-fast",                          label: "Veo 3.1 Fast (Google, needs CF credits)",          group: "Video Gen", type: "video", capabilities: [], provider: "google" },
   { id: "google/veo-3",                                 label: "Veo 3 (Google, needs CF credits)",                 group: "Video Gen", type: "video", capabilities: [], provider: "google" },
   { id: "google/veo-3-fast",                            label: "Veo 3 Fast (Google, needs CF credits)",            group: "Video Gen", type: "video", capabilities: [], provider: "google" },
   { id: "bytedance/seedance-2.0",                       label: "Seedance 2.0 (ByteDance, needs CF credits)",       group: "Video Gen", type: "video", capabilities: [], provider: "bytedance" },
