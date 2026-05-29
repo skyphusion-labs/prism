@@ -1,0 +1,119 @@
+// Tests for extractOutput / extractUsage (v0.21.0).
+//
+// These two functions normalize every response shape that reaches the
+// non-streaming chat path. The OpenAI proxied chat models added in v0.21.0
+// rest entirely on extractOutput parsing the OpenAI shapes correctly, so the
+// chat-completions and Responses API cases are the load-bearing ones here;
+// the rest are regression coverage for the shapes that already shipped.
+
+import { describe, it, expect } from "vitest";
+import { extractOutput, extractUsage } from "../src/output-extract";
+
+describe("extractOutput", () => {
+  it("returns a bare string unchanged", () => {
+    expect(extractOutput("hello")).toBe("hello");
+  });
+
+  it("reads Workers AI { response }", () => {
+    expect(extractOutput({ response: "from workers ai" })).toBe("from workers ai");
+  });
+
+  it("reads a top-level string { result }", () => {
+    expect(extractOutput({ result: "from result" })).toBe("from result");
+  });
+
+  // --- OpenAI proxied: the v0.21.0 load-bearing cases ---
+
+  it("reads the OpenAI chat-completions shape { choices[0].message.content }", () => {
+    const r = {
+      choices: [{ index: 0, message: { role: "assistant", content: "openai chat reply" } }],
+      usage: { prompt_tokens: 12, completion_tokens: 34 },
+    };
+    expect(extractOutput(r)).toBe("openai chat reply");
+  });
+
+  it("reads the OpenAI Responses API shape { output[].content[] } (output_text)", () => {
+    const r = {
+      output: [
+        {
+          type: "message",
+          content: [
+            { type: "output_text", text: "first" },
+            { type: "output_text", text: " second" },
+          ],
+        },
+      ],
+      usage: { prompt_tokens: 5, completion_tokens: 7 },
+    };
+    expect(extractOutput(r)).toBe("first second");
+  });
+
+  it("reads Responses API blocks typed plain 'text' as well as 'output_text'", () => {
+    const r = { output: [{ content: [{ type: "text", text: "plain text block" }] }] };
+    expect(extractOutput(r)).toBe("plain text block");
+  });
+
+  it("does not confuse the Responses API { output: [] } with the Bedrock { output: {} } shape", () => {
+    // Bedrock's output is an object with .message; the Responses API output is
+    // an array. Both branches must coexist without crossfire.
+    const bedrock = { output: { message: { content: [{ text: "bedrock nova" }] } } };
+    expect(extractOutput(bedrock)).toBe("bedrock nova");
+  });
+
+  // --- Existing-shape regression coverage ---
+
+  it("reads the Anthropic Messages content array, text blocks only", () => {
+    const r = {
+      content: [
+        { type: "thinking", text: "ignored" },
+        { type: "text", text: "anthropic " },
+        { type: "text", text: "answer" },
+      ],
+    };
+    expect(extractOutput(r)).toBe("anthropic answer");
+  });
+
+  it("reads Bedrock Pegasus { message }", () => {
+    expect(extractOutput({ message: "pegasus says", finishReason: "stop" })).toBe("pegasus says");
+  });
+
+  it("reads Bedrock { generations[0].text }", () => {
+    expect(extractOutput({ generations: [{ text: "gen text" }] })).toBe("gen text");
+  });
+
+  it("falls back to JSON.stringify on an unrecognized shape", () => {
+    const weird = { nope: true };
+    expect(extractOutput(weird)).toBe(JSON.stringify(weird));
+  });
+
+  it("does not throw on null / undefined", () => {
+    expect(() => extractOutput(null)).not.toThrow();
+    expect(() => extractOutput(undefined)).not.toThrow();
+  });
+});
+
+describe("extractUsage", () => {
+  it("reads OpenAI prompt_tokens / completion_tokens", () => {
+    expect(extractUsage({ usage: { prompt_tokens: 100, completion_tokens: 50 } }))
+      .toEqual({ in_: 100, out_: 50 });
+  });
+
+  it("reads Anthropic input_tokens / output_tokens", () => {
+    expect(extractUsage({ usage: { input_tokens: 8, output_tokens: 4 } }))
+      .toEqual({ in_: 8, out_: 4 });
+  });
+
+  it("reads Bedrock camelCase inputTokens / outputTokens", () => {
+    expect(extractUsage({ usage: { inputTokens: 3, outputTokens: 9 } }))
+      .toEqual({ in_: 3, out_: 9 });
+  });
+
+  it("returns nulls when there is no usage object", () => {
+    expect(extractUsage({ response: "no usage here" })).toEqual({ in_: null, out_: null });
+  });
+
+  it("does not throw on null / undefined", () => {
+    expect(() => extractUsage(null)).not.toThrow();
+    expect(() => extractUsage(undefined)).not.toThrow();
+  });
+});

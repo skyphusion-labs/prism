@@ -24,6 +24,7 @@ import { MODELS } from "./models";
 import type { Env } from "./env";
 import { parseDataUrl, base64ToBytes, extFromMime } from "./utils";
 import { aiRun, aiLogId } from "./ai-binding";
+import { extractOutput, extractUsage } from "./output-extract";
 import { chunkText } from "./chunking";
 import { parseDiscordExport, chunkDiscordMessages } from "./discord";
 import { callAnthropic, callAnthropicStream } from "./providers/anthropic";
@@ -1766,73 +1767,8 @@ async function handleJobPoll(request: Request, env: Env, id: number): Promise<Re
 }
 
 // ---------- Output extraction (text models) ----------
-
-function extractOutput(result: unknown): string {
-  if (typeof result === "string") return result;
-  const r = result as Record<string, unknown>;
-
-  if (typeof r?.response === "string") return r.response;
-  if (typeof r?.result === "string")   return r.result;
-
-  const choices = r?.choices as Array<{ message?: { content?: string } }> | undefined;
-  if (Array.isArray(choices) && typeof choices[0]?.message?.content === "string") {
-    return choices[0].message.content;
-  }
-
-  // Anthropic Messages API: top-level content array
-  const content = r?.content as Array<{ type?: string; text?: string }> | undefined;
-  if (Array.isArray(content)) {
-    const text = content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
-    if (text) return text;
-  }
-
-  // Bedrock Converse API (Nova family): { output: { message: { content: [{ text }] } } }
-  const bedrockOutput = r?.output as { message?: { content?: Array<{ text?: string }> } } | undefined;
-  if (bedrockOutput?.message?.content) {
-    const text = bedrockOutput.message.content
-      .map((c) => c.text ?? "")
-      .join("");
-    if (text) return text;
-  }
-
-  // Bedrock Pegasus 1.2 (InvokeModel): { message: "...", finishReason: "..." }
-  // Some versions return { generations: [{ text }] } instead - cover both.
-  if (typeof r?.message === "string") return r.message as string;
-  const generations = r?.generations as Array<{ text?: string }> | undefined;
-  if (Array.isArray(generations) && typeof generations[0]?.text === "string") {
-    return generations[0].text;
-  }
-
-  const out = r?.output as Array<unknown> | undefined;
-  if (Array.isArray(out)) {
-    const text = out
-      .flatMap((block) => {
-        const b = block as { content?: Array<{ type?: string; text?: string }> };
-        return (b?.content ?? [])
-          .filter((c) => c?.type === "output_text" || c?.type === "text")
-          .map((c) => c.text ?? "");
-      })
-      .join("");
-    if (text) return text;
-  }
-
-  return JSON.stringify(result);
-}
-
-function extractUsage(result: unknown): { in_: number | null; out_: number | null } {
-  const r = result as Record<string, unknown>;
-  // OpenAI / Anthropic / Bedrock: usage object on result.
-  // OpenAI uses prompt_tokens/completion_tokens; Anthropic uses input_tokens/output_tokens;
-  // Bedrock Converse uses inputTokens/outputTokens (camelCase).
-  const u = r?.usage as Record<string, number> | undefined;
-  if (u) {
-    return {
-      in_:  u.prompt_tokens ?? u.input_tokens ?? u.inputTokens ?? null,
-      out_: u.completion_tokens ?? u.output_tokens ?? u.outputTokens ?? null,
-    };
-  }
-  return { in_: null, out_: null };
-}
+// extractOutput / extractUsage moved to src/output-extract.ts (v0.21.0) so
+// they can be unit-tested without importing index.ts. Imported at the top.
 
 // ---------- History ----------
 
