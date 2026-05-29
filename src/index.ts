@@ -32,7 +32,7 @@ import { callXai, callXaiStream } from "./providers/xai";
 import { callBedrockNova, callBedrockNovaStream, callBedrockPegasus } from "./providers/bedrock";
 import { callWorkersAIStream } from "./providers/workers-ai";
 import { callOpenAIStream } from "./providers/openai";
-import { callGemini } from "./providers/google";
+import { callGemini, callGeminiStream } from "./providers/google";
 import type {
   InputImageAttachment,
   InputAudioAttachment,
@@ -359,6 +359,7 @@ async function handleChatStream(request: Request, env: Env, ctx: ExecutionContex
     model.provider !== "xai" &&
     model.provider !== "bedrock" &&
     model.provider !== "openai" &&
+    model.provider !== "google" &&
     !isWorkersAI
   ) {
     return json({ error: `Streaming for provider '${model.provider}' is not yet implemented.` }, { status: 501 });
@@ -1379,6 +1380,8 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
         streamGenerator = callBedrockNovaStream(env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal);
       } else if (model.provider === "openai") {
         streamGenerator = callOpenAIStream(env, model, messages, upstreamAbort.signal);
+      } else if (model.provider === "google") {
+        streamGenerator = callGeminiStream(env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal);
       } else {
         streamGenerator = callWorkersAIStream(env, model, messages, upstreamAbort.signal);
       }

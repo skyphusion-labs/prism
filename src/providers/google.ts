@@ -24,12 +24,16 @@
 //     multimodal turn degrades to text rather than throwing. (Vision input is
 //     a later pass; the catalog entry is text-only for now.)
 //
-// Non-streaming only this pass. The stream gate returns 501 for provider
-// "google", so a stream request can't reach a parser that doesn't exist yet.
+// Non-streaming chat via callGemini; streaming via callGeminiStream (v0.21.4),
+// which mirrors callOpenAIStream (binding path + abort bridge) and uses the
+// Gemini SSE interpreter plus a dual-mode delta reconciler.
 
 import type { Env } from "../env";
 import type { ModelEntry } from "../models";
+import type { ProviderStreamEvent } from "../parsers/types";
 import { aiRun, aiLogId } from "../ai-binding";
+import { extractSSEDataPayloads } from "../parsers/sse-framer";
+import { interpretGeminiSSEFrame, makeGeminiDeltaReconciler } from "../parsers/gemini-sse";
 
 type InternalMessage = { role?: string; content?: unknown };
 
@@ -82,4 +86,65 @@ export async function callGemini(
 ): Promise<{ raw: unknown; logId: string | null }> {
   const raw = await aiRun(env, model.id, prepareGeminiRequest(systemPrompt, messages));
   return { raw, logId: aiLogId(env) };
+}
+
+export async function* callGeminiStream(
+  env: Env,
+  model: ModelEntry,
+  systemPrompt: string | undefined,
+  messages: Array<unknown>,
+  signal: AbortSignal,
+): AsyncGenerator<ProviderStreamEvent> {
+  const result = await aiRun(env, model.id, {
+    ...prepareGeminiRequest(systemPrompt, messages),
+    stream: true,
+  });
+
+  if (!(result instanceof ReadableStream)) {
+    throw new Error(`Gemini did not return a stream (got ${typeof result}). The binding may not honor stream:true for this model; use POST /api/chat instead.`);
+  }
+
+  const reader = result.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const reconcile = makeGeminiDeltaReconciler();
+
+  const onAbort = () => { try { reader.cancel(); } catch { /* fine */ } };
+  if (signal.aborted) {
+    onAbort();
+  } else {
+    signal.addEventListener("abort", onAbort, { once: true });
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      const { payloads, remainder } = extractSSEDataPayloads(buffer);
+      buffer = remainder;
+
+      for (const payload of payloads) {
+        let data: unknown;
+        try {
+          data = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+        for (const event of interpretGeminiSSEFrame(data)) {
+          if (event.type === "text") {
+            const delta = reconcile(event.text);
+            if (delta) yield { type: "text", text: delta };
+          } else {
+            yield event;
+          }
+        }
+      }
+    }
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    try { reader.releaseLock(); } catch { /* fine */ }
+  }
 }

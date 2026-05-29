@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.21.4
+
+Gemini SSE streaming. Gemini 3.1 Pro (added non-streaming in v0.21.3) now streams. Confirmed live in the UI. No schema, no migration, no new dependencies, no new worker secrets.
+
+### What changed
+
+`src/parsers/gemini-sse.ts` (new): `interpretGeminiSSEFrame` extracts `candidates[0].content.parts[].text` and `usageMetadata` per frame (stateless), mirroring the other SSE interpreters. `callGeminiStream` (new, in `src/providers/google.ts`) is structurally identical to `callOpenAIStream`: binding path with `stream: true`, reader loop, `extractSSEDataPayloads`, same abort bridge. The stream gate in `handleChatStream` was opened for provider `google`, a `provider === "google"` branch was added to the `runChatStream` dispatch, and `streaming: true` is now set on `google/gemini-3.1-pro`.
+
+### The incremental-vs-cumulative reconciler
+
+Gemini stream chunks can be either incremental (each chunk is the new piece) or cumulative (each chunk is the full text so far), and which one the binding emits isn't contractually documented. Rather than probe-then-build, this release handles both with `makeGeminiDeltaReconciler` (in `gemini-sse.ts`): per frame, if the new text extends what's already been emitted (`startsWith`) it slices the new suffix (cumulative); otherwise it emits the piece whole (incremental). Both modes reconstruct the correct, non-repeating output. This is the same defensive-dual-shape approach that made the OpenAI SSE parser work first try. The reconciliation lives in the stream caller (it needs cross-frame state); the interpreter stays stateless and testable.
+
+Edge case, documented in the code: an incremental piece that exactly equals `emitted + suffix` would be mis-sliced, astronomically unlikely in natural-language token streams. If a live stream ever shows repeated or truncated text, the raw-frame probe identifies the true mode and the reconciler can be pinned to one branch.
+
+### Touch points
+
+- `src/parsers/gemini-sse.ts`: new. `interpretGeminiSSEFrame` + `makeGeminiDeltaReconciler`.
+- `src/providers/google.ts`: `callGeminiStream` added.
+- `src/index.ts`: import; `provider === "google"` branch in the stream dispatch; gate opened.
+- `src/models.ts`: `streaming: true` on `google/gemini-3.1-pro`.
+- `tests/gemini-sse.test.ts`: new, 9 tests (interpreter shapes + both reconciler modes + final-text equivalence).
+- `README.md`: SSE bullet now six providers; chat catalog 37 stream-capable; Gemini section flipped to streaming.
+- `package.json`: 0.21.3 -> 0.21.4.
+
+Worker typecheck clean. Worker tests: 150/150 (141 prior + 9 new).
+
+### Notes / next
+
+- The one failure mode the reconciler can't cover is if the binding doesn't return `data:`-framed SSE at all (e.g. a JSON-array stream); `extractSSEDataPayloads` would then find nothing and output would be empty. UI streaming confirms this is not the case for gemini-3.1-pro.
+- The rest of the Gemini family (`gemini-3-flash`, `gemini-2.5-pro/flash`, the lites), when added on `src/providers/google.ts`, inherits this streaming path for free.
+- Gemini vision input still deferred.
+
 ## v0.21.3
 
 Google Gemini chat via Unified Billing: Gemini 3.1 Pro. Confirmed live. No schema, no migration, no new dependencies, no new worker secrets.
