@@ -22,7 +22,7 @@ import type { ProviderStreamEvent } from "./parsers/types";
 import type { ModelType, Provider, ModelEntry } from "./models";
 import { MODELS } from "./models";
 import type { Env } from "./env";
-import { parseDataUrl, base64ToBytes, extFromMime } from "./utils";
+import { parseDataUrl, base64ToBytes, bytesToBase64, extFromMime } from "./utils";
 import { aiRun, aiLogId } from "./ai-binding";
 import { extractOutput, extractUsage, detectProviderFailure, extractProxiedImageUrl } from "./output-extract";
 import { chunkText } from "./chunking";
@@ -74,6 +74,7 @@ interface ChatRequest {
   user_input: string;
   attachments?: InputAttachment[];
   image_url?: string;   // v0.21.5: source image for image-to-video models (hh1-i2v); a fetchable URL
+  image_key?: string;   // v0.21.6: source image as an R2 key (e.g. a prior nano-banana output) for image-to-video chaining
   use_docs?: boolean;   // Pass 2: when true, retrieve top-K chunks from Vectorize and inject as context
   use_web_search?: boolean;  // v0.17.0: when true, query Tavily + Wikipedia and inject snippets as context
   conversation_id?: string;  // Multi-turn: when present, continue an existing conversation
@@ -178,6 +179,23 @@ async function r2PutStream(env: Env, prefix: "in" | "out", mime: string, stream:
     customMetadata: { user_email: userEmail },
   });
   return key;
+}
+
+// Read an R2 object and return it as a base64 `data:` URI. Used to inline a
+// source image for image-to-video (hh1-i2v): the upstream accepts data URIs
+// (verified, it re-uploads them to its own OSS), so we don't need a presigned
+// GET URL. Ownership is enforced the same way /api/artifact does: the object's
+// customMetadata.user_email must match, so a client can't reference another
+// user's R2 key via image_key. Throws on miss or ownership mismatch.
+async function r2KeyToDataUri(env: Env, key: string, userEmail: string): Promise<string> {
+  const obj = await env.R2.get(key);
+  if (!obj) throw new Error(`source image not found: ${key}`);
+  if (obj.customMetadata?.user_email !== userEmail) {
+    throw new Error(`source image not owned by requester: ${key}`);
+  }
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  const mime = obj.httpMetadata?.contentType || "image/png";
+  return `data:${mime};base64,${bytesToBase64(bytes)}`;
 }
 
 async function r2DeleteSafe(env: Env, key: string): Promise<void> {
@@ -1562,13 +1580,31 @@ async function runVideo(
   // response. The workflow keeps the call alive across step boundaries
   // and retries each step independently.
 
-  // Image-to-video models (e.g. alibaba/hh1-i2v, flagged "image-input")
-  // require a source image. First pass (v0.21.5): accept a fetchable URL via
-  // body.image_url. Attachment upload + nano-banana chaining (which need an
-  // R2 read or a presigned GET URL) are the next layer; see session notes.
+  // Image-to-video models (e.g. alibaba/hh1-i2v, flagged "image-input") need a
+  // source image (v0.21.6). Three sources, resolved into one of two workflow
+  // params: an uploaded attachment or an R2 key (image_key, e.g. a prior
+  // nano-banana output for chaining) -> `imageKey`, resolved to a data: URI in
+  // the workflow; a fetchable external URL (image_url) -> `imageUrl`, passed
+  // through. Uploads are stored to R2 here so the (potentially multi-MB) image
+  // doesn't ride the Workflow event payload (~1 MiB cap); the small key does.
   const needsImage = model.capabilities.includes("image-input");
-  if (needsImage && !(body.image_url && body.image_url.trim())) {
-    return json({ error: "This image-to-video model requires 'image_url' (a fetchable image URL)." }, { status: 400 });
+  let srcImageKey: string | undefined;
+  let srcImageUrl: string | undefined;
+  if (needsImage) {
+    const imgAtt = (body.attachments ?? []).find((a) => a.type === "image" && a.data);
+    if (imgAtt && imgAtt.type === "image" && imgAtt.data) {
+      const parsed = parseDataUrl(imgAtt.data);
+      if (!parsed) {
+        return json({ error: "Attached image is not a base64 data URL." }, { status: 400 });
+      }
+      srcImageKey = await r2Put(env, "in", parsed.mime, base64ToBytes(parsed.base64), userEmail);
+    } else if (body.image_key && body.image_key.trim()) {
+      srcImageKey = body.image_key.trim();
+    } else if (body.image_url && body.image_url.trim()) {
+      srcImageUrl = body.image_url.trim();
+    } else {
+      return json({ error: "This image-to-video model requires a source image: attach one, or pass 'image_key' (an R2 key) or 'image_url' (a fetchable URL)." }, { status: 400 });
+    }
   }
 
   const row = await persistChat(env, {
@@ -1599,7 +1635,8 @@ async function runVideo(
         userEmail,
         modelId: model.id,
         prompt: body.user_input,
-        imageUrl: needsImage ? body.image_url : undefined,
+        imageUrl: srcImageUrl,
+        imageKey: srcImageKey,
         kind: "video",
         startedAtIso: startedAt,
       } satisfies LongRunParams,
@@ -3588,7 +3625,8 @@ interface LongRunParams extends Record<string, unknown> {
   modelId: string;
   prompt: string;
   lyrics?: string;          // music only
-  imageUrl?: string;        // image-to-video only (hh1-i2v); presence selects i2v params
+  imageUrl?: string;        // image-to-video: a fetchable URL passed through as-is
+  imageKey?: string;        // image-to-video: an R2 key resolved to a data: URI in the workflow (uploads + chaining)
   kind: LongRunKind;
   startedAtIso: string;
 }
@@ -3604,7 +3642,7 @@ interface LongRunResult {
 
 export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
   async run(event: WorkflowEvent<LongRunParams>, step: WorkflowStep): Promise<void> {
-    const { rowId, userEmail, modelId, prompt, lyrics, imageUrl, kind, startedAtIso } = event.payload;
+    const { rowId, userEmail, modelId, prompt, lyrics, imageUrl, imageKey, kind, startedAtIso } = event.payload;
 
     // Best-effort row-fail helper. Used in the outer catch to surface
     // workflow-level failures to the polling client. Failures inside this
@@ -3628,7 +3666,15 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
         "invoke-model",
         { retries: { limit: 1, delay: "30 seconds", backoff: "linear" } },
         async (): Promise<string> => {
-          const params = buildGenParams(kind, { prompt, lyrics, imageUrl });
+          // Resolve the source image for image-to-video: an R2 key (upload or
+          // chained nano-banana output) becomes a data: URI here, inside the
+          // step, so the big base64 never rides the Workflow event payload.
+          // A plain URL passes straight through. Resolution happens in-step so
+          // a transient R2 read is covered by the step's retry.
+          const resolvedImage = imageKey
+            ? await r2KeyToDataUri(this.env, imageKey, userEmail)
+            : imageUrl;
+          const params = buildGenParams(kind, { prompt, lyrics, imageUrl: resolvedImage });
 
           const result = await aiRun(this.env, modelId, params) as LongRunResult;
 

@@ -29,6 +29,23 @@ export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
 }
 
 /**
+ * Encode bytes to a base64 string. Chunked because the naive
+ * `btoa(String.fromCharCode(...bytes))` spreads every byte as an argument and
+ * overflows the call stack on multi-MB inputs (e.g. an uploaded source image).
+ * 0x8000 chars/chunk is the standard safe window. Round-trips with
+ * base64ToBytes. (v0.21.6: used to inline an R2 source image as a data: URI
+ * for image-to-video, since the upstream accepts data URIs.)
+ */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(bin);
+}
+
+/**
  * Pick a file extension for a MIME type. Used for R2 object key construction
  * and for the Content-Disposition filename header on artifact downloads.
  * Falls through to "bin" for unknown types (covered by v0.10.3's fix: the

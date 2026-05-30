@@ -439,13 +439,20 @@ This deployment supports both. The router picks per-model based on a `byok_alias
 
 The "needs CF credits" entries appear in the menu but will fail until you enable Unified Billing.
 
-### Image-to-video (alibaba/hh1-i2v, v0.21.5)
+### Image-to-video (alibaba/hh1-i2v, v0.21.5; source flows v0.21.6)
 
-`alibaba/hh1-i2v` animates a source image instead of generating from text alone. It's flagged `capabilities: ["image-input"]`, and `runVideo` requires a `image_url` field (a fetchable image URL) in the request; without it the call 400s before a job is created. The param shape differs from text-to-video (image + integer `duration` + `720P`, no `aspect_ratio`/`generate_audio`), so `buildGenParams` (`src/longrun-params.ts`) selects the i2v shape when `imageUrl` is present. Output is the same `{state, result:{video}}` envelope as the other video models, so it rides the existing workflow download-to-R2 step. Confirmed live (~113s for a 720P / 5s clip).
+`alibaba/hh1-i2v` animates a source image instead of generating from text alone. It's flagged `capabilities: ["image-input"]`, and `runVideo` requires a source image; without one the call 400s before a job is created. The param shape differs from text-to-video (image + integer `duration` + `720P`, no `aspect_ratio`/`generate_audio`), so `buildGenParams` (`src/longrun-params.ts`) selects the i2v shape when an image is present. Output is the same `{state, result:{video}}` envelope as the other video models, so it rides the existing workflow download-to-R2 step. Confirmed live (~100s for a 720P / 5s clip).
 
-This first pass takes a fetchable URL only. Two source flows are deferred (see session notes), both blocked on the same enabler, getting a private R2 object to hh1-i2v as a URL it can fetch:
-- **User-uploaded source image:** store the upload to R2, then either presign a GET URL or read-and-inline as a base64 data URI (one probe decides which hh1-i2v accepts).
-- **Chaining from image gen:** feed a Nano Banana Pro output (already in R2) straight into hh1-i2v. This is the Cloudflare-side front end of an image-to-video pipeline.
+Three source flows (v0.21.6), resolved into one of two workflow params:
+- **Uploaded attachment** -> stored to R2 (`r2Put`), the key passed through; resolved to a data URI in the workflow.
+- **`image_key`** (an existing R2 key, e.g. a prior Nano Banana Pro output) -> same R2-key path. This is the chaining flow.
+- **`image_url`** (a fetchable external URL) -> passed straight through.
+
+The upstream accepts base64 `data:` URIs (it re-uploads them to its own object store), so no presigned-URL signer is needed: `r2KeyToDataUri` reads the R2 object and inlines it as a data URI. The resolution happens **inside the workflow step**, not at submit, so the multi-MB base64 never rides the Workflow event payload (~1 MiB cap); only the short key does. `r2KeyToDataUri` enforces the same ownership check as `/api/artifact` (the object's `customMetadata.user_email` must match the requester), so `image_key` can't reference another user's object.
+
+**Cloudflare-side image-to-video pipeline:** generate an image with `google/nano-banana-pro`, take its `output_artifact.key`, and pass it as `image_key` to `alibaba/hh1-i2v`. The image never leaves R2 or becomes a public URL, and both stages bill through the one gateway. Confirmed live end to end.
+
+Known follow-ups: a dimension check (hh1-i2v wants the source >=300x300, aspect 1:2.5 to 2.5:1) would fail fast at submit rather than ~100s into a job; a one-call "animate this artifact" convenience endpoint would skip re-specifying the model.
 
 ### Enabling Unified Billing
 

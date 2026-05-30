@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.21.6
+
+Image-to-video source flows: uploads and chaining. Completes hh1-i2v (whose v0.21.5 first pass took only a fetchable URL). The headline is a fully Cloudflare-side image-to-video pipeline, confirmed live end to end (~100s). No schema, no migration, no new dependencies, no new worker secrets.
+
+### What changed
+
+The probe answered the deferred fork: hh1-i2v accepts base64 `data:` URIs for `image` (the upstream re-uploads them to its own object store), so the presigned-R2 GET signer is NOT needed. The worker just inlines R2 bytes as a data URI.
+
+- **`src/utils.ts`**: `bytesToBase64`, chunked (0x8000 window) so a multi-MB image doesn't overflow the call stack the way `btoa(String.fromCharCode(...bytes))` would. Round-trips with `base64ToBytes`.
+- **`src/index.ts`**: `r2KeyToDataUri(env, key, userEmail)` reads an R2 object, enforces the `/api/artifact` ownership check (`customMetadata.user_email` must match), and returns a `data:` URI. `runVideo` now resolves three source flows for `image-input` models: an uploaded attachment (stored to R2 via `r2Put`), an `image_key` (an existing R2 key, e.g. a prior nano-banana output), or an `image_url` (external, passed through). The R2-key resolution to a data URI happens **inside the workflow step**, so the big base64 never rides the Workflow event payload (~1 MiB cap); only the short key travels through `LongRunParams`. `ChatRequest` gains `image_key`.
+- **`tests/utils.test.ts`** (new): 4 base64 round-trip tests, including across the chunk boundary and through a `parseDataUrl` data URI.
+
+### The pipeline
+
+`google/nano-banana-pro` generates an image (stored to R2). Pass its `output_artifact.key` as `image_key` to `alibaba/hh1-i2v`. The image is read from R2 and inlined inside the workflow step, animated, and the MP4 is stored back to R2. The image never becomes a public URL, never leaves Cloudflare, and both stages bill through the one gateway. Verified live: nano-banana-pro -> R2 key -> data URI -> hh1-i2v -> MP4.
+
+### Touch points
+
+- `src/utils.ts`: `bytesToBase64`.
+- `src/index.ts`: `r2KeyToDataUri`; three-source resolution in `runVideo`; `image_key` on `ChatRequest`; `imageKey` through `LongRunParams`; workflow resolves the key in-step.
+- `tests/utils.test.ts`: new, 4 tests.
+- `README.md`: image-to-video section updated (source flows + pipeline).
+- `package.json`: 0.21.5 -> 0.21.6.
+
+Worker typecheck clean. Worker tests: 159/159 (155 prior + 4 new).
+
+### Known follow-ups
+
+- A source-image dimension check (hh1-i2v wants >=300x300, aspect 1:2.5 to 2.5:1) would fail fast at submit instead of ~100s into a job. Currently a bad image surfaces as a clean `job_error` after the upstream rejects it.
+- A one-call "animate this artifact" convenience endpoint (pass an existing row's artifact key, infer the model) would be a nice ergonomic layer on top.
+
 ## v0.21.5
 
 First image-to-video model: `alibaba/hh1-i2v`. Animates a source image. Confirmed live (~113s for a 720P / 5s clip). No schema, no migration, no new dependencies, no new worker secrets.
