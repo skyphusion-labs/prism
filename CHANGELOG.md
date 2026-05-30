@@ -1,5 +1,74 @@
 # Changelog
 
+## v0.21.10
+
+Fix: actually allow image upload / drag-drop / paste on i2v models. Completes the incomplete v0.21.9 fix. Frontend only.
+
+### What v0.21.9 missed
+
+v0.21.9 fixed the i2v affordance (showed the upload), the per-file handler (accepted the image), and the send gate (shipped it) — but all of that lives *after* an early guard at the top of `handleFiles`:
+
+```js
+if (m.type !== "chat" && m.type !== "stt" && !isFlux2) return;
+```
+
+A video i2v model is none of those, so `handleFiles` returned immediately and the file was dropped before any of the v0.21.9 handling ran. Because the picker, drag-drop, and paste all funnel through `handleFiles`, all three were dead — matching the report of "can't attach OR drag/drop."
+
+### The fix
+
+The guard now also lets `image-input` (i2v) models through:
+
+```js
+const isImageInput = (m.capabilities || []).includes("image-input");
+if (m.type !== "chat" && m.type !== "stt" && !isFlux2 && !isImageInput) return;
+```
+
+With the guard opened, the rest of the v0.21.9 path runs: the image is accepted as the i2v source (single image, replaces any prior pick), sent to the worker, and animated. Upload still wins over the conversation-image carry-forward; carry-forward applies only when nothing is uploaded.
+
+### Verified path (end to end)
+
+1. Affordance: attach row + image accept shown for i2v (v0.21.9).
+2. `handleFiles` guard: allows image-input models (v0.21.10, this release).
+3. Per-file branch: pushes the image for image-input models (v0.21.9).
+4. Send gate: video image-input models send attachments (v0.21.9).
+
+### Touch points
+
+- `public/app.js`: one-line guard fix in `handleFiles`.
+- `package.json`: 0.21.9 -> 0.21.10.
+
+No backend change. Worker tests: 159/159 (unchanged; frontend-only).
+
+## v0.21.9
+
+Fix: image-to-video models now accept an uploaded source image. Frontend only.
+
+### The bug
+
+You could not upload an image to animate with an i2v model (e.g. hh1-i2v). Three things combined, all introduced with the v0.21.7 carry-forward work:
+
+1. The i2v branch of `updateAffordance` hid the file input outright, on the assumption the source would always be a prior generated image carried forward from the conversation.
+2. The attachment handler rejected uploaded images for i2v models with "Current model doesn't support vision" (it only allowed images for vision chat or FLUX.2).
+3. The attachments send-gate dropped attachments for `video`-type models, so even a populated image never reached the worker.
+
+Net effect: a user starting a fresh conversation had no way to animate their own image, only an image generated earlier in that same conversation. Manual upload to i2v had in fact never been wired; the v0.21.7 carry-forward just made the gap visible by putting a hint where the upload should be.
+
+### The fix
+
+i2v now supports both paths, upload-wins:
+
+- The i2v input shows the file picker (image accept). Hint: "upload an image to animate, or leave empty to animate the previous generated image in this conversation."
+- The attachment handler accepts a single image for `image-input` models (replaces any prior pick, so re-selecting just swaps the source).
+- The send-gate includes `video` + `image-input` models, so the uploaded image reaches the worker, which already resolves an attachment image as an i2v source (attachment -> R2; or `image_key` for the carry-forward; or `image_url`).
+- If the user uploads, that image is the source; if not, the most recent conversation image is carried forward via `image_key` as before.
+
+### Touch points
+
+- `public/app.js`: i2v affordance shows the upload; attachment handler accepts images for image-input models; send-gate includes video image-input models.
+- `package.json`: 0.21.8 -> 0.21.9.
+
+No backend change (the worker already accepted an attachment image as an i2v source). Worker tests: 159/159 (unchanged; frontend-only).
+
 ## v0.21.8
 
 Output video is muted by default in the UI, and a note on hh1-i2v audio. Tiny release.

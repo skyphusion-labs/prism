@@ -314,7 +314,7 @@ function updateAffordance() {
   // v0.17.0: also default-hide the web-search toggle; chat branch shows it.
   useDocsRow.hidden = true;
   useWebSearchRow.hidden = true;
-  fileInput.style.display = ""; // v0.21.7: i2v branch hides it; reset for others
+  fileInput.style.display = ""; // default shown; some branches set accept/visibility
 
   if (m.type === "image") {
     systemPromptLabel.textContent = "negative prompt";
@@ -351,17 +351,19 @@ function updateAffordance() {
     attachRow.style.display = "none";
     state.pendingAttachments = [];
     renderAttachments();
-    // v0.21.7: image-to-video models animate the previous image in this
-    // conversation. Surface it so the carry-forward isn't a silent default.
+    // v0.21.7: image-to-video models can ALSO animate the most recent image
+    // generated earlier in this conversation. v0.21.9: but you can upload your
+    // own source image too (hiding the upload was a regression).
     if ((m.capabilities || []).includes("image-input")) {
-      userInput.placeholder = "describe the motion (animates your previous image, ~1-3 min)";
+      userInput.placeholder = "describe the motion (~1-3 min)";
       const priorImageKey = latestArtifactKey("image");
       attachRow.style.display = "flex";
-      fileInput.style.display = "none"; // source is the prior image, not a manual attach (this pass)
+      fileInput.style.display = "";
+      fileInput.accept = "image/*";
       attachHint.textContent = priorImageKey
-        ? "\u2713 will animate the previous generated image in this conversation"
-        : "generate an image in this conversation first, then switch here to animate it";
-      attachHint.classList.toggle("warn", !priorImageKey);
+        ? "upload an image to animate, or leave empty to animate the previous generated image in this conversation"
+        : "upload an image to animate";
+      attachHint.classList.remove("warn");
     }
   } else if (m.type === "stt") {
     systemPromptLabel.textContent = "system prompt";
@@ -492,7 +494,12 @@ async function handleFiles(files) {
   // this guard was `m.type !== "chat"`, which silently dropped attachments on
   // STT and FLUX-2 despite the affordance UI being shown.
   const isFlux2 = m.id.startsWith("@cf/black-forest-labs/flux-2-");
-  if (m.type !== "chat" && m.type !== "stt" && !isFlux2) return;
+  // v0.21.10: image-input (i2v) models accept a source image too. Without this,
+  // the early guard dropped the file before the per-file branch ran — which
+  // killed BOTH the picker and drag/drop for i2v (the v0.21.9 fix patched
+  // downstream of this return and never reached).
+  const isImageInput = (m.capabilities || []).includes("image-input");
+  if (m.type !== "chat" && m.type !== "stt" && !isFlux2 && !isImageInput) return;
   // Pegasus 1.2 (Bedrock) is a chat-type model but needs the FULL video file,
   // not frame extraction. The model id starts with "bedrock/twelvelabs.pegasus".
   const isPegasus = m.id.startsWith("bedrock/twelvelabs.pegasus");
@@ -506,6 +513,7 @@ async function handleFiles(files) {
         // FLUX.2 specifically: cap at 4 attachments and downscale harder.
         const m2 = currentModel();
         const isFlux2 = !!m2 && m2.id.startsWith("@cf/black-forest-labs/flux-2-");
+        const isImageInput = !!m2 && (m2.capabilities || []).includes("image-input");
         if (isFlux2) {
           const existing = state.pendingAttachments.filter((a) => a.type === "image").length;
           if (existing >= MAX_FLUX2_REF_IMAGES) {
@@ -514,6 +522,14 @@ async function handleFiles(files) {
           if (file.size > MAX_IMAGE_BYTES) throw new Error(`Image too large (${fmtBytes(file.size)} > ${fmtBytes(MAX_IMAGE_BYTES)})`);
           const raw = await readAsDataUrl(file);
           const data = await downscaleImage(raw, FLUX2_REF_IMAGE_MAX_DIM);
+          state.pendingAttachments.push({ type: "image", mime: file.type, filename: file.name, data });
+        } else if (isImageInput) {
+          // v0.21.9: image-to-video source. A single image to animate; replace
+          // any prior pick so re-selecting just swaps the source.
+          if (file.size > MAX_IMAGE_BYTES) throw new Error(`Image too large (${fmtBytes(file.size)} > ${fmtBytes(MAX_IMAGE_BYTES)})`);
+          const raw = await readAsDataUrl(file);
+          const data = await downscaleImage(raw, IMAGE_MAX_DIM);
+          state.pendingAttachments = state.pendingAttachments.filter((a) => a.type !== "image");
           state.pendingAttachments.push({ type: "image", mime: file.type, filename: file.name, data });
         } else {
           if (!modelSupports("vision")) throw new Error("Current model doesn't support vision");
@@ -1156,7 +1172,7 @@ async function run() {
       model,
       system_prompt,
       user_input: user_input || "(no text, attachments only)",
-      attachments: (m.type === "chat" || m.type === "stt" || (m.type === "image" && isFlux2Model(m))) ? state.pendingAttachments : [],
+      attachments: (m.type === "chat" || m.type === "stt" || (m.type === "image" && isFlux2Model(m)) || (m.type === "video" && (m.capabilities || []).includes("image-input"))) ? state.pendingAttachments : [],
       conversation_id: state.currentConversationId || undefined,
     };
     // RAG: only send the flag for chat models when the user has it toggled on
