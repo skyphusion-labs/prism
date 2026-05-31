@@ -40,6 +40,17 @@ const renderState = {
   pollTimer: null,
   eventSource: null,        // v0.35.0: live SSE connection when streaming
   streamFallbackHit: false, // set after one failed stream attempt to skip retries
+  currentProject: null,     // v0.37.0: display name for notifications
+  currentLabel: null,       // v0.37.0: user-authored label, preferred over project
+};
+
+// v0.37.0: browser notification state. `permission` mirrors Notification.
+// permission ("default" | "granted" | "denied" | "unsupported");
+// `alreadyNotified` dedupes per session so a stream that re-fires a
+// terminal event does not double-ping the OS.
+const notifyState = {
+  permission: "default",
+  alreadyNotified: new Set(),
 };
 
 // ---------- Cast editor (plan stage) ----------
@@ -694,6 +705,18 @@ async function submitRender() {
 
   renderState.jobId = data.jobId;
   renderState.streamFallbackHit = false;
+  // v0.37.0: track display name for notifications. Use the bundle's
+  // derived project slug here; resumeRender will overwrite with the
+  // history row's label when available.
+  renderState.currentProject = deriveProjectFromKey(bundleState.bundleKey || "");
+  renderState.currentLabel = null;
+  // v0.37.0: ask for notification permission on the first submit when
+  // we have not asked before. Done here (not on page load) so the
+  // prompt arrives at the moment the value is most obvious: right
+  // before a 10-to-30 minute wait.
+  if (notifyState.permission === "default") {
+    requestNotificationPermission();
+  }
   $("#planner-render-result").hidden = false;
   $("#planner-render-job-id").textContent = data.jobId;
   setJobStatusBadge(data.status || "IN_QUEUE");
@@ -775,6 +798,7 @@ function startStream() {
     const terminal = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"];
     if (terminal.indexOf(data.status) >= 0) {
       finalizeRender(data);
+      maybeNotifyTerminal(data);
       closeStream();
       $("#planner-render-btn").disabled = false;
       // Refresh history so the row's terminal state appears in the list.
@@ -834,6 +858,7 @@ async function pollRender() {
   const terminal = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"];
   if (terminal.indexOf(data.status) >= 0) {
     finalizeRender(data);
+    maybeNotifyTerminal(data);
     $("#planner-render-btn").disabled = false;
     return;
   }
@@ -1214,6 +1239,11 @@ function rerunBundle(row) {
   }
   renderState.jobId = null;
   renderState.streamFallbackHit = false;
+  // v0.37.0: carry the row's label / project forward so the post-submit
+  // notification (when the new render lands) reads "cherry-final-take1"
+  // rather than the slug. Will be overwritten on the next submit.
+  renderState.currentProject = row.project || null;
+  renderState.currentLabel = row.label || null;
   bundleState.bundleKey = row.bundle_key;
 
   const renderSection = $("#planner-render");
@@ -1368,6 +1398,11 @@ function resumeRender(row) {
     renderState.pollTimer = null;
   }
   renderState.jobId = row.job_id;
+  // v0.37.0: surface label / project for the notification when this
+  // resumed render reaches a terminal status (catches users who walk
+  // away after clicking "view" on an in-flight history row).
+  renderState.currentProject = row.project || null;
+  renderState.currentLabel = row.label || null;
   bundleState.bundleKey = row.bundle_key;
 
   const renderSection = $("#planner-render");
@@ -1431,6 +1466,102 @@ function formatRelative(unixSeconds) {
   return Math.floor(delta / 86400) + "d ago";
 }
 
+// ---------- Browser notifications (v0.37.0) ----------
+//
+// Fires an OS-level notification when a render hits a terminal status, so
+// the user can walk away from a 10-to-30 minute Wan render and let the
+// browser ping them when it lands. Asked-for once at first-submit time
+// (delaying the permission prompt until the value is obvious; nothing
+// asks on page load); afterwards the per-job dedupe in
+// `notifyState.alreadyNotified` keeps a stream-retry from double-firing.
+// Silently no-ops on unsupported browsers and on denied permission.
+
+function initNotifications() {
+  if (typeof Notification === "undefined") {
+    notifyState.permission = "unsupported";
+    return;
+  }
+  notifyState.permission = Notification.permission;
+  // Reveal the "enable notifications" header button only when the user
+  // has not made a choice yet. Granted + denied both leave it hidden.
+  const btn = $("#planner-notify-toggle");
+  if (btn) btn.hidden = notifyState.permission !== "default";
+}
+
+async function requestNotificationPermission() {
+  if (typeof Notification === "undefined") return;
+  try {
+    const result = await Notification.requestPermission();
+    notifyState.permission = result;
+    const btn = $("#planner-notify-toggle");
+    if (btn) btn.hidden = true;
+    if (result === "granted") {
+      // Tiny confirmation toast so the user sees the wiring works.
+      try {
+        const n = new Notification("Notifications enabled", {
+          body: "You will be pinged when each render finishes.",
+          icon: "/icon-192.png",
+        });
+        setTimeout(() => n.close(), 4000);
+      } catch {
+        // ignore: some browsers throw on Notification with no service worker
+      }
+    }
+  } catch (err) {
+    console.error("notification permission request failed:", err);
+  }
+}
+
+// Called from both the SSE message handler and the poll fallback when a
+// terminal status arrives. Reads project / label from renderState (set
+// at submit / resume / rerun time) so the notification title carries the
+// human-readable identity instead of just the jobId.
+function maybeNotifyTerminal(payload) {
+  if (notifyState.permission !== "granted") return;
+  if (!payload || !payload.jobId) return;
+  if (notifyState.alreadyNotified.has(payload.jobId)) return;
+  notifyState.alreadyNotified.add(payload.jobId);
+
+  const identity =
+    renderState.currentLabel
+    || renderState.currentProject
+    || payload.jobId;
+  const status = payload.status || "FINISHED";
+
+  let prefix;
+  if (status === "COMPLETED") prefix = "✓";
+  else if (status === "FAILED") prefix = "✗";
+  else if (status === "CANCELLED") prefix = "○";
+  else if (status === "TIMED_OUT") prefix = "⏱";
+  else prefix = "·";
+
+  const title = prefix + " " + status.toLowerCase().replace(/_/g, " ") + ": " + identity;
+  let body = "job " + payload.jobId;
+  if (payload.executionTimeMs) {
+    body += " · ran " + formatDuration(payload.executionTimeMs);
+  }
+
+  try {
+    const n = new Notification(title, {
+      body: body,
+      icon: "/icon-192.png",
+      // `tag` lets the OS dedupe within its notification list so the
+      // same jobId never appears twice even if a different code path
+      // tries to re-notify.
+      tag: payload.jobId,
+      requireInteraction: false,
+    });
+    n.onclick = () => {
+      window.focus();
+      n.close();
+      const sec = document.getElementById("planner-render");
+      if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+  } catch (err) {
+    console.error("notification fire failed:", err);
+  }
+}
+
 // ---------- Status / formatting helpers ----------
 
 function setStatus(text, kind) {
@@ -1477,11 +1608,13 @@ document.addEventListener("DOMContentLoaded", () => {
   renderCast();
   loadModels();
   loadHistory();
+  initNotifications();
   $("#planner-plan").addEventListener("click", plan);
   $("#planner-reprompt").addEventListener("click", repromptWithErrors);
   $("#planner-bundle-btn").addEventListener("click", bundleNow);
   $("#planner-render-btn").addEventListener("click", submitRender);
   $("#planner-render-cancel").addEventListener("click", cancelRender);
+  $("#planner-notify-toggle").addEventListener("click", requestNotificationPermission);
   $("#planner-history-refresh").addEventListener("click", loadHistory);
   $("#planner-history-custom").addEventListener("click", promptCustomBundle);
 

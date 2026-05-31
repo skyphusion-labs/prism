@@ -2136,6 +2136,24 @@ textarea:focus {
   color: var(--fg);
 }
 
+/* v0.37.0: enable-notifications toggle in the render stage header.
+   Hidden by default; revealed by initNotifications() when permission
+   is still "default" so a granted or denied state never shows it. */
+.planner-notify-toggle {
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.planner-notify-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .planner-render-cancel {
   background: var(--bg-elev2);
   color: var(--warn);

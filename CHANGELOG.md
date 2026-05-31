@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.37.0
+
+Browser notifications when a render reaches a terminal status. Permission asked once at first-submit time (not on page load); subsequent renders auto-notify. Title carries the row's label / project so a glance at the OS notification tells you *which* render finished and how it ended (COMPLETED / FAILED / CANCELLED / TIMED_OUT). Click the notification to focus the planner tab and scroll to the render result. Frontend-only addition.
+
+### Why
+
+Wan renders take 10-30 minutes at `final` tier. The pattern is: submit, wait, switch to something else, eventually remember to check. Pull-the-tab-back-up checks waste attention; OS notifications close the loop properly. The permission prompt is deferred to first-submit so it arrives at the moment its value is most obvious ("you're about to wait 20 minutes; let us ping you?") rather than on page load when users routinely deny anything that asks unprompted.
+
+### Behavior
+
+- On page load, `initNotifications()` reads `Notification.permission`. If `default` (never asked), the "enable notifications" button in the render section header reveals. If `granted` or `denied`, it stays hidden (no nagging).
+- The button click calls `Notification.requestPermission()`. On grant, fires a tiny "Notifications enabled" confirmation toast that auto-dismisses after 4 seconds so the user sees the wiring works.
+- First time the user clicks "render" in a session, if permission is still `default`, the request fires automatically. Same prompt as the manual toggle; just folded into the natural workflow.
+- On a terminal status arriving from the SSE stream OR the poll fallback, `maybeNotifyTerminal(payload)`:
+  - `payload.jobId` is deduped via `notifyState.alreadyNotified` (set per session) so a stream re-fire never double-pings.
+  - `tag: jobId` on the Notification options gives the OS its own dedupe layer.
+  - Title format: `<status-prefix> <status-lowercase>: <identity>` where identity is `renderState.currentLabel || renderState.currentProject || jobId`. Prefixes: ✓ COMPLETED, ✗ FAILED, ○ CANCELLED, ⏱ TIMED_OUT.
+  - Body: `job <jobId> · ran <duration>` when `executionTimeMs` is present.
+  - Click handler: `window.focus()` plus a smooth scroll to `#planner-render` so the user lands on the result pane.
+- `submitRender` sets `renderState.currentProject` from the bundle key slug. `rerunBundle` and `resumeRender` overwrite with the history row's label + project so a resumed in-flight render carries the right identity through to its terminal notification.
+- Silently no-op when `Notification` is undefined (unsupported browser) or `permission === "denied"`. Never throws into the SSE handler; permission failures log and proceed.
+
+### Code
+
+- `public/planner.html`: `<button id="planner-notify-toggle">` in the render section header, hidden by default.
+- `public/planner.js`: new `notifyState` module-level object holding `permission` and `alreadyNotified`. `renderState` gains `currentProject` and `currentLabel`. New `initNotifications`, `requestNotificationPermission`, and `maybeNotifyTerminal` functions. `submitRender` / `rerunBundle` / `resumeRender` set the identity fields; SSE message handler and `pollRender` terminal branches call `maybeNotifyTerminal`. Wired in `DOMContentLoaded`.
+- `public/styles.css`: `.planner-notify-toggle` styles (transparent ghost button, matches existing tokens).
+- `package.json`: 0.36.0 -> 0.37.0.
+
+No backend change. Tests / typecheck unchanged: pure HTML / JS / CSS. Tests 335/335. MINOR per the convention: new user-visible capability with permission-flow plumbing.
+
 ## v0.36.0
 
 Render labels. New `label TEXT` column on the `renders` table lets each history row carry a free-form user-authored name. `PATCH /api/storyboard/renders/<id>` body `{ label: string | null }` saves it (ownership enforced via `user_email`; 200 char max; empty/null clears). The planner UI exposes an inline-editable input on every history row; click to edit, Enter or blur saves, Escape reverts. So a list of "cherry, cherry, cherry" can become "cherry-final-take1", "cherry-blue-dress", "cherry-seed-424242".
