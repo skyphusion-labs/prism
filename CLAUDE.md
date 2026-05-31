@@ -37,6 +37,7 @@ Everything lives in one Worker `fetch` handler in `src/index.ts` (~3800 LOC). Pu
 - `src/output-extract.ts` — normalizes wildly different provider response shapes into output text/usage; `detectProviderFailure`, `extractProxiedImageUrl`.
 - `src/env.ts` — hand-authored `Env` binding interface (mirror of `wrangler.toml` bindings). `src/types.ts` — the `InputAttachment` discriminated union (request boundary).
 - `src/chunking.ts` / `src/discord.ts` — RAG chunking and DiscordChatExporter ingestion.
+- `src/zip.ts` — zero-dependency ZIP reader (central-directory parser + `DecompressionStream`) for RAG `.zip` import; each inner file is ingested as its own document via `ingestDocument` in `index.ts`.
 - `src/longrun-params.ts` / `src/proxied-image-params.ts` — param builders for video/music and proxied image gen.
 - `public/` — vanilla JS/CSS/HTML frontend (`app.js`, `streaming-client.js`, `styles.css`, `index.html`), served via Workers Assets. No framework, no build.
 

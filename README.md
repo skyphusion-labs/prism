@@ -44,7 +44,7 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 **Speech-to-text:** Whisper Large v3 Turbo / Whisper / Whisper Tiny EN.
 
-**RAG (Vectorize):** upload files of any type via the sidebar (v0.23.0). PDFs get per-page extraction and spreadsheets (`.xlsx`/`.xls`) per-sheet; every other file is read as UTF-8 text (CSV, JSON, HTML, source code, logs, etc.). Binary formats that don't decode to text (e.g. `.docx`, images, archives) are rejected. The worker chunks, embeds via BGE-base, and stores vectors in Vectorize plus text in D1. Toggle "use my docs" per turn to fold the top-5 nearest chunks into the system prompt before the LLM call.
+**RAG (Vectorize):** upload files of any type via the sidebar (v0.23.0), or a `.zip` to import many files at once (v0.25.0, each inner file becomes its own document). PDFs get per-page extraction and spreadsheets (`.xlsx`/`.xls`) per-sheet; every other file is read as UTF-8 text (CSV, JSON, HTML, source code, logs, etc.). Binary formats that don't decode to text (e.g. `.docx`, images) are rejected. The worker chunks, embeds via BGE-base, and stores vectors in Vectorize plus text in D1. Toggle "use my docs" per turn to fold the top-5 nearest chunks into the system prompt before the LLM call.
 
 **Projects and knowledge stores (v0.20.0+):** group documents and conversations under a named project with its own default system prompt and retrieval scope. A document can belong to multiple projects; selecting a project scopes "use my docs" retrieval to just that project's documents and applies the project's system prompt as the default for new chats. Conversations started while a project is active are tagged with it, and any conversation can be moved between projects from the sidebar. See [Projects and knowledge stores](#projects-and-knowledge-stores) below.
 
@@ -216,7 +216,7 @@ The worker is the only public surface. R2 is private; the worker streams objects
 | DELETE | `/api/history/:id`        | Delete a single chat row and clean up its R2 objects |
 | GET    | `/api/job/:id`            | Poll an async video / music generation job's status |
 | GET    | `/api/documents`          | List uploaded RAG documents (optional `?project_id=N` filter) |
-| POST   | `/api/documents`          | Upload, chunk, embed, and store a doc |
+| POST   | `/api/documents`          | Upload, chunk, embed, and store a doc (or a `.zip` to import many at once, v0.25.0) |
 | GET    | `/api/documents/:id`      | Document metadata plus first chunks preview |
 | DELETE | `/api/documents/:id`      | Cascade delete of doc, chunks, vectors, memberships, and original R2 file |
 | GET    | `/api/projects`           | List the caller's projects with document counts |
@@ -599,7 +599,8 @@ npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
 
 ### Constraints
 
-- **File types**: any file (v0.23.0). PDFs are extracted per page and spreadsheets (`.xlsx`/`.xls`) per sheet; every other file is read as UTF-8 text, which covers `.txt`/`.md` plus CSV, JSON, HTML, XML, source code, logs, config, and so on. Files whose bytes don't decode to usable text (binary formats like `.docx`, images, archives) are rejected with a clear message rather than embedded as garbage. Scanned/image-only PDFs are still unsupported (they need OCR, deferred); modern PDFs created from Word/Pages/LaTeX/Google Docs export work fine.
+- **File types**: any file (v0.23.0). PDFs are extracted per page and spreadsheets (`.xlsx`/`.xls`) per sheet; every other file is read as UTF-8 text, which covers `.txt`/`.md` plus CSV, JSON, HTML, XML, source code, logs, config, and so on. Files whose bytes don't decode to usable text (binary formats like `.docx`, images) are rejected with a clear message rather than embedded as garbage. Scanned/image-only PDFs are still unsupported (they need OCR, deferred); modern PDFs created from Word/Pages/LaTeX/Google Docs export work fine.
+- **ZIP import** (v0.25.0): upload a `.zip` and the worker expands it, ingesting each inner file as its own document (using the in-zip path as the filename). Decompression is zero-dependency (a hand-rolled central-directory parser plus the Workers-native `DecompressionStream`); stored and deflate entries are supported, encrypted/zip64/other-method entries are skipped. Guards: 10 MB compressed cap (shared with regular uploads), and on expansion max 200 files, 50 MB total uncompressed, 10 MB per inner file. Unreadable inner files are skipped with a reason and reported, not fatal. Inner files are ingested sequentially, so very large archives can approach the Worker subrequest limit.
 - **Max file size**: 10MB per upload.
 - **Knowledge base**: per-user (scoped by `Cf-Access-Authenticated-User-Email`). By default all your uploaded docs are one corpus; selecting a project narrows retrieval to that project's documents (see [Projects and knowledge stores](#projects-and-knowledge-stores)).
 - **Retrieval default**: top-K = 5 chunks. Change `RETRIEVE_TOP_K` in the worker if you want more or fewer.

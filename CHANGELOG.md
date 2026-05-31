@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.25.0
+
+ZIP import for RAG: upload a `.zip` to the documents sidebar and each file inside is expanded and ingested as its own document. Backend + frontend.
+
+### What changed
+
+`POST /api/documents` now detects a ZIP by magic bytes and expands it, running every inner file through the existing ingest pipeline (PDF per-page, XLSX per-sheet, everything else as UTF-8 text, with the v0.23.0 binary guard). Each inner file becomes its own `documents` row, so it lists separately, retrieves under its own filename (the in-zip path), and deletes individually.
+
+### Zero-dependency decompression
+
+No new runtime dependency. `src/zip.ts` parses the ZIP central directory by hand and inflates entries with the Workers-native `DecompressionStream("deflate-raw")`. Driving off the central directory (not local headers) means streaming data descriptors are handled for free, since the central directory always carries the real sizes. Stored (method 0) and deflate (method 8) entries are supported; encrypted, zip64, and other compression methods are skipped per-entry with a reason. The 10 MB compressed upload cap keeps real archives well under the zip64 threshold.
+
+### Guards
+
+- Compressed archive still rides the 10 MB `DOC_MAX_BYTES` cap.
+- Decompressed expansion is bounded (zip-bomb guard): max 200 entries, 50 MB total uncompressed, 10 MB per inner file, all checked against the declared uncompressed size *before* inflating.
+- Files that can't be imported (binary, encrypted, empty, over a limit) are skipped with a reason and reported in the response; the import does not abort on a single bad file.
+- Inner files are ingested sequentially to bound Worker subrequest usage. Very large archives can still approach the per-invocation subrequest limit; moving bulk import to the `LongRunWorkflow` is a possible future enhancement.
+
+### Code
+
+- `src/zip.ts` (new): `isZip` magic-byte check + `unzip` (central-directory parser, `DecompressionStream` inflate, limit enforcement).
+- `tests/zip.test.ts` (new): stored + deflate round-trips, directory skipping, per-file/entry-count limits, invalid-zip handling (8 tests).
+- `src/index.ts`: extracted the single-file ingest into a reusable `ingestDocument` returning a structured result; new `handleZipImport`; `handleDocumentUpload` branches on `isZip`; ZIP limit constants and a `mimeFromName` helper.
+- `public/app.js`: `uploadDocument` recognizes the aggregate zip response and reports imported / chunk / skipped counts. (The picker already accepts any file as of v0.23.0.)
+- `README.md`: RAG docs note ZIP import.
+- `package.json`: 0.24.0 -> 0.25.0.
+
+No schema, no migration, no new dependency, no new binding. Typecheck clean; tests 172/172.
+
 ## v0.24.0
 
 Chat attachments now accept text-based files (yaml, json, csv, source code, logs, etc.), inlined into the prompt for analysis. Backend + frontend.

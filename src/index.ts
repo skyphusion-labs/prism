@@ -26,6 +26,7 @@ import { parseDataUrl, base64ToBytes, bytesToBase64, extFromMime } from "./utils
 import { aiRun, aiLogId } from "./ai-binding";
 import { extractOutput, extractUsage, detectProviderFailure, extractProxiedImageUrl } from "./output-extract";
 import { chunkText } from "./chunking";
+import { isZip, unzip } from "./zip";
 import { parseDiscordExport, chunkDiscordMessages } from "./discord";
 import { callAnthropic, callAnthropicStream } from "./providers/anthropic";
 import { callXai, callXaiStream } from "./providers/xai";
@@ -2275,6 +2276,33 @@ const EMBED_DIMENSIONS = 768;
 const EMBED_BATCH_SIZE = 16;       // BGE accepts batches; 16 keeps requests small
 const DOC_MAX_BYTES = 10 * 1024 * 1024;  // 10MB upload cap
 
+// v0.25.0: ZIP import (RAG). A .zip upload is expanded and each inner file is
+// ingested as its own document. The compressed archive still rides the 10MB
+// DOC_MAX_BYTES cap above; these bound the decompressed expansion (zip-bomb
+// guard) and the inner-file count.
+const ZIP_MAX_ENTRIES = 200;
+const ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
+const ZIP_MAX_FILE_BYTES = DOC_MAX_BYTES;
+
+// Best-effort content type for a file pulled out of a zip (we only get a name,
+// not a mime). extractChunks routes PDFs/spreadsheets by extension regardless,
+// so this only affects the contentType stored on the R2 object.
+function mimeFromName(name: string): string {
+  const ext = (name.match(/\.([^.]+)$/)?.[1] ?? "").toLowerCase();
+  switch (ext) {
+    case "pdf": return "application/pdf";
+    case "xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case "xls": return "application/vnd.ms-excel";
+    case "md": case "markdown": return "text/markdown";
+    case "csv": return "text/csv";
+    case "json": return "application/json";
+    case "html": case "htm": return "text/html";
+    case "xml": return "application/xml";
+    case "txt": case "log": case "yaml": case "yml": return "text/plain";
+    default: return "application/octet-stream";
+  }
+}
+
 // v0.17.0: web-search retrieval limits and timeouts. Both upstreams are
 // time-bounded per source so a slow Tavily doesn't block on a working
 // Wikipedia (or vice versa). Counts kept small to bound context-token spend
@@ -2844,54 +2872,26 @@ async function handleDocumentGet(request: Request, env: Env, id: number): Promis
   return json({ document: doc, chunk_preview: chunks.results ?? [] });
 }
 
-async function handleDocumentUpload(request: Request, env: Env): Promise<Response> {
-  const userEmail = getUserEmail(request);
+// Result of ingesting a single file into the RAG store. Returned (not a
+// Response) so both the single-file upload path and the per-entry zip-import
+// path can compose it.
+type IngestResult =
+  | { ok: true; id: number; created_at: string; filename: string; mime: string; size_bytes: number; total_chars: number; chunk_count: number }
+  | { ok: false; status: number; error: string };
 
-  // Accept JSON { filename, mime, data: base64 } - matches the existing
-  // attachment-upload convention used by the chat path.
-  let body: { filename?: string; mime?: string; data?: string };
-  try {
-    body = await request.json();
-  } catch {
-    return json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const filename = body.filename || "untitled.txt";
-  const mime = body.mime || "text/plain";
-  // No file-type allowlist: any file is accepted. extractChunks routes by
-  // format and falls back to UTF-8 text for unknown types, rejecting only
-  // bytes that don't decode to usable text.
-  if (!body.data) {
-    return json({ error: "Missing file data" }, { status: 400 });
-  }
-
-  // Decode base64 data URL or raw base64.
-  let bytes: Uint8Array;
-  try {
-    const parsed = body.data.startsWith("data:") ? parseDataUrl(body.data) : null;
-    bytes = parsed ? base64ToBytes(parsed.base64) : base64ToBytes(body.data);
-  } catch (err) {
-    return json({ error: `Bad file data: ${err instanceof Error ? err.message : err}` }, { status: 400 });
-  }
-  if (bytes.length > DOC_MAX_BYTES) {
-    return json({ error: `File too large (${bytes.length} bytes, max ${DOC_MAX_BYTES})` }, { status: 413 });
-  }
-
-  // Extract chunks based on the file type. For .txt/.md this is just a UTF-8
-  // decode + chunk. For .pdf it's per-page extraction. For .xlsx/.xls it's
-  // per-sheet CSV extraction. Each ExtractedChunk carries optional page/sheet
-  // location metadata that we persist on the chunk row.
+// Core RAG ingest for one file: extract -> store raw bytes in R2 -> insert the
+// document row -> embed in batches and upsert vectors -> write chunk rows.
+// Extracted from handleDocumentUpload (v0.25.0) so ZIP import can reuse it
+// per inner file. Best-effort rollback on embedding failure.
+async function ingestDocument(env: Env, userEmail: string, filename: string, mime: string, bytes: Uint8Array): Promise<IngestResult> {
   let extracted: ExtractedChunk[];
   try {
     extracted = await extractChunks(bytes, mime, filename);
   } catch (err) {
-    const m = err instanceof Error ? err.message : String(err);
-    return json({ error: `Extraction failed: ${m}` }, { status: 400 });
+    return { ok: false, status: 400, error: `Extraction failed: ${err instanceof Error ? err.message : String(err)}` };
   }
   if (extracted.length === 0) {
-    return json({
-      error: "No chunks produced. The file may be empty, image-only (scanned PDFs need OCR which is not yet supported), or in an unexpected format.",
-    }, { status: 400 });
+    return { ok: false, status: 400, error: "No chunks produced (empty, image-only/scanned PDF, or unreadable format)." };
   }
 
   const totalChars = extracted.reduce((sum, c) => sum + c.text.length, 0);
@@ -2910,7 +2910,7 @@ async function handleDocumentUpload(request: Request, env: Env): Promise<Respons
     .first<{ id: number; created_at: string }>();
   if (!docInsert) {
     await r2DeleteSafe(env, r2Key);
-    return json({ error: "Failed to insert document row" }, { status: 500 });
+    return { ok: false, status: 500, error: "Failed to insert document row" };
   }
   const docId = docInsert.id;
 
@@ -2964,8 +2964,7 @@ async function handleDocumentUpload(request: Request, env: Env): Promise<Respons
     }
     await env.DB.prepare(`DELETE FROM documents WHERE id = ?`).bind(docId).run();
     await r2DeleteSafe(env, r2Key);
-    const m = err instanceof Error ? err.message : String(err);
-    return json({ error: `Embedding failed: ${m}` }, { status: 502 });
+    return { ok: false, status: 502, error: `Embedding failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 
   // Now write all chunk rows in a single batched D1 statement.
@@ -2979,7 +2978,8 @@ async function handleDocumentUpload(request: Request, env: Env): Promise<Respons
     await env.DB.batch(stmts);
   }
 
-  return json({
+  return {
+    ok: true,
     id: docId,
     created_at: docInsert.created_at,
     filename,
@@ -2987,6 +2987,102 @@ async function handleDocumentUpload(request: Request, env: Env): Promise<Respons
     size_bytes: bytes.length,
     total_chars: totalChars,
     chunk_count: extracted.length,
+  };
+}
+
+// v0.25.0: expand a .zip upload and ingest each inner file as its own document.
+// Decompression is zero-dependency (src/zip.ts, DecompressionStream-based).
+// Each file runs through the same ingestDocument pipeline, so PDF/XLSX/text
+// extraction, the binary guard, and the per-document delete cascade all apply
+// per inner file. Files that can't be read (binary, encrypted, empty, over a
+// limit) are skipped with a reason rather than failing the whole import.
+async function handleZipImport(env: Env, userEmail: string, zipBytes: Uint8Array): Promise<Response> {
+  let result;
+  try {
+    result = await unzip(zipBytes, {
+      maxEntries: ZIP_MAX_ENTRIES,
+      maxTotalBytes: ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES,
+      maxFileBytes: ZIP_MAX_FILE_BYTES,
+    });
+  } catch (err) {
+    return json({ error: `Could not read zip: ${err instanceof Error ? err.message : String(err)}` }, { status: 400 });
+  }
+
+  const imported: Array<{ id: number; filename: string; chunk_count: number }> = [];
+  const skipped: Array<{ name: string; reason: string }> = [...result.skipped];
+
+  // Sequential to keep Worker subrequest usage bounded. A failure on one file
+  // (unreadable, empty, embed error) becomes a skip and does not abort the rest.
+  for (const entry of result.entries) {
+    const r = await ingestDocument(env, userEmail, entry.name, mimeFromName(entry.name), entry.bytes);
+    if (r.ok) imported.push({ id: r.id, filename: r.filename, chunk_count: r.chunk_count });
+    else skipped.push({ name: entry.name, reason: r.error });
+  }
+
+  if (imported.length === 0) {
+    return json({
+      zip: true, imported, skipped, imported_count: 0, total_chunks: 0,
+      error: skipped.length ? "No files in the zip could be imported." : "The zip contained no files.",
+    }, { status: 400 });
+  }
+
+  return json({
+    zip: true,
+    imported,
+    skipped,
+    imported_count: imported.length,
+    total_chunks: imported.reduce((s, d) => s + d.chunk_count, 0),
+  });
+}
+
+async function handleDocumentUpload(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  // Accept JSON { filename, mime, data: base64 } - matches the existing
+  // attachment-upload convention used by the chat path.
+  let body: { filename?: string; mime?: string; data?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const filename = body.filename || "untitled.txt";
+  const mime = body.mime || "text/plain";
+  // No file-type allowlist: any file is accepted. extractChunks routes by
+  // format and falls back to UTF-8 text for unknown types, rejecting only
+  // bytes that don't decode to usable text. A .zip is expanded (v0.25.0).
+  if (!body.data) {
+    return json({ error: "Missing file data" }, { status: 400 });
+  }
+
+  // Decode base64 data URL or raw base64.
+  let bytes: Uint8Array;
+  try {
+    const parsed = body.data.startsWith("data:") ? parseDataUrl(body.data) : null;
+    bytes = parsed ? base64ToBytes(parsed.base64) : base64ToBytes(body.data);
+  } catch (err) {
+    return json({ error: `Bad file data: ${err instanceof Error ? err.message : err}` }, { status: 400 });
+  }
+  if (bytes.length > DOC_MAX_BYTES) {
+    return json({ error: `File too large (${bytes.length} bytes, max ${DOC_MAX_BYTES})` }, { status: 413 });
+  }
+
+  // v0.25.0: a zip is expanded and each inner file ingested separately.
+  if (isZip(bytes)) {
+    return handleZipImport(env, userEmail, bytes);
+  }
+
+  const r = await ingestDocument(env, userEmail, filename, mime, bytes);
+  if (!r.ok) return json({ error: r.error }, { status: r.status });
+  return json({
+    id: r.id,
+    created_at: r.created_at,
+    filename: r.filename,
+    mime: r.mime,
+    size_bytes: r.size_bytes,
+    total_chars: r.total_chars,
+    chunk_count: r.chunk_count,
   });
 }
 

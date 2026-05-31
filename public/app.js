@@ -1487,8 +1487,10 @@ async function uploadDocument(file) {
   if (!file) return;
   // Any file type is accepted. The worker extracts PDF and XLSX/XLS natively
   // and decodes everything else as text, rejecting only unreadable binaries.
+  // A .zip (v0.25.0) is expanded server-side and each inner file imported.
   docStatus.classList.remove("error");
-  docStatus.textContent = `Uploading ${file.name}\u2026`;
+  const isZip = /\.zip$/i.test(file.name) || file.type === "application/zip" || file.type === "application/x-zip-compressed";
+  docStatus.textContent = isZip ? `Importing ${file.name}\u2026` : `Uploading ${file.name}\u2026`;
 
   try {
     const dataUrl = await readAsDataUrl(file);
@@ -1500,13 +1502,24 @@ async function uploadDocument(file) {
         data: dataUrl,
       }),
     });
-    docStatus.textContent = `Uploaded ${result.filename}: ${result.chunk_count} chunks embedded`;
+    if (result.zip) {
+      const skip = (result.skipped || []).length;
+      docStatus.textContent =
+        `Imported ${result.imported_count} file${result.imported_count === 1 ? "" : "s"} ` +
+        `(${result.total_chunks} chunks)${skip ? `, skipped ${skip}` : ""}`;
+    } else {
+      docStatus.textContent = `Uploaded ${result.filename}: ${result.chunk_count} chunks embedded`;
+    }
     await loadDocuments();
     // Clear status after a few seconds.
-    setTimeout(() => { if (docStatus.textContent.startsWith("Uploaded ")) docStatus.textContent = ""; }, 4000);
+    setTimeout(() => {
+      if (docStatus.textContent.startsWith("Uploaded ") || docStatus.textContent.startsWith("Imported ")) {
+        docStatus.textContent = "";
+      }
+    }, 5000);
   } catch (err) {
     docStatus.classList.add("error");
-    docStatus.textContent = `Upload failed: ${err.message}`;
+    docStatus.textContent = `${isZip ? "Import" : "Upload"} failed: ${err.message}`;
   }
 }
 
