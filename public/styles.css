@@ -2136,6 +2136,12 @@ textarea:focus {
   gap: 12px;
 }
 
+.planner-history-tools {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .planner-history-refresh {
   background: transparent;
   color: var(--fg-dim);

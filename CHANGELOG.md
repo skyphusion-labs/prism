@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.35.1
+
+Reuse an existing bundle without re-running plan + bundle. Two new affordances on `/planner.html`: a "re-render" button on every history row, and a "use bundle key..." button in the history header that opens a prompt for an arbitrary R2 bundle key. Both load the bundle key into the render stage, pre-select the same quality tier the previous run used (for the history-row path), and let the user pick a tier and click "render" to submit a fresh job against the same `.tar.gz`. Frontend-only addition.
+
+### Why
+
+Once a project's bundle is on R2, re-rendering at a different `qualityTier` or with tweaked `renderOverrides` does not need any of the previous stages re-run. Before this commit, the planner UI made you re-plan and re-upload to render the same bundle again. After this commit:
+
+- The history row's "re-render" button takes the user from a glance at the list to a render-stage-with-tier-picker in one click, with the previous tier pre-selected so a single follow-up click reproduces the previous run.
+- The "use bundle key..." button covers the cases not in history: a bundle staged by curl outside the UI, a bundle from before the v0.34.0 history migration, or a key shared by another user. The prompt dialog is intentionally low-fi (`window.prompt` against the bundles/ prefix); a slug derive picks the project name out of `bundles/<name>.tar.gz` so the synthetic row passes through `rerunBundle` cleanly.
+
+### What it does NOT do
+
+- Does NOT re-validate the storyboard. The bundle's `storyboard.yaml` is whatever was packed when the bundle was staged; if the original board is desirable, this is correct. If the user wants to change the storyboard, the plan stage is right there.
+- Does NOT pre-fill `renderOverrides`. The history row carries the prior overrides on the DB row but the render-stage form does not surface them as editable today. Adding an "overrides" textarea is a follow-up.
+- Does NOT alter the bundle assembler or the submit route. `bundleState.bundleKey` is just set from the row and the existing `submitRender()` flow consumes it.
+
+### Code
+
+- `public/planner.html`: history header gains a `.planner-history-tools` wrapper holding the existing "refresh" button plus the new "use bundle key..." button. Each row's actions panel gains a "re-render" button.
+- `public/planner.js`: new `rerunBundle(row)` (closes any active stream, sets `bundleState.bundleKey`, reveals the render stage with the prior tier pre-selected, scrolls into view) and `promptCustomBundle` (wraps `window.prompt`, derives project from the bundle key, builds a synthetic row, delegates to `rerunBundle`). Wired in `DOMContentLoaded`. Each history row's `buildHistoryRow` appends a "re-render" action.
+- `public/styles.css`: tiny `.planner-history-tools` flex wrapper so the two header buttons sit next to each other.
+- `package.json`: 0.35.0 -> 0.35.1.
+
+No backend change. Tests / typecheck unchanged: pure HTML / JS / CSS. Tests 335/335.
+
 ## v0.35.0
 
 `GET /api/storyboard/render/<jobId>/stream` returns a server-sent-event stream of render status snapshots. The Worker polls RunPod every 3 seconds and emits each result verbatim (same JSON shape the one-shot poll endpoint produces); the planner UI consumes the stream via EventSource and falls back to the v0.32.0 8-second poll on any stream error. D1 persistence runs on every snapshot so `/api/storyboard/renders` stays current without a separate background job. Subjectively much snappier than the old 8-second client poll while reducing the total request count over the life of a 10-15 minute render.

@@ -1065,8 +1065,81 @@ function buildHistoryRow(r) {
     actions.appendChild(dl);
   }
 
+  // v0.35.1: "re-render" with the same bundle. Skips plan + bundle stages.
+  const rerun = document.createElement("button");
+  rerun.type = "button";
+  rerun.className = "planner-history-action";
+  rerun.textContent = "re-render";
+  rerun.title = "render this bundle again (skips plan + bundle stages)";
+  rerun.addEventListener("click", () => rerunBundle(r));
+  actions.appendChild(rerun);
+
   li.appendChild(actions);
   return li;
+}
+
+// v0.35.1: load a bundle key (from a history row or a paste prompt) into
+// the render stage and reveal it. The user then picks a quality tier and
+// clicks "render"; the existing submitRender flow takes it from there.
+// Closes any active stream / poll on a different jobId so the panel does
+// not show stale progress from the previous render.
+function rerunBundle(row) {
+  closeStream();
+  if (renderState.pollTimer) {
+    clearTimeout(renderState.pollTimer);
+    renderState.pollTimer = null;
+  }
+  renderState.jobId = null;
+  renderState.streamFallbackHit = false;
+  bundleState.bundleKey = row.bundle_key;
+
+  const renderSection = $("#planner-render");
+  renderSection.hidden = false;
+  $("#planner-render-result").hidden = true;
+  $("#planner-render-error").hidden = true;
+  $("#planner-render-log-wrap").hidden = true;
+  $("#planner-render-output").hidden = true;
+
+  // Pre-select the same quality tier the original render used so a single
+  // click matches the previous run; the user can still flip it before
+  // hitting render.
+  const tierSelect = $("#planner-quality-tier");
+  if (tierSelect && row.quality_tier) {
+    tierSelect.value = row.quality_tier;
+  }
+
+  setRenderStatus(
+    "loaded bundle " + row.bundle_key
+      + " (project " + (row.project || "?") + "); pick a quality tier and click render",
+    "loading",
+  );
+  renderSection.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// v0.35.1: paste an R2 bundle key directly to render a bundle that does
+// not appear in the history (e.g. one staged by curl or one from before
+// the v0.34.0 history migration). Reuses rerunBundle with a synthetic
+// row whose project + tier come from a slug-derive on the key.
+function promptCustomBundle() {
+  const key = window.prompt(
+    "paste an R2 bundle key (e.g. bundles/cherry.tar.gz) to render it without re-bundling:",
+    "bundles/",
+  );
+  if (!key || !key.trim()) return;
+  const trimmed = key.trim();
+  rerunBundle({
+    job_id: "(custom)",
+    project: deriveProjectFromKey(trimmed),
+    bundle_key: trimmed,
+    quality_tier: "final",
+    status: "PENDING",
+  });
+}
+
+function deriveProjectFromKey(bundleKey) {
+  const m = bundleKey.match(/^bundles\/(.+)\.tar\.gz$/);
+  if (m) return m[1];
+  return bundleKey;
 }
 
 function historyStatusKind(status) {
@@ -1199,6 +1272,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#planner-render-btn").addEventListener("click", submitRender);
   $("#planner-render-cancel").addEventListener("click", cancelRender);
   $("#planner-history-refresh").addEventListener("click", loadHistory);
+  $("#planner-history-custom").addEventListener("click", promptCustomBundle);
 
   $("#planner-brief").addEventListener("keydown", (ev) => {
     if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {
