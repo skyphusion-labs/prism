@@ -2327,6 +2327,54 @@ textarea:focus {
   color: var(--fg);
 }
 
+/* v0.38.1: meta bar is the click target for collapse / expand. */
+.planner-history-meta {
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+  border-radius: 4px;
+}
+
+.planner-history-meta:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.planner-history-meta:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.planner-history-chevron {
+  display: inline-block;
+  width: 12px;
+  color: var(--fg-dim);
+  font-size: 10px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.planner-history-label-preview {
+  font-size: 12px;
+  color: var(--fg-dim);
+  font-style: italic;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+}
+
+/* Collapsed state: hide the label input + sub line + actions. The meta
+   bar stays visible and clickable; chevron + inline label preview tell
+   the user what they would see if they expanded. */
+.planner-history-item-collapsed .planner-history-label-input,
+.planner-history-item-collapsed .planner-history-sub,
+.planner-history-item-collapsed .planner-history-actions {
+  display: none;
+}
+
+/* Expanded state: hide the inline label preview (the editable input
+   below takes over). The :not selector is the inverse of -collapsed. */
+.planner-history-item:not(.planner-history-item-collapsed) .planner-history-label-preview {
+  display: none;
+}
+
 .planner-history-tier {
   font-size: 11px;
   color: var(--fg-dim);

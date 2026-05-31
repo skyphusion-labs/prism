@@ -1339,6 +1339,10 @@ const historyState = {
     showDone: true,
     showFailed: true,
   },
+  // v0.38.1: per-session set of row ids the user has clicked to expand.
+  // Default-collapsed lets the list stay scannable once history grows;
+  // clicks toggle individual rows open without leaving the page.
+  expandedIds: new Set(),
 };
 
 async function loadHistory() {
@@ -1467,9 +1471,29 @@ function buildHistoryRow(r) {
   const li = document.createElement("li");
   li.className = "planner-history-item";
   li.dataset.jobId = r.job_id;
+  li.dataset.id = String(r.id);
+
+  // v0.38.1: collapse / expand state. All rows start collapsed for a
+  // scannable list; clicking the meta bar toggles expand. Expanded ids
+  // live in historyState.expandedIds (per-session; not persisted).
+  const isExpanded = historyState.expandedIds.has(r.id);
+  if (!isExpanded) li.classList.add("planner-history-item-collapsed");
 
   const meta = document.createElement("div");
   meta.className = "planner-history-meta";
+  meta.tabIndex = 0;
+  meta.setAttribute("role", "button");
+  meta.setAttribute(
+    "aria-expanded",
+    isExpanded ? "true" : "false",
+  );
+
+  // Disclosure chevron: right when collapsed, down when expanded.
+  const chevron = document.createElement("span");
+  chevron.className = "planner-history-chevron";
+  chevron.setAttribute("aria-hidden", "true");
+  chevron.textContent = isExpanded ? "▼" : "▶";
+  meta.appendChild(chevron);
 
   const project = document.createElement("strong");
   project.textContent = r.project || "(no project)";
@@ -1485,6 +1509,28 @@ function buildHistoryRow(r) {
     "planner-history-status planner-history-status-" + historyStatusKind(r.status);
   status.textContent = r.status;
   meta.appendChild(status);
+
+  // v0.38.1: inline label preview, shown only while the row is collapsed
+  // (CSS gates this). Read-only here; the editable input below takes over
+  // when the user expands the row.
+  if (r.label) {
+    const labelPreview = document.createElement("span");
+    labelPreview.className = "planner-history-label-preview";
+    labelPreview.textContent = '"' + r.label + '"';
+    meta.appendChild(labelPreview);
+  }
+
+  // Click the meta bar to toggle expand. Action buttons sit outside meta
+  // so their clicks never bubble here, and the editable label input lives
+  // below the meta bar so clicks there do not collapse the row.
+  const toggle = () => toggleHistoryRowExpand(r.id, li);
+  meta.addEventListener("click", toggle);
+  meta.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      toggle();
+    }
+  });
 
   li.appendChild(meta);
 
@@ -1740,6 +1786,27 @@ function buildHistoryLabelInput(row) {
   });
 
   return input;
+}
+
+// v0.38.1: flip the collapsed / expanded state of one history row. Updates
+// the chevron, the aria-expanded attribute, and the CSS class that hides
+// the label input + sub line + actions row when collapsed. State lives in
+// historyState.expandedIds; cleared on reload (intentional, since collapsed
+// default after refresh keeps the list scannable for the next session).
+function toggleHistoryRowExpand(id, liEl) {
+  const expanded = historyState.expandedIds.has(id);
+  const next = !expanded;
+  if (next) {
+    historyState.expandedIds.add(id);
+    liEl.classList.remove("planner-history-item-collapsed");
+  } else {
+    historyState.expandedIds.delete(id);
+    liEl.classList.add("planner-history-item-collapsed");
+  }
+  const meta = liEl.querySelector(".planner-history-meta");
+  if (meta) meta.setAttribute("aria-expanded", next ? "true" : "false");
+  const chevron = liEl.querySelector(".planner-history-chevron");
+  if (chevron) chevron.textContent = next ? "▼" : "▶";
 }
 
 function historyStatusKind(status) {

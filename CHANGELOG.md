@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.38.1
+
+History rows collapse / expand. Every row starts collapsed for a scannable list; clicking the meta bar toggles expand. The collapsed bar shows project + tier + status + (if set) an inline italic label preview; the expanded view reveals the editable label input, the timestamps line, and the action buttons (view, download, re-render, delete). Frontend-only.
+
+### Why
+
+The history list at v0.37.1 + v0.37.x renders 4 lines per row (meta + label input + sub line + actions). At 5 rows that fills a screen; at 20 rows the list is a wall. The v0.36.0 labels gave each row a readable identity but reading the identity still required scrolling past the noise. Collapsing terminal rows by default lets you see 4x more renders per screen of vertical real estate, with the label preview ensuring you can still scan for "cherry-final-take1" without expanding.
+
+### Behavior
+
+- Default state on every page load: all rows collapsed. Toggle state is per-session (not persisted), so a refresh resets the view back to the scannable baseline.
+- Click the meta bar (or Enter / Space when focused) to expand. Click again to collapse.
+- Chevron updates in place: `▶` when collapsed, `▼` when expanded. `aria-expanded` updates so screen readers track state.
+- Hover lifts the meta bar slightly with a 2% white tint on the bg-elev tone so it's visibly clickable.
+- Label preview appears inline in the meta bar (italic, dimmed, monospace, in quotes) ONLY when collapsed. When expanded, the editable input takes over and the preview hides.
+- Action buttons sit below the label input, so clicking them never bubbles up to the toggle handler. The editable label input is also outside the toggle target so clicking inside the input never collapses the row.
+- Auto-refresh (v0.35.2) interaction: each 30s refresh re-renders the list from `historyState.rows`. User-toggled `expandedIds` survive the re-render because we read state from the set in `buildHistoryRow` before applying classes.
+
+### Code
+
+- `public/planner.js`: `historyState.expandedIds` Set added (per-session, not persisted). `buildHistoryRow` now starts each row in `.planner-history-item-collapsed` unless the id is in the Set, adds a chevron + inline label preview to the meta bar, wires a click + keydown handler on the meta bar to call `toggleHistoryRowExpand(id, liEl)`. New `toggleHistoryRowExpand` updates the chevron text, the `aria-expanded` attribute, and the collapse class.
+- `public/styles.css`: `.planner-history-meta` becomes a clickable region with hover state. `.planner-history-chevron` and `.planner-history-label-preview` styles added. Two collapse / expand visibility rules toggle the label input, sub line, actions, and preview based on the parent's `.planner-history-item-collapsed` class.
+- `package.json`: 0.38.0 -> 0.38.1.
+
+No backend change. Tests / typecheck unchanged. Tests 335/335. PATCH per the convention: UI polish follow-through on the history list; no new endpoint, no new module.
+
 ## v0.38.0
 
 `localStorage` form-state persistence on `/planner.html`. Every meaningful state-changing event (brief edit, cast field change, model picker change, plan success, image upload completion, bundle assembly, render submit, filter toggle, render overrides edit, quality tier change) snapshots to localStorage under `skyphusion.planner.state.v1`. On page load, `restorePersistedState()` rebuilds the plan, bundle, and render panels and reattaches a live SSE stream to in-flight renders. Tab close no longer eats the user's work. Frontend-only.
