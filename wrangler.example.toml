@@ -67,5 +67,9 @@ enabled = true
 #   AWS_REGION_PEGASUS (optional, defaults us-west-2; Pegasus only available
 #                       in us-west-2 or eu-west-1),
 #   CF_AIG_TOKEN (optional, only if Authenticated Gateway is enabled),
+#   OPENAI_API_KEY (optional, v0.22.1; ONLY for openai/gpt-image-1.5 transparent
+#                   image output via a direct OpenAI call. Without it that model
+#                   falls back to opaque via Unified Billing. OpenAI chat does
+#                   NOT use this; it rides Unified Billing.),
 #   TAVILY_API_KEY (optional, v0.17.0; for the web-search retrieval source.
 #                   When unset, web search falls back to Wikipedia only).

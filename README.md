@@ -34,7 +34,7 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 - OpenAI (Unified Billing): GPT-5.5, GPT-5.4, GPT-5.4 mini, o4-mini (streaming as of v0.21.1; needs CF credits)
 - Google Gemini (Unified Billing): Gemini 3.1 Pro (streaming as of v0.21.4; needs CF credits)
 
-**Image generation:** Google Nano Banana Pro (Unified Billing), FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. FLUX.2 models accept up to 4 reference images (v0.16.0) for image-to-image generation, downscaled client-side to 512px.
+**Image generation:** Google Nano Banana Pro (Unified Billing), GPT Image 1.5 (OpenAI; transparent PNG with an OpenAI key, opaque otherwise; v0.22.1), Recraft V4 (opaque, art-directed; v0.22.0), FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. FLUX.2 models accept up to 4 reference images (v0.16.0) for image-to-image generation, downscaled client-side to 512px.
 
 **Video generation:** Google Veo 3.1 / 3.1 Fast / 3 / 3 Fast (Unified Billing), ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0 T2V and I2V (image-to-video, v0.21.5), PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, xAI Grok Imagine Video. BYOK for xAI, Unified Billing for the rest (durable via Cloudflare Workflows).
 
@@ -232,7 +232,7 @@ The worker is the only public surface. R2 is private; the worker streams objects
 ### Model types
 
 - `chat`: text generation. Accepts vision attachments on vision-capable models. Audio attachments are transcribed via Whisper. Video attachments are 8 client-extracted keyframes.
-- `image`: text-to-image generation. The system prompt field becomes the negative prompt. FLUX.2 models additionally accept up to 4 reference images (v0.16.0). Output is a JPEG/PNG in R2.
+- `image`: text-to-image generation. The system prompt field becomes the negative prompt. FLUX.2 models additionally accept up to 4 reference images (v0.16.0). Output is a JPEG/PNG in R2; `openai/gpt-image-1.5` outputs a transparent RGBA PNG when `OPENAI_API_KEY` is set (v0.22.1), opaque otherwise.
 - `tts`: text-to-speech. Output is audio (MP3 or model-default container) in R2.
 - `stt`: speech-to-text transcription. Input audio, output text.
 - `video`: text-to-video generation. Long-running (30s-3min); see "Long-running jobs" below.
@@ -391,9 +391,11 @@ AWS charges your account directly per https://aws.amazon.com/bedrock/pricing/. N
 
 ## OpenAI models (Unified Billing)
 
-GPT-5.5, GPT-5.4, GPT-5.4 mini, and o4-mini (a reasoning model) are routed through Cloudflare Unified Billing, not BYOK. Unlike the Anthropic/xAI/Bedrock chat providers, there is no OpenAI dispatch helper and no `OPENAI_API_KEY` secret: these models ride the generic `env.AI.run("openai/<model>", { messages })` path, the same call surface as the Workers AI hosted chat models, and Cloudflare handles auth and billing against your CF credits.
+GPT-5.5, GPT-5.4, GPT-5.4 mini, and o4-mini (a reasoning model) are routed through Cloudflare Unified Billing, not BYOK. Unlike the Anthropic/xAI/Bedrock chat providers, there is no OpenAI dispatch helper and no `OPENAI_API_KEY` secret for chat: these models ride the generic `env.AI.run("openai/<model>", { messages })` path, the same call surface as the Workers AI hosted chat models, and Cloudflare handles auth and billing against your CF credits.
 
-This is a deliberate re-introduction. OpenAI chat shipped as BYOK in v0.11.0 and was removed in the v0.14.0 consolidation that dropped all non-Anthropic/xAI/Bedrock BYOK paths in favor of Unified Billing. These entries come back on the Unified Billing side of that same decision, so they are not a revert of v0.14.0; the BYOK path stays gone.
+This is a deliberate re-introduction. OpenAI chat shipped as BYOK in v0.11.0 and was removed in the v0.14.0 consolidation that dropped all non-Anthropic/xAI/Bedrock BYOK paths in favor of Unified Billing. These entries come back on the Unified Billing side of that same decision, so they are not a revert of v0.14.0; the BYOK chat path stays gone.
+
+One narrow BYOK exception exists for image, not chat (v0.22.1): `openai/gpt-image-1.5` can produce transparent PNGs, but the Unified Billing proxy's image schema is strictly `{ prompt, images, quality, size, style }` and rejects `background`/`output_format` (a request with them returns `7003: User Input Error`). Transparency therefore requires a direct call to `api.openai.com`, which does accept those fields. The worker uses an optional `OPENAI_API_KEY` for this single purpose (image only): when set, gpt-image-1.5 goes direct and transparent; when unset, it falls back to the opaque proxy path. See the Image generation section below.
 
 Two current limitations:
 
@@ -515,7 +517,7 @@ This is a Cloudflare-proxied (third-party) model, so it requires Unified Billing
 
 ## Image generation
 
-Eight models in the catalog: Google Nano Banana Pro, plus FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. The seven FLUX/Leonardo/Lykon models run through Workers AI (no BYOK or Unified Billing required); Nano Banana Pro is a proxied partner model on Unified Billing (needs CF credits).
+Ten models in the catalog: Google Nano Banana Pro and OpenAI GPT Image 1.5, plus Recraft V4, FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. The seven FLUX/Leonardo/Lykon models run through Workers AI (no BYOK or Unified Billing required); Nano Banana Pro and Recraft V4 are proxied partner models on Unified Billing (need CF credits); GPT Image 1.5 is Unified Billing for opaque output and OpenAI BYOK for transparent output (see below).
 
 ### Google Nano Banana Pro (Unified Billing, v0.21.2)
 
@@ -525,6 +527,34 @@ Eight models in the catalog: Google Nano Banana Pro, plus FLUX 2 Klein 9B/4B, FL
 - **Output** is a URL, not base64, in the same `{ state, result }` envelope as video/music: `{ state: "Completed", result: { image: "<url>" } }`. The worker fetches the URL and stores the bytes in R2.
 - First pass is **text-to-image only**. The schema's `image_input[]` (up to 3 reference images for editing) is a later add, mirroring the FLUX.2 reference-image work.
 - Generation is synchronous and observed around 20s. If a busier moment or a higher resolution pushes it past the worker's wall-clock budget, the fallback is to route it through `LongRunWorkflow` like video gen. `ai_gateway_log_id` stays null on the persisted row (the proxied response carries routing info in `gatewayMetadata` instead).
+
+### Proxied image models and transparent PNG (v0.22.0, v0.22.1)
+
+`runImage` routes every model with a `provider` field (Nano Banana, GPT Image 1.5, Recraft V4) through one proxied path; the `@cf` models have no `provider` and take the Workers AI path. Per-model request shape comes from `buildProxiedImageParams` (`src/proxied-image-params.ts`), because each proxied schema is `additionalProperties: false` and rejects the `@cf` `{ width, height, steps, negative_prompt }` shape.
+
+- **Recraft V4** (`recraft/recraftv4`, Unified Billing) is opaque and art-directed (strong composition and text rendering). The CF proxy exposes no alpha control, only an opaque `background_color`, so this is not a transparency model. It returns WebP; the worker stores it with the response content-type, so no format is hardcoded.
+
+- **GPT Image 1.5** (`openai/gpt-image-1.5`) is the transparent-PNG path, with a wrinkle: the Unified Billing proxy 7003-rejects `background`/`output_format`, so transparency is impossible through it. The worker therefore uses a BYOK direct call to `api.openai.com/v1/images/generations` (`src/providers/openai-image.ts`) with `background: "transparent"` + `output_format: "png"` when `OPENAI_API_KEY` is set; GPT image models always return base64 (`data[0].b64_json`, no URL), which the worker decodes and stores as `image/png`. Without the key, gpt-image-1.5 falls back to the opaque proxy path. The BYOK call bypasses the AI Gateway, so `ai_gateway_log_id` stays null on the persisted row (a quick way to tell which path ran).
+
+To enable transparent assets:
+
+```
+npx wrangler secret put OPENAI_API_KEY
+```
+
+Then redeploy. Billing for transparent generations is on your OpenAI account (BYOK), not CF credits.
+
+**Verifying transparency.** Do not check by re-uploading the image into a chat client; many clients flatten alpha onto a background and re-encode to JPEG, which falsely looks opaque. Check the stored or served bytes directly:
+
+```
+npx wrangler r2 object get <bucket>/out/<id>.png --remote --file /tmp/raw.png
+file /tmp/raw.png   # expect: PNG image data ... RGBA
+python3 -c "from PIL import Image; im=Image.open('/tmp/raw.png'); print(im.mode, im.getchannel('A').getextrema() if im.mode=='RGBA' else 'no alpha')"
+```
+
+Want `RGBA` with alpha extrema spanning `(0, 255)`. On a free Cloudflare plan there is no Polish/Mirage/image-resizing, so delivery does not transform the PNG.
+
+GIF is intentionally out of scope: PNG carries an 8-bit alpha channel (the standard sprite format), GIF transparency is 1-bit, and no model emits GIF.
 
 ### FLUX.2 reference images (v0.16.0)
 
@@ -787,6 +817,14 @@ npx wrangler d1 execute skyphusion-llm-public --remote --file=migrate-v0.20.0.sq
 v0.20.1, v0.20.1.1: frontend-only (projects UI, modal hotfix). No D1 migrations.
 
 For v0.20.2 (conversation to project association): ships the delta file `migrate-v0.20.2.sql`, which adds `chats.project_id` and a partial index. The `ALTER` is non-idempotent; run the file exactly once. If you have already added this column, skip it (re-running raises "duplicate column name" and rolls back the run).
+
+v0.21.x, v0.22.0: code/frontend only, no D1 migrations.
+
+For v0.22.1 (transparent image gen): no D1 migration. Re-introduces an OPTIONAL `OPENAI_API_KEY` secret, used only for `openai/gpt-image-1.5` transparent output via a direct OpenAI call (chat is unaffected and still rides Unified Billing). If you ran the v0.14.0 cleanup that deleted this secret, re-add it to enable transparency; skip it and gpt-image-1.5 stays opaque through the proxy:
+
+```
+npx wrangler secret put OPENAI_API_KEY
+```
 
 ```
 npx wrangler d1 execute skyphusion-llm-public --remote --file=migrate-v0.20.2.sql
