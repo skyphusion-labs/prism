@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>storyboard planner - skyphusion-llm</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="/favicon-16.png" type="image/png" sizes="16x16">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0E1730">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="planner-body">
+  <main class="planner-layout">
+    <header class="planner-header">
+      <h1>storyboard planner</h1>
+      <a href="/" class="planner-back">&larr; chat</a>
+    </header>
+
+    <section class="planner-form">
+      <label class="planner-field">
+        <span>model</span>
+        <select id="planner-model"></select>
+      </label>
+
+      <label class="planner-field">
+        <span>brief</span>
+        <textarea id="planner-brief" rows="6" placeholder="describe the film: setting, mood, length, key beats, who should appear and when..."></textarea>
+      </label>
+
+      <div class="planner-field">
+        <span class="planner-field-label">cast (slot A through D, optional, check to include)</span>
+        <div id="planner-cast" class="planner-cast"></div>
+      </div>
+
+      <div class="planner-actions">
+        <button id="planner-plan" type="button" class="planner-primary">plan</button>
+        <span id="planner-status" class="planner-status"></span>
+      </div>
+    </section>
+
+    <section id="planner-output" class="planner-output" hidden>
+      <header class="planner-output-header">
+        <span id="planner-output-meta"></span>
+        <span id="planner-output-state" class="planner-output-state"></span>
+      </header>
+
+      <div id="planner-errors" class="planner-errors" hidden>
+        <h3>validation errors</h3>
+        <ul id="planner-errors-list"></ul>
+        <button id="planner-reprompt" type="button">re-prompt with these errors</button>
+      </div>
+
+      <div id="planner-result" class="planner-result" hidden>
+        <div class="planner-result-pane">
+          <h3>storyboard JSON (validated)</h3>
+          <pre id="planner-json"></pre>
+        </div>
+        <div class="planner-result-pane">
+          <h3>storyboard.yaml (bundle-ready)</h3>
+          <pre id="planner-yaml"></pre>
+        </div>
+      </div>
+
+      <div id="planner-raw" class="planner-raw" hidden>
+        <h3>raw model output</h3>
+        <pre id="planner-raw-content"></pre>
+      </div>
+    </section>
+  </main>
+
+  <script src="/planner.js"></script>
+</body>
+</html>

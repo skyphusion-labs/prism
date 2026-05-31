@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.30.0
+
+Storyboard planner UI at `/planner.html`. Hydrates the model picker from `GET /api/storyboard/models`, takes a brief plus up to four character entries (slots A through D), POSTs to `/api/storyboard/plan`, and renders the validated JSON + bundle-ready YAML on success or the validator errors plus the raw model output on failure. One-click "re-prompt with errors" button appends the error list to the brief and re-submits. Frontend-only addition; no backend change, no new binding, no new runtime dep.
+
+### Why
+
+v0.29.x added the planner endpoints but the only way to call them was curl. A dedicated page makes the planner usable end-to-end from the browser, lets a real planning iteration happen in seconds, and gives the validator errors a visible failure surface so the model can be re-prompted with them as additional constraints. Page is reachable directly at `/planner.html`. No link from the chat UI yet; that's a one-line change in `index.html` to add when the planner moves out of MVP and the cross-link makes sense for discoverability.
+
+### Layout
+
+- Single-page form: model picker, brief textarea, four cast rows (slot A through D, check-to-include, name input, bible textarea), plan button, status line.
+- Output panel revealed after the first plan call. Two columns on desktop, single column on phones (`<800px`), showing the validated JSON and the bundle-ready YAML side by side. The YAML is what a future bundle assembler will write into the project `.tar.gz`.
+- On validator failure: errors panel with the full error list and a "re-prompt with these errors" button that appends the list to the brief verbatim so the user retries without retyping. Raw model output shown below so the user can see what actually came back when the JSON did not parse or did not validate.
+- On HTTP 502 (upstream provider failure): same errors panel but labeled "upstream error" rather than "model output invalid", so the user knows it's a service issue rather than a model-retry case. Matches the response-semantics matrix the v0.29.0 route defines.
+
+### Code
+
+- `public/planner.html`: new. Static HTML mirroring the chat UI's head boilerplate (favicons, manifest, theme color). Single `<main>` with form + output sections; no modals needed.
+- `public/planner.js`: new. Vanilla JS, single file. `renderCast()` builds the four slot rows; `loadModels()` hydrates the picker; `plan()` posts to `/api/storyboard/plan` and routes the response through `renderResult()` based on HTTP status + `ok` field. `repromptWithErrors()` appends the error list to the brief in a clearly delimited block (`PREVIOUS ATTEMPT FAILED VALIDATION...`) so the model sees the prior failure on the next single-shot call. Ctrl/Cmd+Enter inside the brief textarea submits.
+- `public/styles.css`: planner section appended at the end (~210 lines). Reuses the existing CSS tokens (`--bg`, `--bg-elev`, `--accent`, `--error`, `--warn`, `--border`, `--fg`, `--fg-dim`) so the planner picks up theme changes for free. Responsive breakpoint at 800px collapses the two-column result pane into a stack and the three-column cast rows into a single column.
+- `package.json`: 0.29.1 -> 0.30.0.
+
+Tests / typecheck unchanged: the only TypeScript is in `src/`; this addition is pure HTML / JS / CSS. Tests 269/269. The page is reachable the moment the next `npx wrangler deploy` ships the updated `public/` assets bundle.
+
 ## v0.29.1
 
 `GET /api/storyboard/models` returns the planner-only model catalog so the planner UI picker does not re-render the full 38-model chat catalog. Response shape mirrors `/api/models`: `{ models: PLANNING_MODELS, user: <email> }`. No new binding, no schema change, no new runtime dep.
