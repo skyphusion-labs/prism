@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.29.1
+
+`GET /api/storyboard/models` returns the planner-only model catalog so the planner UI picker does not re-render the full 38-model chat catalog. Response shape mirrors `/api/models`: `{ models: PLANNING_MODELS, user: <email> }`. No new binding, no schema change, no new runtime dep.
+
+### Why
+
+The frontend planner picker needs the same nine rows that `findPlanningModel` accepts. Hitting `/api/models` and filtering client-side works but bakes the curated id list into two places (here and in the UI), so the moment we swap a model out of `PLANNING_MODELS` the picker still offers the old one until the JS bundle is rebuilt. A dedicated route makes the curated subset the single source of truth: the UI fetches once, renders the picker, and `POST /api/storyboard/plan` rejects with the same catalog list (400 + catalog) if anything desyncs.
+
+### Code
+
+- `src/index.ts`: new inline route at `GET /api/storyboard/models`, registered right before `POST /api/storyboard/plan` so all storyboard routes are co-located. Mirrors the `/api/models` pattern (inline, one-line handler).
+- `package.json`: 0.29.0 -> 0.29.1.
+
+PATCH bump per the convention (follow-through on v0.29.0's planner wiring; same surface area, one additional read-only endpoint, no new module). Typecheck clean; tests 269/269.
+
 ## v0.29.0
 
 `POST /api/storyboard/plan` wires the v0.28.0 storyboard planner into the Worker's HTTP surface. The frontend calls a single endpoint with `{brief, characters, model}` and gets back either `{ok: true, storyboard, yaml}` (a validated `StoryboardValidated` JSON plus a bundle-ready storyboard.yaml string) or `{ok: false, errors, raw}` (validator failures plus the raw model output so the UI can show what went wrong and re-prompt). No new binding, no schema change, no new runtime dep.

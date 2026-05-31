@@ -288,6 +288,12 @@ export default {
     if (url.pathname === "/api/chat/stream" && request.method === "POST") {
       return handleChatStream(request, env, ctx);
     }
+    // v0.29.1: planner catalog endpoint. Subset of /api/models filtered to
+    // the planning-eligible rows so the planner UI picker does not re-render
+    // the full 38-model chat catalog.
+    if (url.pathname === "/api/storyboard/models" && request.method === "GET") {
+      return json({ models: PLANNING_MODELS, user: getUserEmail(request) });
+    }
     // v0.29.0: storyboard planner. Drafts a board via Anthropic/xAI/Workers AI,
     // validates against the storyboard-validate schema, returns JSON + YAML.
     if (url.pathname === "/api/storyboard/plan" && request.method === "POST") {
