@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.33.1
+
+`DELETE /api/storyboard/render/<jobId>` cancels a render job by proxying RunPod's `POST /v2/<endpointId>/cancel/<jobId>`. The planner UI's render panel now surfaces a "cancel job" button while the job is in `IN_QUEUE` or `IN_PROGRESS`, hiding it once a terminal status arrives. The chat UI sidebar gets a one-line cross-link to `/planner.html` for discoverability. PATCH bump (follow-throughs on the v0.32.0 / v0.33.0 render flow; no new module).
+
+### Why
+
+A long-running render is expensive: `final` tier on cherry takes ~10-15 minutes per job. If you submit a render, then notice the bundle was off (wrong bible, wrong scene count) before it picks up workers, the only options before this commit were "wait for `executionTimeout`" or "burn the slot and hope". A cancel endpoint lets you free the queued slot immediately and resubmit with the right bundle.
+
+The chat UI cross-link is the one-line discoverability fix I noted as deferred in the v0.30.0 CHANGELOG. Without it, `/planner.html` is reachable only if you already know about it, which is exactly the wrong gate for a tool you want people to use.
+
+### Endpoint
+
+- **`DELETE /api/storyboard/render/<jobId>`** — proxies to RunPod's cancel. Same 400/502/503 semantics as the rest of the storyboard routes: 400 for malformed `jobId`, 502 if RunPod rejects the cancel (e.g. the job is already terminal), 503 if `RUNPOD_API_KEY` / `RUNPOD_ENDPOINT_ID` are not configured. On success, returns the normalized RunpodJobView (`{ok: true, jobId, status, statusRaw, user}`) reflecting whatever state RunPod reported, which will usually be `CANCELLED` but can be a different terminal state if the worker finished between the poll loop's last snapshot and the cancel request.
+
+### UI behavior
+
+The cancel button shows only when `setJobStatusBadge` sees `IN_QUEUE` or `IN_PROGRESS`. Click sequence:
+
+1. Button disabled, status set to `requesting cancel...`, the active poll loop's timeout is cleared.
+2. `fetch DELETE /api/storyboard/render/<jobId>` fires.
+3. On success, the status flips to `cancel requested; polling for final status` and the poll loop resumes; the next poll picks up `CANCELLED` (or another terminal state) and `setJobStatusBadge` hides the button.
+4. On failure (network error or 502 from a too-late cancel), the button re-enables, the status shows the error, and polling resumes so the panel never gets stuck.
+
+### Sidebar cross-link
+
+`public/index.html` gains a tiny `<nav class="sidebar-tools">` block under the user badge containing one link: `→ storyboard planner` pointing at `/planner.html`. The styles reuse the existing `--fg-dim` and `--accent` tokens so the link picks up theme changes automatically. No layout shift in the existing history / projects / documents sections.
+
+### Code
+
+- `src/runpod-submit.ts`: new `cancelRenderJob(env, jobId)` mirroring `pollRenderJob`. Reuses the already-exported `buildCancelUrl` helper. Returns a tagged result with the same shape as the submit / poll dispatchers so the route handler stays uniform.
+- `src/index.ts`: import `cancelRenderJob`. The existing `rj` route regex now matches both `GET` and `DELETE`; `DELETE` dispatches to a new `handleRenderCancel` handler in the same v0.32.0 section as `handleRenderPoll`.
+- `public/planner.html`: a "cancel job" button inside the render-result panel, hidden by default.
+- `public/planner.js`: new `cancelRender()` dispatcher. `setJobStatusBadge` extended to show / hide the cancel button based on terminal-state detection. Cancel button wired in the `DOMContentLoaded` init block.
+- `public/index.html`: `<nav class="sidebar-tools">` block under the user badge pointing at `/planner.html`.
+- `public/styles.css`: `.planner-render-cancel` (warn-tinted secondary button) and `.sidebar-tools` / `.sidebar-tools-link` styles appended at the end. Both reuse the existing CSS tokens.
+- `package.json`: 0.33.0 -> 0.33.1.
+
+Tests / typecheck unchanged: only TypeScript is in `src/`; the JS / HTML / CSS additions are not unit-tested per the established pattern. Tests 335/335; the existing `buildCancelUrl` test (added in v0.32.0) already covers the URL shape. The cancel-dispatcher path matches the poll / submit pattern (skipped per the planner.ts convention).
+
 ## v0.33.0
 
 End-to-end planning UI at `/planner.html`. The page now walks the three-stage pipeline in the browser: plan -> bundle -> render. After the validated storyboard JSON / YAML appears, per-slot upload widgets reveal for each character in `use_characters`; selecting files immediately stages each one through `POST /api/storyboard/character-ref` to R2. Clicking "bundle" assembles via `POST /api/storyboard/bundle`. Clicking "render" submits via `POST /api/storyboard/render` and starts an 8-second poll loop on `GET /api/storyboard/render/<jobId>`, showing scene index, phase, the live render log, and an "open silent MP4" download link when the job hits `COMPLETED`. No backend change, no new endpoint, no new runtime dep.

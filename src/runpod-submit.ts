@@ -196,6 +196,59 @@ export async function submitRenderJob(
   return { ok: true, view };
 }
 
+// Cancel one job. RunPod's cancel endpoint is POST /v2/<id>/cancel/<job>;
+// we expose it under our DELETE /api/storyboard/render/<jobId> route. Same
+// transport contract as submitRenderJob and pollRenderJob: never throws on
+// HTTP errors; returns a normalized result for the caller to shape into a
+// Worker response. Calling cancel on a job that is already terminal (or
+// never existed) returns RunPod's error envelope; we surface it verbatim.
+export async function cancelRenderJob(
+  env: Env,
+  jobId: string,
+): Promise<{ ok: true; view: RunpodJobView } | { ok: false; error: string; status?: number }> {
+  if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
+    return {
+      ok: false,
+      error:
+        "RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID must be set on the Worker (npx wrangler secret put ...)",
+    };
+  }
+  const url = buildCancelUrl(env.RUNPOD_ENDPOINT_ID, jobId);
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.RUNPOD_API_KEY}` },
+    });
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `RunPod cancel network error: ${m}` };
+  }
+  let raw: unknown;
+  try {
+    raw = await resp.json();
+  } catch {
+    const text = await resp.text().catch(() => "");
+    return {
+      ok: false,
+      error: `RunPod cancel returned non-JSON (status ${resp.status}): ${text.slice(0, 300)}`,
+      status: resp.status,
+    };
+  }
+  if (!resp.ok) {
+    const errStr =
+      raw && typeof raw === "object" && "error" in raw
+        ? String((raw as Record<string, unknown>).error)
+        : `HTTP ${resp.status}`;
+    return { ok: false, error: `RunPod cancel failed: ${errStr}`, status: resp.status };
+  }
+  const view = normalizeRunpodResponse(raw);
+  if (!view) {
+    return { ok: false, error: "RunPod cancel returned an unrecognized envelope" };
+  }
+  return { ok: true, view };
+}
+
 // Poll one job's status. Same transport contract as submitRenderJob: never
 // throws on HTTP errors; returns a normalized result for the caller to
 // shape into a Worker response.

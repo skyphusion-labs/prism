@@ -2079,3 +2079,43 @@ textarea:focus {
   margin-top: 8px;
   white-space: pre-wrap;
 }
+
+/* v0.33.1: cancel-job button on the render panel + sidebar cross-link */
+
+.planner-render-cancel {
+  background: var(--bg-elev2);
+  color: var(--warn);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.planner-render-cancel:hover:not(:disabled) {
+  background: var(--bg);
+  border-color: var(--warn);
+}
+
+.planner-render-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sidebar-tools {
+  padding: 8px 12px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.sidebar-tools-link {
+  display: block;
+  color: var(--fg-dim);
+  text-decoration: none;
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+.sidebar-tools-link:hover {
+  color: var(--accent);
+}

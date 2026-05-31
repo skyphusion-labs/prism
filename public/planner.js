@@ -796,6 +796,58 @@ function setJobStatusBadge(status) {
   if (status === "COMPLETED") kind = "done";
   if (status === "FAILED" || status === "CANCELLED" || status === "TIMED_OUT") kind = "error";
   el.className = "planner-render-job-status planner-render-status-" + kind;
+  // Cancel button visible only while the job is still cancellable (queued
+  // or running). RunPod accepts cancel on either; terminal states reject.
+  const cancelBtn = $("#planner-render-cancel");
+  if (status === "IN_QUEUE" || status === "IN_PROGRESS") {
+    cancelBtn.hidden = false;
+    cancelBtn.disabled = false;
+  } else {
+    cancelBtn.hidden = true;
+  }
+}
+
+async function cancelRender() {
+  if (!renderState.jobId) return;
+  // Optimistic UX: disable the button and pause the poll loop while the
+  // cancel call is in flight. Failure restores the button (still
+  // cancellable); success lets the next poll pick up the CANCELLED state.
+  const cancelBtn = $("#planner-render-cancel");
+  cancelBtn.disabled = true;
+  setRenderStatus("requesting cancel...", "loading");
+  if (renderState.pollTimer) {
+    clearTimeout(renderState.pollTimer);
+    renderState.pollTimer = null;
+  }
+
+  let resp = null;
+  let data = null;
+  try {
+    resp = await fetch(
+      "/api/storyboard/render/" + encodeURIComponent(renderState.jobId),
+      { method: "DELETE" },
+    );
+    data = await resp.json();
+  } catch (err) {
+    setRenderStatus("cancel network error: " + err.message, "error");
+    cancelBtn.disabled = false;
+    // Resume polling so the UI keeps reflecting reality.
+    renderState.pollTimer = setTimeout(pollRender, POLL_INTERVAL_MS);
+    return;
+  }
+
+  if (!resp.ok || (data && data.ok === false)) {
+    const errs = (data && data.errors) || [(data && data.error) || "HTTP " + resp.status];
+    setRenderStatus("cancel failed: " + errs.join("; "), "error");
+    cancelBtn.disabled = false;
+    renderState.pollTimer = setTimeout(pollRender, POLL_INTERVAL_MS);
+    return;
+  }
+
+  // RunPod accepted the cancel; the next poll will see CANCELLED.
+  setRenderStatus("cancel requested; polling for final status", "loading");
+  if (data && data.status) setJobStatusBadge(data.status);
+  renderState.pollTimer = setTimeout(pollRender, POLL_INTERVAL_MS);
 }
 
 function resetRenderStage() {
@@ -858,6 +910,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#planner-reprompt").addEventListener("click", repromptWithErrors);
   $("#planner-bundle-btn").addEventListener("click", bundleNow);
   $("#planner-render-btn").addEventListener("click", submitRender);
+  $("#planner-render-cancel").addEventListener("click", cancelRender);
 
   $("#planner-brief").addEventListener("keydown", (ev) => {
     if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {

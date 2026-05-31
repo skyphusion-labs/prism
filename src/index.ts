@@ -37,6 +37,7 @@ import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
 import { assembleBundle, type TrainingImage } from "./bundle-assembler";
 import {
+  cancelRenderJob,
   isValidJobId,
   pollRenderJob,
   submitRenderJob,
@@ -327,9 +328,11 @@ export default {
       return handleRenderSubmit(request, env);
     }
     // v0.32.0: poll one render job by its RunPod-issued id.
+    // v0.33.1: DELETE cancels the same job via RunPod's POST /cancel.
     const rj = url.pathname.match(/^\/api\/storyboard\/render\/([A-Za-z0-9_-]+)$/);
-    if (rj && request.method === "GET") {
-      return handleRenderPoll(request, env, rj[1]);
+    if (rj) {
+      if (request.method === "GET") return handleRenderPoll(request, env, rj[1]);
+      if (request.method === "DELETE") return handleRenderCancel(request, env, rj[1]);
     }
     if (url.pathname === "/api/history" && request.method === "GET") {
       return handleHistoryList(request, env);
@@ -879,6 +882,50 @@ async function handleRenderPoll(
     error: result.view.error,
     executionTimeMs: result.view.executionTimeMs,
     delayTimeMs: result.view.delayTimeMs,
+    user: userEmail,
+  });
+}
+
+// ---------- DELETE /api/storyboard/render/<jobId> (v0.33.1) ----------
+//
+// Cancel a render job. Proxies RunPod's POST /v2/<endpointId>/cancel/<jobId>
+// so the API key never leaves Cloudflare. Calling cancel on a job that is
+// already terminal returns RunPod's error envelope; we surface it via 502
+// so the UI can show the message and the user can fall back to "just wait
+// for the current status to settle".
+
+async function handleRenderCancel(
+  request: Request,
+  env: Env,
+  jobId: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  if (!isValidJobId(jobId)) {
+    return json({ error: "invalid jobId format" }, { status: 400 });
+  }
+  if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
+    return json(
+      {
+        error:
+          "RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID must be set on the Worker. Configure via: npx wrangler secret put RUNPOD_API_KEY, then RUNPOD_ENDPOINT_ID.",
+      },
+      { status: 503 },
+    );
+  }
+
+  const result = await cancelRenderJob(env, jobId);
+  if (!result.ok) {
+    return json(
+      { ok: false, errors: [result.error], user: userEmail },
+      { status: 502 },
+    );
+  }
+  return json({
+    ok: true,
+    jobId: result.view.jobId,
+    status: result.view.status,
+    statusRaw: result.view.statusRaw,
     user: userEmail,
   });
 }
