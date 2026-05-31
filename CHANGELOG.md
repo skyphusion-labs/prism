@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.35.0
+
+`GET /api/storyboard/render/<jobId>/stream` returns a server-sent-event stream of render status snapshots. The Worker polls RunPod every 3 seconds and emits each result verbatim (same JSON shape the one-shot poll endpoint produces); the planner UI consumes the stream via EventSource and falls back to the v0.32.0 8-second poll on any stream error. D1 persistence runs on every snapshot so `/api/storyboard/renders` stays current without a separate background job. Subjectively much snappier than the old 8-second client poll while reducing the total request count over the life of a 10-15 minute render.
+
+### Why
+
+The 8-second poll worked but felt sluggish: scene transitions in the rp_handler log lagged the UI by up to 8 seconds, and a 10-minute render produced 75+ HTTP round trips. SSE collapses that to one long-lived connection with 3-second snapshots; the client gets updates roughly 2.5x faster, the Worker dispatches fewer (but longer) fetches, and the existing `pollRender()` code path becomes a fallback for environments where SSE is blocked (corporate proxies stripping `text/event-stream`, EventSource-disabled browsers, edge cases where the connection won't survive Cloudflare's intermediate buffering).
+
+The fallback pattern is important: stream first, poll only on failure. That keeps the UX snappy in the common case without losing the safety net for an in-flight render when the stream cannot stay open.
+
+### Endpoint
+
+- **`GET /api/storyboard/render/<jobId>/stream`** — `text/event-stream` response. Each event's `data:` field is a JSON payload with the same shape as `GET /api/storyboard/render/<jobId>` (`{ok, jobId, status, statusRaw, output, error, executionTimeMs, delayTimeMs, user}` on success; `{ok: false, errors, user}` on RunPod failure). Two sentinel events bookend the stream: `STREAM_OPENED` (immediately on connect, so the client knows the stream is live even before the first RunPod round-trip) and `STREAM_DURATION_CAP` (when the 25-minute cap is reached; EventSource auto-reconnects to a fresh stream). On terminal RunPod status the worker closes cleanly; EventSource on the client sees `readyState === CLOSED` and stops reconnecting.
+
+### Worker implementation
+
+- Standard `TransformStream` / writer pattern, same as `runChatStream`. The polling loop runs as an unawaited closure so the Response can return immediately.
+- `STREAM_POLL_MS = 3000` (3 seconds between RunPod polls). Tuned for the planner UI's perceptual sweet spot; lower would just hammer RunPod for marginal gain.
+- `MAX_STREAM_DURATION_MS = 25 * 60 * 1000` (25 minutes). Bounds a single stream's wall-clock life to avoid runaway connections. EventSource reconnect transparently picks up a new stream, so a 30-minute render rotates streams once and the user never notices.
+- Each successful upstream poll is also persisted through `updateRenderFromView`. A failure to write to D1 logs but does not interrupt the stream (the render history is strictly less important than the live status feed).
+- `request.signal.aborted` checked on each iteration so the loop exits cleanly when the client closes the tab.
+
+### Planner UI rewire
+
+- `submitRender()` no longer calls `pollRender()` directly; it calls `startStream()`.
+- `startStream()` opens an `EventSource` on `/api/storyboard/render/<jobId>/stream`. Each message event runs through `updateRenderProgress` and `finalizeRender` (same code paths the poll loop used). Terminal status closes the EventSource and refreshes the history list.
+- `STREAM_DURATION_CAP` sentinel transparently re-opens a fresh stream so the user never sees the rotation. `STREAM_OPENED` updates the status pill to "stream open; awaiting first status update".
+- Stream errors fall back to `pollRender()` after one attempt (gated by `renderState.streamFallbackHit` so we do not bounce between stream and poll on every blip). EventSource's built-in transient-error reconnect handles short network drops without engaging the fallback.
+- `resumeRender(row)` (the v0.34.1 history "view" action) opens a stream for in-flight rows instead of polling, so resumed renders also benefit from the snappier cadence.
+- `cancelRender()` closes the stream before firing DELETE and re-opens one after, so the user sees the CANCELLED status as soon as RunPod reports it.
+
+### Code
+
+- `src/index.ts`: new `handleRenderStream(request, env, jobId)` handler in a v0.35.0 section above the existing `handleRendersList`. Route registered for `GET /api/storyboard/render/<jobId>/stream` alongside the existing GET poll and DELETE cancel matchers.
+- `public/planner.js`: ~880 -> ~1010 lines. Adds `startStream()` and `closeStream()`. Refactors `submitRender`, `resumeRender`, `cancelRender`, and `resetRenderStage` to drive the stream as the primary live-update channel with `pollRender()` as the fallback.
+- `package.json`: 0.34.1 -> 0.35.0.
+
+No backend schema change, no new binding, no new runtime dep. Tests / typecheck unchanged: streaming handler skips the unit-test pattern (matches `runChatStream`); existing pollRender / updateRenderFromView tests cover the underlying primitives. Typecheck clean; tests 335/335.
+
 ## v0.34.1
 
 `/planner.html` surfaces the render history that v0.34.0 persists. A "recent renders" section reveals at the top of the page when the user has past renders. Each row shows project, quality tier, status, relative submitted / completed timestamps, executionTime, plus a "view" action that resumes the render stage with the row's stored snapshot and re-starts polling for in-flight jobs, and a "download" link directly to the silent MP4 when `output_key` is set. Closes the user-visible loop on render history. No backend change.

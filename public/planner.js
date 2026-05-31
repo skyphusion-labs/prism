@@ -37,6 +37,8 @@ const bundleState = {
 const renderState = {
   jobId: null,
   pollTimer: null,
+  eventSource: null,        // v0.35.0: live SSE connection when streaming
+  streamFallbackHit: false, // set after one failed stream attempt to skip retries
 };
 
 // ---------- Cast editor (plan stage) ----------
@@ -669,14 +671,115 @@ async function submitRender() {
   }
 
   renderState.jobId = data.jobId;
+  renderState.streamFallbackHit = false;
   $("#planner-render-result").hidden = false;
   $("#planner-render-job-id").textContent = data.jobId;
   setJobStatusBadge(data.status || "IN_QUEUE");
-  setRenderStatus("submitted; polling every " + (POLL_INTERVAL_MS / 1000) + "s", "loading");
-  pollRender();
+  setRenderStatus("submitted; opening stream...", "loading");
+  startStream();
   // Refresh the history list so the new render appears at the top
   // without the user needing to click "refresh" manually.
   loadHistory();
+}
+
+// v0.35.0: open a server-sent event connection to the worker so render
+// status updates arrive as RunPod produces them, instead of on a fixed
+// 8-second client poll. The worker proxies RunPod at a 3-second cadence
+// and emits each snapshot as an SSE event with the same JSON shape the
+// one-shot poll endpoint returns; updateRenderProgress / finalizeRender
+// stay unchanged. On any stream error (auth, transient network, or the
+// worker's duration cap), fall back to pollRender() so an in-flight job
+// is never silently abandoned.
+function startStream() {
+  if (!renderState.jobId) return;
+
+  // Clean up any prior stream / poll first so we never have two listeners
+  // racing on the same panel.
+  if (renderState.eventSource) {
+    try { renderState.eventSource.close(); } catch {}
+    renderState.eventSource = null;
+  }
+  if (renderState.pollTimer) {
+    clearTimeout(renderState.pollTimer);
+    renderState.pollTimer = null;
+  }
+
+  // EventSource carries the Cloudflare Access cookie automatically (same
+  // origin + same auth gate as every other /api/storyboard/* request).
+  const url = "/api/storyboard/render/" + encodeURIComponent(renderState.jobId) + "/stream";
+  let es;
+  try {
+    es = new EventSource(url);
+  } catch (err) {
+    setRenderStatus("could not open stream: " + err.message + "; falling back to polling", "loading");
+    pollRender();
+    return;
+  }
+  renderState.eventSource = es;
+
+  es.onmessage = (ev) => {
+    let data;
+    try {
+      data = JSON.parse(ev.data);
+    } catch {
+      // Skip malformed event; the next one will catch up.
+      return;
+    }
+
+    if (data && data.ok === false) {
+      const errs = (data.errors || ["unknown stream error"]).join("; ");
+      setRenderStatus("stream error: " + errs, "error");
+      closeStream();
+      pollRender();
+      return;
+    }
+
+    // Sentinel events the worker emits at stream open and duration cap.
+    if (data.status === "STREAM_OPENED") {
+      setRenderStatus("stream open; awaiting first status update", "loading");
+      return;
+    }
+    if (data.status === "STREAM_DURATION_CAP") {
+      // The worker capped this stream's life. Re-open transparently so the
+      // user does not see a status interruption.
+      closeStream();
+      setRenderStatus("stream rotation (duration cap); reconnecting", "loading");
+      startStream();
+      return;
+    }
+
+    updateRenderProgress(data);
+
+    const terminal = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"];
+    if (terminal.indexOf(data.status) >= 0) {
+      finalizeRender(data);
+      closeStream();
+      $("#planner-render-btn").disabled = false;
+      // Refresh history so the row's terminal state appears in the list.
+      loadHistory();
+    }
+  };
+
+  es.addEventListener("error", (ev) => {
+    // EventSource fires "error" for both transient blips (which it then
+    // reconnects from on its own) and permanent close. We can distinguish
+    // by readyState: CLOSED means the browser will not retry.
+    const closed = es.readyState === EventSource.CLOSED;
+    if (closed && !renderState.streamFallbackHit) {
+      renderState.streamFallbackHit = true;
+      setRenderStatus("stream closed; falling back to 8s polling", "loading");
+      closeStream();
+      pollRender();
+    }
+    // Transient errors are silent; EventSource handles the reconnect.
+  });
+}
+
+function closeStream() {
+  if (renderState.eventSource) {
+    try { renderState.eventSource.close(); } catch {}
+    renderState.eventSource = null;
+  }
 }
 
 async function pollRender() {
@@ -813,12 +916,14 @@ function setJobStatusBadge(status) {
 
 async function cancelRender() {
   if (!renderState.jobId) return;
-  // Optimistic UX: disable the button and pause the poll loop while the
-  // cancel call is in flight. Failure restores the button (still
-  // cancellable); success lets the next poll pick up the CANCELLED state.
+  // Optimistic UX: disable the button and pause the live updates while
+  // the cancel call is in flight. Failure restores the button (still
+  // cancellable); success lets the next stream / poll event pick up the
+  // CANCELLED state.
   const cancelBtn = $("#planner-render-cancel");
   cancelBtn.disabled = true;
   setRenderStatus("requesting cancel...", "loading");
+  closeStream();
   if (renderState.pollTimer) {
     clearTimeout(renderState.pollTimer);
     renderState.pollTimer = null;
@@ -844,14 +949,15 @@ async function cancelRender() {
     const errs = (data && data.errors) || [(data && data.error) || "HTTP " + resp.status];
     setRenderStatus("cancel failed: " + errs.join("; "), "error");
     cancelBtn.disabled = false;
-    renderState.pollTimer = setTimeout(pollRender, POLL_INTERVAL_MS);
+    // Resume the live stream so the user keeps seeing real-time updates.
+    startStream();
     return;
   }
 
-  // RunPod accepted the cancel; the next poll will see CANCELLED.
-  setRenderStatus("cancel requested; polling for final status", "loading");
+  // RunPod accepted the cancel; the next stream event will see CANCELLED.
+  setRenderStatus("cancel requested; awaiting final status", "loading");
   if (data && data.status) setJobStatusBadge(data.status);
-  renderState.pollTimer = setTimeout(pollRender, POLL_INTERVAL_MS);
+  startStream();
 }
 
 function resetRenderStage() {
@@ -859,7 +965,9 @@ function resetRenderStage() {
     clearTimeout(renderState.pollTimer);
     renderState.pollTimer = null;
   }
+  closeStream();
   renderState.jobId = null;
+  renderState.streamFallbackHit = false;
   $("#planner-render").hidden = true;
   $("#planner-render-result").hidden = true;
   setRenderStatus("", "");
@@ -1018,8 +1126,9 @@ function resumeRender(row) {
 
   const terminal = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"];
   if (terminal.indexOf(row.status) < 0) {
-    setRenderStatus("resumed; polling every " + (POLL_INTERVAL_MS / 1000) + "s", "loading");
-    pollRender();
+    setRenderStatus("resumed; opening stream...", "loading");
+    renderState.streamFallbackHit = false;
+    startStream();
   } else {
     const kind = row.status === "COMPLETED" ? "success" : "error";
     setRenderStatus(row.status.toLowerCase() + " (from history)", kind);

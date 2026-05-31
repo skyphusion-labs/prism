@@ -344,6 +344,17 @@ export default {
       if (request.method === "GET") return handleRenderPoll(request, env, rj[1]);
       if (request.method === "DELETE") return handleRenderCancel(request, env, rj[1]);
     }
+    // v0.35.0: live render-status stream over SSE. The Worker proxies RunPod
+    // polls at a tighter cadence than the client's pre-stream 8s default,
+    // emits each snapshot as a text/event-stream event, and persists every
+    // snapshot through updateRenderFromView (same as the GET poll handler).
+    // Stream caps at MAX_STREAM_DURATION_MS so a runaway job does not pin
+    // the connection forever; EventSource clients auto-reconnect, picking
+    // up a fresh stream on the next worker invocation.
+    const rs = url.pathname.match(/^\/api\/storyboard\/render\/([A-Za-z0-9_-]+)\/stream$/);
+    if (rs && request.method === "GET") {
+      return handleRenderStream(request, env, rs[1]);
+    }
     if (url.pathname === "/api/history" && request.method === "GET") {
       return handleHistoryList(request, env);
     }
@@ -975,6 +986,165 @@ async function handleRenderCancel(
     status: result.view.status,
     statusRaw: result.view.statusRaw,
     user: userEmail,
+  });
+}
+
+// ---------- GET /api/storyboard/render/<jobId>/stream (v0.35.0) ----------
+//
+// Live render-status stream over server-sent events. Same response shape
+// as the one-shot poll handler (the JSON payload of each event matches
+// what GET /api/storyboard/render/<jobId> would return), so the UI's
+// existing updateRenderProgress / finalizeRender code path stays unchanged.
+//
+// Cadence: STREAM_POLL_MS between upstream RunPod polls (3s, snappier than
+// the planner UI's pre-v0.35.0 8-second client poll). Each successful
+// upstream poll is also persisted through updateRenderFromView, so the
+// /api/storyboard/renders list endpoint stays current without a separate
+// background job.
+//
+// Cap: MAX_STREAM_DURATION_MS bounds a single stream's life so a stuck
+// job cannot pin the worker connection forever. EventSource reconnects
+// transparently on close, so a long-running render seamlessly switches
+// to a fresh stream every cap interval.
+
+const STREAM_POLL_MS = 3000;
+const MAX_STREAM_DURATION_MS = 25 * 60 * 1000; // 25 minutes
+
+async function handleRenderStream(
+  request: Request,
+  env: Env,
+  jobId: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  if (!isValidJobId(jobId)) {
+    return json({ error: "invalid jobId format" }, { status: 400 });
+  }
+  if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
+    return json(
+      {
+        error:
+          "RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID must be set on the Worker. Configure via: npx wrangler secret put RUNPOD_API_KEY, then RUNPOD_ENDPOINT_ID.",
+      },
+      { status: 503 },
+    );
+  }
+
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+
+  // Send one event immediately so the client knows the stream is live even
+  // before the first RunPod poll round-trips. Useful for debugging closed-
+  // by-edge connections (an empty stream is indistinguishable from a 504
+  // by EventSource alone).
+  const writeEvent = async (payload: unknown): Promise<boolean> => {
+    try {
+      await writer.write(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Background poll loop. Runs as an unawaited closure so the Response can
+  // return immediately; the loop's writes flow through `readable` to the
+  // client. The loop exits on terminal status, MAX duration, abort signal,
+  // or write failure.
+  const start = Date.now();
+  void (async () => {
+    try {
+      // Initial hello event so EventSource on the client knows we are
+      // connected and the first poll round-trip has not yet completed.
+      await writeEvent({ ok: true, jobId, status: "STREAM_OPENED" });
+
+      while (Date.now() - start < MAX_STREAM_DURATION_MS) {
+        if (request.signal.aborted) break;
+
+        const result = await pollRenderJob(env, jobId);
+        let payload: Record<string, unknown>;
+        if (result.ok) {
+          payload = {
+            ok: true,
+            jobId: result.view.jobId,
+            status: result.view.status,
+            statusRaw: result.view.statusRaw,
+            output: result.view.output,
+            error: result.view.error,
+            executionTimeMs: result.view.executionTimeMs,
+            delayTimeMs: result.view.delayTimeMs,
+            user: userEmail,
+          };
+          // Persist same as the one-shot poll handler.
+          try {
+            await updateRenderFromView(env, result.view);
+          } catch (err) {
+            console.error("renders update (stream) failed:", err);
+          }
+        } else {
+          payload = { ok: false, errors: [result.error], user: userEmail };
+        }
+
+        const wrote = await writeEvent(payload);
+        if (!wrote) break;
+
+        // Terminal status: close cleanly. Client sees the last snapshot
+        // and stops reconnecting.
+        if (
+          result.ok &&
+          (result.view.status === "COMPLETED" ||
+            result.view.status === "FAILED" ||
+            result.view.status === "CANCELLED" ||
+            result.view.status === "TIMED_OUT")
+        ) {
+          break;
+        }
+
+        // Wait until the next poll. setTimeout is cheap on the worker:
+        // it does not consume CPU, only wall-clock.
+        await new Promise((r) => setTimeout(r, STREAM_POLL_MS));
+      }
+
+      // Sentinel "closing" event lets the client distinguish a normal
+      // duration-cap close from a terminal-status close.
+      if (Date.now() - start >= MAX_STREAM_DURATION_MS) {
+        await writeEvent({
+          ok: true,
+          jobId,
+          status: "STREAM_DURATION_CAP",
+          message:
+            "stream duration cap reached; reconnect to continue polling",
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Best-effort error event before close.
+      try {
+        await writer.write(
+          encoder.encode(
+            `event: error\ndata: ${JSON.stringify({ error: message })}\n\n`,
+          ),
+        );
+      } catch {
+        // ignore: writer is already closed
+      }
+    } finally {
+      try {
+        await writer.close();
+      } catch {
+        // ignore: writer is already closed
+      }
+    }
+  })();
+
+  return new Response(readable, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      // Cloudflare-friendly: hint that this response should not be buffered.
+      "x-accel-buffering": "no",
+    },
   });
 }
 
