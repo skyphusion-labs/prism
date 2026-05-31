@@ -32,6 +32,16 @@
           <button id="planner-history-refresh" type="button" class="planner-history-refresh">refresh</button>
         </div>
       </header>
+      <!-- v0.37.1: client-side filter bar over the already-loaded history rows.
+           Text input matches project name + label substring; checkboxes gate
+           status buckets. Filtering does not refetch. -->
+      <div class="planner-history-filters">
+        <input id="planner-history-search" type="text" placeholder="search project or label" autocomplete="off" />
+        <label class="planner-history-filter-check"><input type="checkbox" id="planner-filter-inflight" checked /> in-flight</label>
+        <label class="planner-history-filter-check"><input type="checkbox" id="planner-filter-done" checked /> done</label>
+        <label class="planner-history-filter-check"><input type="checkbox" id="planner-filter-failed" checked /> failed</label>
+        <span id="planner-history-counter" class="planner-history-counter"></span>
+      </div>
       <ul id="planner-history-list" class="planner-history-list"></ul>
     </section>
 

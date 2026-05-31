@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.37.1
+
+Filter + search on the history list. A small filter bar above the render rows: text input matches `project` and `label` substring (case-insensitive), three checkboxes gate the status buckets (in-flight / done / failed), and a counter on the right reads `12 renders` when everything is visible or `showing 3 of 12` when filtered. All client-side over the already-loaded rows; no fetch on filter change. Frontend-only addition.
+
+### Why
+
+Once the history list passes ~12 rows of "cherry, cherry, cherry, cherry-final-take1, cherry-blue-dress..." scrolling to find the one you want gets old. The text filter is the fastest path to "cherry-blue-dress"; the status buckets compress the list to just the in-flight queue or just the failures you need to inspect. Filtering does not refetch (the row data is already in memory from the last `loadHistory`), so checkbox toggles and keystrokes are O(rows) in pure JS.
+
+### Filter rules
+
+- **text**: case-insensitive substring match on `project` OR `label`. Empty string matches everything.
+- **in-flight** (default on): rows with `status` in `{IN_QUEUE, IN_PROGRESS}`.
+- **done** (default on): rows with `status === "COMPLETED"`.
+- **failed** (default on): rows with `status` in `{FAILED, CANCELLED, TIMED_OUT}`.
+- Defaults mean a fresh page load shows everything, same as before.
+- Filters are session-state; reload clears them. localStorage persistence is a future commit (would overlap with the broader form-state persistence option still on the menu).
+
+### Counter copy
+
+- All visible: `12 renders` (singular when 1: `1 render`).
+- Filtered: `showing 3 of 12`.
+- Empty: counter cleared, section hidden (same as before).
+- Filtered to zero: `showing 0 of 12` + a dashed-border "no renders match the current filters" placeholder where the list would be, so the user can clear filters without the section disappearing.
+
+### Code
+
+- `public/planner.html`: `<div class="planner-history-filters">` above the list. Text input + three checkboxes (each checked by default) + counter span.
+- `public/planner.js`: new `historyState` module-level object holding `rows` (last fetch result) and `filters` (the four current settings). `loadHistory` now stores rows in `historyState.rows` and calls `applyHistoryFilters()`; that function runs the pure `filterRows` and calls `renderHistoryList(filtered, totalRows)`. `renderHistoryList` signature gains `totalRows` for the counter. Filter inputs wired to update `historyState.filters` and call `applyHistoryFilters()` (no fetch). `maybeScheduleHistoryRefresh` continues to receive the full row set (not the filtered subset) so auto-refresh fires based on real in-flight state.
+- `public/styles.css`: `.planner-history-filters`, `#planner-history-search`, `.planner-history-filter-check`, `.planner-history-counter`, `.planner-history-empty` styles appended. Reuses existing CSS tokens; the bar wraps on narrow viewports thanks to `flex-wrap`.
+- `package.json`: 0.37.0 -> 0.37.1.
+
+No backend change. Tests / typecheck unchanged. Tests 335/335.
+
 ## v0.37.0
 
 Browser notifications when a render reaches a terminal status. Permission asked once at first-submit time (not on page load); subsequent renders auto-notify. Title carries the row's label / project so a glance at the OS notification tells you *which* render finished and how it ended (COMPLETED / FAILED / CANCELLED / TIMED_OUT). Click the notification to focus the planner tab and scroll to the render result. Frontend-only addition.

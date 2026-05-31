@@ -1045,6 +1045,18 @@ let isLoadingHistory = false;
 // maybeScheduleHistoryRefresh, cleared at the start of each loadHistory
 // and on tab visibility -> hidden.
 let historyRefreshTimer = null;
+// v0.37.1: client-side filter state over historyState.rows. text matches
+// project + label substring; status flags gate the three buckets. Default
+// is "everything visible" so a returning user sees all their renders.
+const historyState = {
+  rows: [],
+  filters: {
+    text: "",
+    showInFlight: true,
+    showDone: true,
+    showFailed: true,
+  },
+};
 
 async function loadHistory() {
   if (isLoadingHistory) return;
@@ -1057,7 +1069,9 @@ async function loadHistory() {
     const resp = await fetch("/api/storyboard/renders?limit=" + HISTORY_LIMIT);
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const data = await resp.json();
-    renderHistoryList(data.renders || []);
+    historyState.rows = data.renders || [];
+    applyHistoryFilters();
+    maybeScheduleHistoryRefresh(historyState.rows);
   } catch (err) {
     // Silent: a history load failure should not block the planning flow.
     // The user can still plan, bundle, render normally; only the history
@@ -1067,6 +1081,43 @@ async function loadHistory() {
   } finally {
     isLoadingHistory = false;
   }
+}
+
+// v0.37.1: re-render the list using the current filter state without
+// re-fetching. Called from loadHistory on success AND from the filter
+// input listeners. No fetch fires when the user types or toggles a
+// checkbox; the row data is already in memory.
+function applyHistoryFilters() {
+  const filtered = filterRows(historyState.rows, historyState.filters);
+  renderHistoryList(filtered, historyState.rows.length);
+}
+
+// Pure filter over rows + filter state. Status buckets:
+//   IN_QUEUE | IN_PROGRESS  -> in-flight
+//   COMPLETED               -> done
+//   FAILED | CANCELLED | TIMED_OUT  -> failed
+// Text matches project name OR label, case-insensitive substring.
+function filterRows(rows, filters) {
+  const text = (filters.text || "").toLowerCase().trim();
+  return rows.filter((r) => {
+    if (r.status === "IN_QUEUE" || r.status === "IN_PROGRESS") {
+      if (!filters.showInFlight) return false;
+    } else if (r.status === "COMPLETED") {
+      if (!filters.showDone) return false;
+    } else if (
+      r.status === "FAILED"
+      || r.status === "CANCELLED"
+      || r.status === "TIMED_OUT"
+    ) {
+      if (!filters.showFailed) return false;
+    }
+    if (text) {
+      const project = (r.project || "").toLowerCase();
+      const label = (r.label || "").toLowerCase();
+      if (!project.includes(text) && !label.includes(text)) return false;
+    }
+    return true;
+  });
 }
 
 // v0.35.2: schedule the next refresh whenever the rendered list still
@@ -1087,21 +1138,46 @@ function maybeScheduleHistoryRefresh(rows) {
   historyRefreshTimer = setTimeout(loadHistory, HISTORY_AUTO_REFRESH_MS);
 }
 
-function renderHistoryList(rows) {
+// v0.37.1: signature now takes the filtered subset AND the total count
+// so the counter can read "showing 3 of 12" vs "12 renders" without
+// recomputing. totalRows defaults to rows.length for callers that don't
+// filter (kept for compatibility, but in v0.37.1+ the only caller is
+// applyHistoryFilters which always provides both).
+function renderHistoryList(rows, totalRows) {
   const section = $("#planner-history");
   const list = $("#planner-history-list");
+  const counter = $("#planner-history-counter");
   list.innerHTML = "";
 
-  if (!rows || rows.length === 0) {
+  if (totalRows === undefined) totalRows = rows ? rows.length : 0;
+
+  // Section hidden only when the user has zero renders period. Filtered-
+  // to-zero still shows the section + filters + "no matches" placeholder
+  // so the user can clear filters.
+  if (totalRows === 0) {
     section.hidden = true;
+    counter.textContent = "";
     return;
   }
+  section.hidden = false;
+
+  if (!rows || rows.length === 0) {
+    counter.textContent = "showing 0 of " + totalRows;
+    const li = document.createElement("li");
+    li.className = "planner-history-empty";
+    li.textContent = "no renders match the current filters";
+    list.appendChild(li);
+    return;
+  }
+
+  counter.textContent =
+    rows.length === totalRows
+      ? totalRows + " render" + (totalRows === 1 ? "" : "s")
+      : "showing " + rows.length + " of " + totalRows;
 
   for (const r of rows) {
     list.appendChild(buildHistoryRow(r));
   }
-  section.hidden = false;
-  maybeScheduleHistoryRefresh(rows);
 }
 
 function buildHistoryRow(r) {
@@ -1617,6 +1693,25 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#planner-notify-toggle").addEventListener("click", requestNotificationPermission);
   $("#planner-history-refresh").addEventListener("click", loadHistory);
   $("#planner-history-custom").addEventListener("click", promptCustomBundle);
+
+  // v0.37.1: client-side filter inputs. No fetch on change; just re-render
+  // the already-loaded rows through the new filter state.
+  $("#planner-history-search").addEventListener("input", (ev) => {
+    historyState.filters.text = ev.target.value;
+    applyHistoryFilters();
+  });
+  $("#planner-filter-inflight").addEventListener("change", (ev) => {
+    historyState.filters.showInFlight = ev.target.checked;
+    applyHistoryFilters();
+  });
+  $("#planner-filter-done").addEventListener("change", (ev) => {
+    historyState.filters.showDone = ev.target.checked;
+    applyHistoryFilters();
+  });
+  $("#planner-filter-failed").addEventListener("change", (ev) => {
+    historyState.filters.showFailed = ev.target.checked;
+    applyHistoryFilters();
+  });
 
   // v0.35.2: pause auto-refresh while the tab is backgrounded; resume on
   // return with an immediate refresh so the list catches up after a long
