@@ -75,3 +75,7 @@ These exceed the ~30s `ctx.waitUntil` budget, so they use **Cloudflare Workflows
 ## Testing
 
 Tests live in `tests/` and run under plain Vitest in a Node environment (`vitest.config.ts`) — **not** `@cloudflare/vitest-pool-workers`. They cover pure functions (SSE/eventstream parsers, chunking, output extraction, param builders, Discord parsing) that use only standard web APIs. There is no Workers-runtime integration test harness; if you add one that hits the fetch handler, you'll need the pool-workers adapter.
+
+## Identity & commits
+- Handle/username is `skyphusion` across all services. Default to it when a username is needed.
+- One scoped commit per release. Subject = scoped change, body = the why, footer = files touched.
