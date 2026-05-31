@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.23.0
+
+RAG document upload now accepts any file type, not just `.txt`/`.md`/`.pdf`/`.xlsx`/`.xls`. Backend + frontend.
+
+### What changed
+
+The document uploader previously rejected anything outside a fixed allowlist (`ALLOWED_DOC_MIMES` / `ALLOWED_DOC_EXT_RE`) with a `400 Unsupported file type`. That allowlist is gone. Any file can now be uploaded for RAG:
+
+- **PDF** and **XLSX/XLS** keep their native extractors (per-page and per-sheet, with source-location metadata) unchanged.
+- **Everything else** is decoded as UTF-8 text and chunked. This transparently covers CSV, JSON, HTML, XML, source code, logs, config files, and any other text-based format, regardless of extension or reported mime type.
+
+### Not actually "no restriction": the binary guard
+
+Accepting any file does not mean embedding garbage. The text fallback runs a content-based check (`looksBinary`): if the decoded bytes are more than 10% U+FFFD replacement characters or C0 control codes (the signature of a zipped/binary format like `.docx`, `.png`, `.zip`), extraction throws and the upload is rejected with a clear message. This is decided on the bytes, not the extension, so it never rejects a text file with an unusual name but always catches an unreadable binary before it pollutes the vector store. (Scanned/image-only PDFs remain unsupported pending OCR, as before.)
+
+### Code
+
+- `src/index.ts`: removed `ALLOWED_DOC_MIMES` / `ALLOWED_DOC_EXT_RE` and the allowlist gate in `handleDocumentUpload`; added the `looksBinary` heuristic; `extractChunks` text fallback now rejects binary input instead of decoding it to junk.
+- `public/index.html`: dropped the `accept="..."` allowlist on `#doc-file-input`.
+- `public/app.js`: removed the client-side `allowedExt` regex check in `uploadDocument`.
+- `README.md`: RAG file-type docs updated to "any file type" with the binary-guard caveat.
+- `package.json`: 0.22.1 -> 0.23.0.
+
+No schema, no migration, no new dependency, no new binding. The 10MB upload cap (`DOC_MAX_BYTES`) is unchanged. Typecheck clean.
+
 ## v0.22.1
 
 Fix + follow-through on v0.22.0: gpt-image-1.5 transparency now works via a BYOK direct call, and the broken proxy params are fixed. Backend only.

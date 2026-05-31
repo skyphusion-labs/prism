@@ -2240,18 +2240,11 @@ const TAVILY_MAX_RESULTS    = 5;
 const WIKIPEDIA_MAX_RESULTS = 3;
 const WEB_SEARCH_TIMEOUT_MS = 8000;
 
-// Phase 3A: extended file type support. The arrays are kept simple - both
-// mime check AND filename-extension check pass through if either matches,
-// so a .pdf uploaded with no mime still works.
-const ALLOWED_DOC_MIMES = [
-  "text/plain",
-  "text/markdown",
-  "text/x-markdown",
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  // .xlsx
-  "application/vnd.ms-excel",                                            // .xls
-];
-const ALLOWED_DOC_EXT_RE = /\.(txt|md|markdown|pdf|xlsx|xls)$/i;
+// v0.23.0: RAG document upload accepts any file type (no allowlist). PDF and
+// XLSX/XLS get native per-page / per-sheet extraction; everything else is
+// decoded as UTF-8 text (covers txt, md, csv, json, html, source code, logs,
+// etc. regardless of extension or mime). extractChunks rejects only files
+// whose bytes don't decode to usable text (binary formats like .docx/.png/.zip).
 
 interface DocumentRow {
   id: number;
@@ -2354,6 +2347,23 @@ function extractXlsxChunks(bytes: Uint8Array): ExtractedChunk[] {
   return out;
 }
 
+// v0.23.0: heuristic: is a decoded string actually binary data we failed to
+// read as text? A meaningful fraction of U+FFFD (UTF-8 replacement) or C0 control
+// codes other than the usual whitespace (tab, LF, CR) means the source was
+// binary (zipped office docs, images, archives). Text-based formats stay far
+// below the threshold. Sample the head to keep this O(1)-ish on big files.
+function looksBinary(text: string): boolean {
+  if (!text) return true;
+  const sample = text.length > 4096 ? text.slice(0, 4096) : text;
+  let bad = 0;
+  for (let i = 0; i < sample.length; i++) {
+    const c = sample.charCodeAt(i);
+    if (c === 0xfffd) { bad++; continue; }
+    if (c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) bad++;
+  }
+  return bad / sample.length > 0.1;
+}
+
 // Per-mime dispatcher. Returns ExtractedChunk[] regardless of input format.
 // The caller is responsible for storing the raw bytes in R2 and persisting
 // each chunk row with its page/sheet metadata.
@@ -2374,9 +2384,19 @@ async function extractChunks(bytes: Uint8Array, mime: string, filename: string):
     return extractXlsxChunks(bytes);
   }
 
-  // Text or markdown: decode and chunk. Default UTF-8 with replacement on
-  // invalid bytes (rather than throwing).
+  // Everything else: treat as UTF-8 text. Covers txt/md plus any code, CSV,
+  // JSON, HTML, log, or other text-based format, whatever the extension.
+  // Decode with replacement on invalid bytes rather than throwing; if the
+  // result is mostly replacement/control bytes the file is binary in a format
+  // we can't extract, so reject it instead of embedding garbage.
   const text = new TextDecoder("utf-8").decode(bytes);
+  if (looksBinary(text)) {
+    throw new Error(
+      `${filename} looks like binary data that can't be read as text. PDF and ` +
+      `XLSX/XLS are extracted natively; otherwise upload a text-based file ` +
+      `(txt, md, csv, json, html, source code, etc.).`
+    );
+  }
   return chunkText(text).map((t) => ({ text: t }));
 }
 
@@ -2794,9 +2814,9 @@ async function handleDocumentUpload(request: Request, env: Env): Promise<Respons
 
   const filename = body.filename || "untitled.txt";
   const mime = body.mime || "text/plain";
-  if (!ALLOWED_DOC_MIMES.includes(mime) && !ALLOWED_DOC_EXT_RE.test(filename)) {
-    return json({ error: `Unsupported file type: ${mime} (${filename}). Allowed: .txt, .md, .pdf, .xlsx, .xls` }, { status: 400 });
-  }
+  // No file-type allowlist: any file is accepted. extractChunks routes by
+  // format and falls back to UTF-8 text for unknown types, rejecting only
+  // bytes that don't decode to usable text.
   if (!body.data) {
     return json({ error: "Missing file data" }, { status: 400 });
   }

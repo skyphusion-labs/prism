@@ -1449,13 +1449,8 @@ async function loadDocuments() {
 
 async function uploadDocument(file) {
   if (!file) return;
-  const allowedExt = /\.(txt|md|markdown|pdf|xlsx|xls)$/i;
-  if (!allowedExt.test(file.name)) {
-    docStatus.textContent = "Allowed: .txt, .md, .pdf, .xlsx, .xls";
-    docStatus.classList.add("error");
-    return;
-  }
-
+  // Any file type is accepted. The worker extracts PDF and XLSX/XLS natively
+  // and decodes everything else as text, rejecting only unreadable binaries.
   docStatus.classList.remove("error");
   docStatus.textContent = `Uploading ${file.name}\u2026`;
 
