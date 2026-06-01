@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.61.0
+
+Hot-fix surfaced during the v0.61.0-era end-to-end smoke test: the standalone LoRA training gate at `POST /api/cast/:id/train-lora` accepted cast members with as few as 4 reference images, but the GPU side (`orchestrator.py:39 MIN_TRAINING_IMAGES = 8`) rejects them with `train_loras returned {}` after the bundle is built and uploaded. Two test characters with 5 and 7 refs each FAILED in ~5 seconds with no .safetensors produced.
+
+### Backend
+
+- `src/index.ts`: bump the `cast.ref_keys.length < 4` gate in `handleCastTrainLora` to `< 8`, with an error message that names the GPU constant and points the user at the `/cast` training-set generator (which produces 10 refs in one click).
+
+No GPU/serverless change. The /cast training-set UI already iterates 10 pose templates so users who go through the UI path comfortably clear the floor; the gate change only catches partial-set / manually-uploaded edge cases earlier.
+
+464/464 still passing.
+
 ## v0.60.0
 
 One-click retry on FAILED / CANCELLED / TIMED_OUT history rows. Eliminates the "render died at 18 minutes, do I have to start over" frustration: the new button re-POSTs with the failed row's stored args (project, bundle_key, quality_tier, render_overrides, mode) and the GPU side (vivijure-serverless) resumes incrementally off the persistent network volume.

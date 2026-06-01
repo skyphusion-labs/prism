@@ -2850,10 +2850,10 @@ async function handleCastTrainLora(
       { status: 400 },
     );
   }
-  if (cast.ref_keys.length < 4) {
+  if (cast.ref_keys.length < 8) {
     return json(
       {
-        error: `cast member has only ${cast.ref_keys.length} training refs; 4+ recommended (8+ for a stable LoRA). Add more via /cast.`,
+        error: `cast member has only ${cast.ref_keys.length} training refs; the GPU side (vivijure-serverless orchestrator.py MIN_TRAINING_IMAGES) requires at least 8. The /cast training-set generator produces 10 in one click; use it.`,
       },
       { status: 400 },
     );
