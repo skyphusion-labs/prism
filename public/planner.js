@@ -2012,6 +2012,13 @@ async function submitRender() {
     reqBody.renderOverrides = renderOverrides;
   }
   if (keyframesOnly) reqBody.keyframesOnly = true;
+  // v0.52.0: forward the audio bed R2 key when one is set. The Worker
+  // cross-bucket-copies MiniMax-generated keys (out/<uuid>.<ext>) into
+  // env.R2_RENDERS at submit time; uploaded BYO audio (audio/<...>)
+  // passes through. The GPU side (vivijure-serverless 0.4.11+) reads
+  // audio_key from the job input, downloads, and muxes via
+  // export_film(with_audio=True).
+  if (planState.audioKey) reqBody.audioKey = planState.audioKey;
 
   let resp = null;
   let data = null;
@@ -3247,9 +3254,17 @@ async function finalizeRender(row, btnEl) {
   let resp = null;
   let data = null;
   try {
+    // v0.52.0: forward the planner's current audio bed key. The Worker
+    // accepts the body defensively (no body == no audio mux, same as
+    // pre-v0.52 finalizes). When set, the audio_key reaches
+    // vivijure-serverless 0.4.11+ which downloads + muxes via
+    // export_film(with_audio=True).
+    const finalizeBody = planState.audioKey ? { audioKey: planState.audioKey } : null;
     resp = await fetch(
       "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/finalize",
-      { method: "POST" },
+      finalizeBody
+        ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(finalizeBody) }
+        : { method: "POST" },
     );
     data = await resp.json();
   } catch (err) {

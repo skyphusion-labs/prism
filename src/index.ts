@@ -23,6 +23,7 @@ import type { ModelType, Provider, ModelEntry } from "./models";
 import { MODELS } from "./models";
 import type { Env } from "./env";
 import { isRendersKey } from "./r2-routing";
+import { needsAudioCrossBucketCopy } from "./audio-routing";
 import { parseDataUrl, base64ToBytes, bytesToBase64, extFromMime } from "./utils";
 import {
   listCastForUser, getCastById, createCast, updateCast, deleteCast,
@@ -256,6 +257,38 @@ async function r2RendersPut(
     customMetadata: { user_email: userEmail },
   });
   return key;
+}
+
+// v0.52.0: audio bed cross-bucket placement. The pure routing decision
+// (needsAudioCrossBucketCopy) lives in src/audio-routing.ts so vitest
+// can cover it without importing cloudflare:workers. This wrapper does
+// the actual env.R2 -> env.R2_RENDERS copy when needed.
+async function placeAudioForGpu(
+  env: Env,
+  rawKey: string,
+  userEmail: string,
+): Promise<string> {
+  if (!needsAudioCrossBucketCopy(rawKey)) {
+    // Already in env.R2_RENDERS under audio/, or in a prefix we let
+    // through unchanged. Skip the copy.
+    return rawKey;
+  }
+  const src = await env.R2.get(rawKey);
+  if (!src) {
+    throw new Error(`audio source not found in chat bucket: ${rawKey}`);
+  }
+  if (src.customMetadata?.user_email !== userEmail) {
+    throw new Error("audio source not owned by this user");
+  }
+  const mime = src.httpMetadata?.contentType || "audio/mpeg";
+  const ext = (rawKey.split(".").pop() || "mp3").toLowerCase();
+  const dstKey = `audio/${crypto.randomUUID()}.${ext}`;
+  const bytes = new Uint8Array(await src.arrayBuffer());
+  await env.R2_RENDERS.put(dstKey, bytes, {
+    httpMetadata: { contentType: mime },
+    customMetadata: { user_email: userEmail },
+  });
+  return dstKey;
 }
 
 // v0.39.1: which R2 bucket holds a given artifact key. Storyboard /
@@ -1096,6 +1129,14 @@ interface RenderSubmitRequest {
   // v0.40.0: opt out of the I2V + assembly pass. Merged into
   // render_overrides.keyframes_only on the wire (runpod-submit.ts).
   keyframesOnly?: unknown;
+  // v0.52.0: R2 key for an optional audio bed to mux onto the final
+  // video on the GPU side (vivijure-serverless 0.4.11+). Two prefixes
+  // accepted: audio/<uuid>.<ext> (BYO upload via /api/storyboard/audio-
+  // upload, already in env.R2_RENDERS) passes through; out/<uuid>.<ext>
+  // (MiniMax Music gen via /api/chat, lives in env.R2) gets cross-
+  // bucket-copied to env.R2_RENDERS under audio/<uuid>.<ext> BEFORE the
+  // GPU job submits.
+  audioKey?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1132,6 +1173,9 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
   if (body.keyframesOnly !== undefined && typeof body.keyframesOnly !== "boolean") {
     return json({ error: "keyframesOnly must be a boolean if provided" }, { status: 400 });
   }
+  if (body.audioKey !== undefined && typeof body.audioKey !== "string") {
+    return json({ error: "audioKey must be a string if provided" }, { status: 400 });
+  }
 
   if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
     return json(
@@ -1144,6 +1188,22 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
   }
 
   const keyframesOnly = body.keyframesOnly === true;
+
+  // v0.52.0: place the audio bed for the GPU before submit. A MiniMax-
+  // generated track lives in env.R2 (out/<uuid>.<ext>); copy it to
+  // env.R2_RENDERS under audio/<uuid>.<ext> so vivijure-serverless
+  // 0.4.11+ can resolve it via its r2_io client (which reads R2_BUCKET
+  // = vivijure = env.R2_RENDERS). An audio/<...> key passes through.
+  let gpuAudioKey: string | undefined;
+  if (typeof body.audioKey === "string" && body.audioKey.length > 0) {
+    try {
+      gpuAudioKey = await placeAudioForGpu(env, body.audioKey, userEmail);
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      return json({ error: `audio bed staging failed: ${m}` }, { status: 400 });
+    }
+  }
+
   const args: RenderSubmitArgs = {
     bundleKey: body.bundleKey,
     project: typeof body.project === "string" ? body.project : undefined,
@@ -1154,6 +1214,8 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     userEmail,
     // v0.40.0: opt into the keyframes-only preview pass.
     keyframesOnly,
+    // v0.52.0: audio bed for the audio-mux loop closure.
+    audioKey: gpuAudioKey,
   };
 
   const result = await submitRenderJob(env, args);
@@ -1789,10 +1851,22 @@ async function handleFinalizeSubmit(
     return json({ error: "invalid id" }, { status: 400 });
   }
 
-  // We do not require a JSON body; the row supplies all the inputs.
-  // Read defensively so a client that does pass {} or omits the body
-  // entirely does not 400.
-  void request;
+  // v0.52.0: optional audio bed for the mux. Read defensively: pre-
+  // v0.52.0 callers (including curl scripts) may pass no body at all,
+  // and that must still work. The body-less path matches the v0.42.0
+  // semantics; any audioKey supplied is staged for the GPU.
+  let bodyAudioKey: string | null = null;
+  try {
+    const ct = (request.headers.get("content-type") || "").toLowerCase();
+    if (ct.includes("application/json")) {
+      const parsed = (await request.json()) as { audioKey?: unknown };
+      if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
+        bodyAudioKey = parsed.audioKey;
+      }
+    }
+  } catch {
+    // empty / malformed body is fine; audio stays unset
+  }
 
   const row = await getRenderByIdForUser(env, id, userEmail);
   if (!row) {
@@ -1829,6 +1903,19 @@ async function handleFinalizeSubmit(
     );
   }
 
+  // v0.52.0: stage the audio bed before submit. Same cross-bucket-copy
+  // rule as handleRenderSubmit; a 4xx here is a staging error and the
+  // GPU job is not submitted.
+  let gpuAudioKey: string | undefined;
+  if (bodyAudioKey) {
+    try {
+      gpuAudioKey = await placeAudioForGpu(env, bodyAudioKey, userEmail);
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      return json({ error: `audio bed staging failed: ${m}` }, { status: 400 });
+    }
+  }
+
   // v0.45.0: lock-gated finalize. When the row has any locked_shots,
   // the GPU restricts the I2V pass + assembly to those shot_ids. When
   // the column is null / empty, we omit the field and the GPU runs the
@@ -1844,6 +1931,7 @@ async function handleFinalizeSubmit(
     processShotIds: row.locked_shots && row.locked_shots.length > 0
       ? row.locked_shots
       : undefined,
+    audioKey: gpuAudioKey,
   });
   if (!result.ok) {
     return json(

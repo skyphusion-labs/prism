@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.52.0
+
+Closes the audio loop end-to-end. v0.51.0 shipped the audio + beat-snap surface (generate / upload / snap on the planner). v0.4.11 on the GPU side accepts an `audio_key` job field and muxes via `export_film(with_audio=True)`. v0.52.0 wires the two together: the planner now passes `planState.audioKey` to both the render-submit and finalize routes, and the Worker cross-bucket-copies MiniMax-generated tracks into the GPU's bucket before submit so the GPU's R2 client can resolve them.
+
+### Cross-repo coordination
+
+Needs **vivijure-serverless 0.4.11** on the RunPod endpoint (live as of 2026-06-01).
+
+### Backend
+
+- `src/audio-routing.ts` (new): pure helper `needsAudioCrossBucketCopy(key)`. Returns true for `out/...` (MiniMax / `/api/chat` artifacts in `env.R2`), false for `audio/...` (BYO uploads already in `env.R2_RENDERS`) and everything else. Pure so vitest covers it without the `cloudflare:workers` runtime.
+- `src/index.ts`: new async `placeAudioForGpu(env, key, userEmail)` wrapper. Pass-through for keys that don't need a copy; for `out/...` keys, it reads bytes from `env.R2` (ownership-checked via customMetadata.user_email, 4xx on miss / mismatch), writes to `env.R2_RENDERS` at `audio/<uuid>.<ext>`, and returns the new key. The submit handlers call this before constructing the RunPod payload so the GPU side sees only `audio/...` keys.
+- `handleRenderSubmit` (POST `/api/storyboard/render`): accepts `audioKey: string` in the request body. Validates type, runs `placeAudioForGpu`, threads the resulting key through `args.audioKey` to `buildSubmitPayload`. A staging error (404 / 403) returns 400 with the explicit cause before the GPU job is created.
+- `handleFinalizeSubmit` (POST `/api/storyboard/renders/:id/finalize`): defensive body parse (the route still accepts an empty body for v0.42.0 compatibility) extracts an optional `audioKey`. Same staging path; threads through `args.audioKey` on `submitFinalizeJob`.
+- `src/runpod-submit.ts`: `RenderSubmitArgs.audioKey`, `FinalizeArgs.audioKey`, `RenderJobInput.audio_key`, `FinalizeJobInput.audio_key`. Both `buildSubmitPayload` and `buildFinalizePayload` include the field only when non-empty (stays off the wire when unset; pre-0.4.11 workers ignore unknown fields anyway).
+
+### Frontend
+
+- `public/planner.js`: render-submit body now carries `audioKey: planState.audioKey` when set. The finalize-button handler (`finalizeRender`) does the same with a defensive JSON body that pre-v0.52 callers can still skip. No UI change; the planner's v0.51.0 audio section already manages `planState.audioKey`.
+
+### Tests
+
+5 new vitest tests for `needsAudioCrossBucketCopy` (chat-side prefix, audio-side prefix, empty / null, unrelated prefixes, anchor at start). 407/407 passing, type-check clean, planner.js syntax-checks.
+
+### What is NOT in this PR
+
+- BPM + beat-snap metadata is not yet propagated to the GPU side. The snap mutates `scene.target_seconds` in `planState.storyboard` which already flows through the bundle, so the rhythm reaches the renderer; but the BPM number itself is not sent. If we ever want a per-shot audio sync envelope (cuts at exact sample offsets vs second offsets) that's a future PR + worker-side change.
+- No UI confirmation that the audio survived to the GPU; the user just sees `has_audio: true` on the finished render row. A small `audio_key` echo in the renders list would tighten the feedback loop; tracked for v0.52.x.
+
 ## v0.51.0
 
 Audio bed + beat-driven shot timing on the planner. The user can generate a track via MiniMax Music 2.6 through the existing /api/chat music dispatcher, or upload their own mp3/wav/aac/m4a/ogg, then set a BPM and snap all scene durations to a musical-phrase multiple so cuts land on the beat.

@@ -284,3 +284,36 @@ describe("snapToBeats", () => {
     expect(snapToBeats(5, 120, NaN)).toBe(5);
   });
 });
+
+// v0.52.0: audio key cross-bucket-copy decision. Pure helper, lives in
+// src/audio-routing.ts so vitest can import without the
+// cloudflare:workers runtime dep that src/index.ts carries.
+import { needsAudioCrossBucketCopy } from "../src/audio-routing";
+
+describe("needsAudioCrossBucketCopy", () => {
+  it("returns true for MiniMax chat-side audio keys (out/...)", () => {
+    expect(needsAudioCrossBucketCopy("out/abc-123.mp3")).toBe(true);
+    expect(needsAudioCrossBucketCopy("out/uuid.wav")).toBe(true);
+  });
+
+  it("returns false for BYO uploads already in R2_RENDERS (audio/...)", () => {
+    expect(needsAudioCrossBucketCopy("audio/abc-123.mp3")).toBe(false);
+    expect(needsAudioCrossBucketCopy("audio/uuid.wav")).toBe(false);
+  });
+
+  it("returns false for empty / null / undefined", () => {
+    expect(needsAudioCrossBucketCopy("")).toBe(false);
+    expect(needsAudioCrossBucketCopy(null)).toBe(false);
+    expect(needsAudioCrossBucketCopy(undefined)).toBe(false);
+  });
+
+  it("returns false for unrelated prefixes (no surprise copies)", () => {
+    expect(needsAudioCrossBucketCopy("renders/x/silent_full.mp4")).toBe(false);
+    expect(needsAudioCrossBucketCopy("bundles/x.tar.gz")).toBe(false);
+    expect(needsAudioCrossBucketCopy("cast/1/portrait.png")).toBe(false);
+  });
+
+  it("anchors prefix matching at the start (does not match mid-string)", () => {
+    expect(needsAudioCrossBucketCopy("foo/out/audio.mp3")).toBe(false);
+  });
+});

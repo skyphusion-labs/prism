@@ -38,6 +38,13 @@ export interface RenderSubmitArgs {
   // pass. A render_overrides.keyframes_only set via the freeform
   // overrides textarea wins over an unset top-level keyframesOnly.
   keyframesOnly?: boolean;
+  // v0.52.0: optional R2 key for an audio bed to mux onto the final
+  // video. Vivijure-serverless 0.4.11+ downloads from R2_BUCKET and
+  // muxes via export_film(with_audio=True). Caller (handleRenderSubmit)
+  // is responsible for ensuring the key lives in R2_RENDERS (audio/
+  // prefix); MiniMax-generated artifacts (out/<uuid>.<ext> in env.R2)
+  // get cross-bucket-copied before this builder sees them.
+  audioKey?: string;
 }
 
 // What the vivijure-serverless rp_handler.py reads off the job input. Field
@@ -49,6 +56,7 @@ export interface RenderJobInput {
   quality_tier: "draft" | "standard" | "final";
   render_overrides?: Record<string, unknown>;
   user_email?: string;
+  audio_key?: string;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -90,6 +98,8 @@ export interface FinalizeArgs {
   // runs the full all-scenes flow (v0.4.4 behavior). Sourced from
   // the originating row's locked_shots column in the handler.
   processShotIds?: string[];
+  // v0.52.0: same audio-mux opt-in as RenderSubmitArgs.audioKey.
+  audioKey?: string;
 }
 
 export interface FinalizeJobInput {
@@ -100,6 +110,7 @@ export interface FinalizeJobInput {
   render_overrides?: Record<string, unknown>;
   user_email?: string;
   process_shot_ids?: string[];
+  audio_key?: string;
 }
 
 // RunPod queue-based job status. The platform uses these literal strings
@@ -167,6 +178,12 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   if (typeof args.userEmail === "string" && args.userEmail.length > 0) {
     input.user_email = args.userEmail;
   }
+  // v0.52.0: pass through the audio bed key. Already-empty values stay
+  // off the wire so 0.4.10 and earlier workers (which ignore unknown
+  // fields anyway) see no diff.
+  if (typeof args.audioKey === "string" && args.audioKey.length > 0) {
+    input.audio_key = args.audioKey;
+  }
   return { input };
 }
 
@@ -193,6 +210,10 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   // everything").
   if (Array.isArray(args.processShotIds) && args.processShotIds.length > 0) {
     input.process_shot_ids = [...args.processShotIds];
+  }
+  // v0.52.0: same audio_key passthrough as buildSubmitPayload.
+  if (typeof args.audioKey === "string" && args.audioKey.length > 0) {
+    input.audio_key = args.audioKey;
   }
   return { input };
 }
