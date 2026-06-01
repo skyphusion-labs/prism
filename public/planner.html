@@ -562,6 +562,51 @@
             defaults.
           </p>
         </details>
+        <!-- v0.74.0: face_lock + instantid overrides (vivijure-serverless
+             0.4.30+). Useful for tuning identity-lock strength when the
+             per-cast LoRA isn't dominant enough on its own. -->
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">face lock + InstantID (advanced)</summary>
+          <div class="planner-overrides-fields">
+            <label class="planner-field">
+              <span>face lock mode</span>
+              <select id="planner-fl-mode">
+                <option value="">(use pod default: img2img)</option>
+                <option value="img2img">img2img (lightest)</option>
+                <option value="ip_adapter">ip_adapter</option>
+                <option value="instantid">instantid (strongest)</option>
+                <option value="both">both</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>IP-Adapter scale (pod default 0.65)</span>
+              <input id="planner-fl-ip-scale" type="number" min="0" max="2" step="0.05" placeholder="0.65" />
+            </label>
+            <label class="planner-field">
+              <span>InstantID enabled</span>
+              <select id="planner-fl-iid-enabled">
+                <option value="">(use pod default: false)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>InstantID controlnet scale (pod default 0.8)</span>
+              <input id="planner-fl-iid-cn-scale" type="number" min="0" max="2" step="0.05" placeholder="0.8" />
+            </label>
+            <label class="planner-field">
+              <span>InstantID IP-Adapter scale (pod default 0.8)</span>
+              <input id="planner-fl-iid-ip-scale" type="number" min="0" max="2" step="0.05" placeholder="0.8" />
+            </label>
+          </div>
+          <p class="planner-overrides-hint">
+            forwarded as <code>face_lock_overrides</code> (with a nested
+            <code>instantid</code> sub-block on the wire). controls the
+            face-lock pipeline that runs alongside the per-slot LoRA.
+            bumping <code>ip_adapter_scale</code> toward 1.0 is the
+            quickest way to push identity strength when a LoRA is weak.
+          </p>
+        </details>
         <!-- v0.73.0: continuity + image_prompting + character_generation
              block overrides (vivijure-serverless 0.4.29+). -->
         <details class="planner-overrides-raw-details">

@@ -71,6 +71,8 @@ export interface RenderSubmitArgs {
   continuityOverrides?: ContinuityOverrides;
   imagePromptingOverrides?: ImagePromptingOverrides;
   characterGenerationOverrides?: CharacterGenerationOverrides;
+  // v0.74.0: face_lock + instantid (vivijure-serverless 0.4.30+).
+  faceLockOverrides?: FaceLockOverrides;
 }
 
 export interface LoraTrainOverrides {
@@ -109,6 +111,31 @@ export interface QualityGateOverrides {
   // When true the render proceeds even on verdict="fail". When false
   // a hard fail blocks the render.
   allow_warn?: boolean;
+}
+
+// v0.74.0: matching face_lock block from config.yaml. Routes through to
+// vivijure-serverless 0.4.30+'s face_lock.set_overrides which deep-
+// merges the instantid sub-block. All fields optional.
+export interface FaceLockOverrides {
+  mode?: "img2img" | "ip_adapter" | "instantid" | "both";
+  ip_adapter_repo?: string;
+  ip_adapter_subfolder?: string;
+  ip_adapter_weight?: string;
+  // IP-Adapter strength; pod default 0.65. Higher = more identity
+  // pull. 0..1 is the sensible range.
+  ip_adapter_scale?: number;
+  instantid?: {
+    enabled?: boolean;
+    base_model_id?: string;
+    controlnet_model_id?: string;
+    adapter_repo?: string;
+    adapter_weight?: string;
+    // 0..1.5 typical. Pod default 0.8.
+    controlnet_scale?: number;
+    // 0..1.5 typical. Pod default 0.8.
+    ip_adapter_scale?: number;
+    antelope_root?: string;
+  };
 }
 
 // v0.73.0: matching continuity block from config.yaml. Routes through to
@@ -248,6 +275,8 @@ export interface RenderJobInput {
   continuity_overrides?: ContinuityOverrides;
   image_prompting_overrides?: ImagePromptingOverrides;
   character_generation_overrides?: CharacterGenerationOverrides;
+  // v0.74.0: face_lock + instantid (0.4.30+).
+  face_lock_overrides?: FaceLockOverrides;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -306,6 +335,8 @@ export interface FinalizeArgs {
   continuityOverrides?: ContinuityOverrides;
   imagePromptingOverrides?: ImagePromptingOverrides;
   characterGenerationOverrides?: CharacterGenerationOverrides;
+  // v0.74.0: same face_lock override.
+  faceLockOverrides?: FaceLockOverrides;
 }
 
 export interface FinalizeJobInput {
@@ -326,6 +357,7 @@ export interface FinalizeJobInput {
   continuity_overrides?: ContinuityOverrides;
   image_prompting_overrides?: ImagePromptingOverrides;
   character_generation_overrides?: CharacterGenerationOverrides;
+  face_lock_overrides?: FaceLockOverrides;
 }
 
 // v0.57.0: standalone LoRA training. The cast manager UI on /cast
@@ -466,6 +498,9 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   if (ip) input.image_prompting_overrides = ip;
   const cg = normalizeCharacterGenerationOverrides(args.characterGenerationOverrides);
   if (cg) input.character_generation_overrides = cg;
+  // v0.74.0: face_lock + instantid.
+  const fl = normalizeFaceLockOverrides(args.faceLockOverrides);
+  if (fl) input.face_lock_overrides = fl;
   return { input };
 }
 
@@ -516,6 +551,8 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   if (ipF) input.image_prompting_overrides = ipF;
   const cgF = normalizeCharacterGenerationOverrides(args.characterGenerationOverrides);
   if (cgF) input.character_generation_overrides = cgF;
+  const flF = normalizeFaceLockOverrides(args.faceLockOverrides);
+  if (flF) input.face_lock_overrides = flF;
   return { input };
 }
 
@@ -558,6 +595,49 @@ export function normalizeLoraTrainOverrides(
     if (typeof v === "number" && Number.isFinite(v) && v > 0) {
       out[k] = v;
     }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.74.0: normalize face_lock overrides; deep-validates the optional
+// instantid sub-block. Drops anything that doesn't conform; the pod
+// re-validates.
+export function normalizeFaceLockOverrides(
+  raw: FaceLockOverrides | undefined,
+): FaceLockOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: FaceLockOverrides = {};
+  if (raw.mode === "img2img" || raw.mode === "ip_adapter" || raw.mode === "instantid" || raw.mode === "both") {
+    out.mode = raw.mode;
+  }
+  if (typeof raw.ip_adapter_repo === "string" && raw.ip_adapter_repo.length <= 256) {
+    out.ip_adapter_repo = raw.ip_adapter_repo;
+  }
+  if (typeof raw.ip_adapter_subfolder === "string" && raw.ip_adapter_subfolder.length <= 256) {
+    out.ip_adapter_subfolder = raw.ip_adapter_subfolder;
+  }
+  if (typeof raw.ip_adapter_weight === "string" && raw.ip_adapter_weight.length <= 256) {
+    out.ip_adapter_weight = raw.ip_adapter_weight;
+  }
+  if (typeof raw.ip_adapter_scale === "number" && Number.isFinite(raw.ip_adapter_scale) && raw.ip_adapter_scale >= 0 && raw.ip_adapter_scale <= 2) {
+    out.ip_adapter_scale = raw.ip_adapter_scale;
+  }
+  if (raw.instantid && typeof raw.instantid === "object" && !Array.isArray(raw.instantid)) {
+    const inst: NonNullable<FaceLockOverrides["instantid"]> = {};
+    const i = raw.instantid;
+    if (typeof i.enabled === "boolean") inst.enabled = i.enabled;
+    if (typeof i.base_model_id === "string" && i.base_model_id.length <= 256) inst.base_model_id = i.base_model_id;
+    if (typeof i.controlnet_model_id === "string" && i.controlnet_model_id.length <= 256) inst.controlnet_model_id = i.controlnet_model_id;
+    if (typeof i.adapter_repo === "string" && i.adapter_repo.length <= 256) inst.adapter_repo = i.adapter_repo;
+    if (typeof i.adapter_weight === "string" && i.adapter_weight.length <= 256) inst.adapter_weight = i.adapter_weight;
+    if (typeof i.controlnet_scale === "number" && Number.isFinite(i.controlnet_scale) && i.controlnet_scale >= 0 && i.controlnet_scale <= 2) {
+      inst.controlnet_scale = i.controlnet_scale;
+    }
+    if (typeof i.ip_adapter_scale === "number" && Number.isFinite(i.ip_adapter_scale) && i.ip_adapter_scale >= 0 && i.ip_adapter_scale <= 2) {
+      inst.ip_adapter_scale = i.ip_adapter_scale;
+    }
+    if (typeof i.antelope_root === "string" && i.antelope_root.length <= 256) inst.antelope_root = i.antelope_root;
+    if (Object.keys(inst).length > 0) out.instantid = inst;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

@@ -1499,6 +1499,8 @@ interface RenderSubmitRequest {
   continuityOverrides?: unknown;
   imagePromptingOverrides?: unknown;
   characterGenerationOverrides?: unknown;
+  // v0.74.0: face_lock + instantid sub-block (vivijure-serverless 0.4.30+).
+  faceLockOverrides?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1671,6 +1673,11 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     characterGenerationOverrides:
       body.characterGenerationOverrides && typeof body.characterGenerationOverrides === "object"
         ? (body.characterGenerationOverrides as RenderSubmitArgs["characterGenerationOverrides"])
+        : undefined,
+    // v0.74.0: face_lock + instantid passthrough.
+    faceLockOverrides:
+      body.faceLockOverrides && typeof body.faceLockOverrides === "object"
+        ? (body.faceLockOverrides as RenderSubmitArgs["faceLockOverrides"])
         : undefined,
   };
 
@@ -2340,6 +2347,7 @@ async function handleFinalizeSubmit(
   let bodyContinuityOverrides: RenderSubmitArgs["continuityOverrides"] | undefined;
   let bodyImagePromptingOverrides: RenderSubmitArgs["imagePromptingOverrides"] | undefined;
   let bodyCharacterGenerationOverrides: RenderSubmitArgs["characterGenerationOverrides"] | undefined;
+  let bodyFaceLockOverrides: RenderSubmitArgs["faceLockOverrides"] | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
@@ -2354,6 +2362,7 @@ async function handleFinalizeSubmit(
         continuityOverrides?: unknown;
         imagePromptingOverrides?: unknown;
         characterGenerationOverrides?: unknown;
+        faceLockOverrides?: unknown;
       };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
@@ -2413,6 +2422,13 @@ async function handleFinalizeSubmit(
         && !Array.isArray(parsed.characterGenerationOverrides)
       ) {
         bodyCharacterGenerationOverrides = parsed.characterGenerationOverrides as RenderSubmitArgs["characterGenerationOverrides"];
+      }
+      if (
+        parsed?.faceLockOverrides
+        && typeof parsed.faceLockOverrides === "object"
+        && !Array.isArray(parsed.faceLockOverrides)
+      ) {
+        bodyFaceLockOverrides = parsed.faceLockOverrides as RenderSubmitArgs["faceLockOverrides"];
       }
       if (parsed?.castLoras !== undefined) {
         if (
@@ -2535,6 +2551,8 @@ async function handleFinalizeSubmit(
     continuityOverrides: bodyContinuityOverrides,
     imagePromptingOverrides: bodyImagePromptingOverrides,
     characterGenerationOverrides: bodyCharacterGenerationOverrides,
+    // v0.74.0: face_lock + instantid passthrough (vivijure-serverless 0.4.30+).
+    faceLockOverrides: bodyFaceLockOverrides,
   });
   if (!result.ok) {
     return json(

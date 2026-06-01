@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.74.0
+
+Phase 7 of the worker-pod config pull. `face_lock.*` (5 top-level keys) plus the nested `face_lock.instantid.*` (8 keys) become routable from the web Worker. Pod side landed in vivijure-serverless 0.4.30. Useful for tuning the IP-Adapter / InstantID identity-lock pipeline when per-cast LoRAs aren't dominant enough on their own.
+
+### Backend
+
+- `src/runpod-submit.ts`: `FaceLockOverrides` interface with optional nested `instantid` sub-block; `normalizeFaceLockOverrides` deep-validates both levels (unions for mode, 0..2 ranges for the scales, length caps on the model-id strings). Both Args + JobInput types carry the field; both builders forward it.
+- `src/index.ts`: `RenderSubmitRequest` accepts `faceLockOverrides`; both render and finalize handlers read it and forward through.
+
+### Frontend
+
+- `public/planner.html`: new "face lock + InstantID (advanced)" disclosure with five controls (face_lock_mode, ip_adapter_scale, instantid.enabled, instantid.controlnet_scale, instantid.ip_adapter_scale). The five-of-thirteen surface area covers the iteration-worthy knobs; the model-id / weight-file strings stay raw-JSON only since they're install-time defaults.
+- `public/planner.js`: `buildFaceLockOverrides()` reads + validates, attaches alongside other override builders. The instantid sub-block is only included when at least one of its three fields is set.
+
+### Tests
+
+464/464 still passing, type-check clean.
+
 ## v0.73.0
 
 Phase 6 of the worker-pod config pull. Three more config.yaml blocks become routable from the web Worker: `continuity.*` (8 keys), `image_prompting.*` (4 keys), `character_generation.*` (2 keys). Pod side landed in vivijure-serverless 0.4.29.

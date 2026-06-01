@@ -603,6 +603,29 @@ function buildCastLoraSubmit() {
   return out;
 }
 
+// v0.74.0: face_lock + instantid builder. The instantid sub-block is
+// only attached when the user set at least one of its fields.
+function buildFaceLockOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const mode = ($sel("#planner-fl-mode") || {}).value;
+  if (mode === "img2img" || mode === "ip_adapter" || mode === "instantid" || mode === "both") {
+    out.mode = mode;
+  }
+  const ips = parseFloat(($sel("#planner-fl-ip-scale") || {}).value || "");
+  if (Number.isFinite(ips) && ips >= 0 && ips <= 2) out.ip_adapter_scale = ips;
+  const inst = {};
+  const en = ($sel("#planner-fl-iid-enabled") || {}).value;
+  if (en === "true") inst.enabled = true;
+  else if (en === "false") inst.enabled = false;
+  const cn = parseFloat(($sel("#planner-fl-iid-cn-scale") || {}).value || "");
+  if (Number.isFinite(cn) && cn >= 0 && cn <= 2) inst.controlnet_scale = cn;
+  const ii = parseFloat(($sel("#planner-fl-iid-ip-scale") || {}).value || "");
+  if (Number.isFinite(ii) && ii >= 0 && ii <= 2) inst.ip_adapter_scale = ii;
+  if (Object.keys(inst).length > 0) out.instantid = inst;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // v0.73.0: continuity / image_prompting / character_generation builders.
 function buildContinuityOverrides() {
   const $sel = (s) => $(s);
@@ -2744,6 +2767,9 @@ async function submitRender() {
   if (ipOverrides) reqBody.imagePromptingOverrides = ipOverrides;
   const cgOverrides = buildCharacterGenerationOverrides();
   if (cgOverrides) reqBody.characterGenerationOverrides = cgOverrides;
+  // v0.74.0: face_lock + instantid.
+  const flOverrides = buildFaceLockOverrides();
+  if (flOverrides) reqBody.faceLockOverrides = flOverrides;
 
   let resp = null;
   let data = null;
