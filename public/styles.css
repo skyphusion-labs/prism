@@ -2080,6 +2080,52 @@ textarea:focus {
   white-space: pre-wrap;
 }
 
+/* v0.44.0: live progress bar + elapsed + ETA. Sits between the meta
+   block (job/status/scene/phase) and the cancel button. Hidden when
+   the render is queued or terminal; visible while IN_PROGRESS. The
+   fill width is set inline by refreshProgressWidget. */
+.planner-render-progress {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.planner-render-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.planner-render-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  width: 0%;
+  transition: width 0.4s ease-out;
+}
+
+.planner-render-progress-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+}
+
+.planner-render-progress-text #planner-render-progress-pct {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.planner-render-progress-sep {
+  opacity: 0.5;
+}
+
 /* v0.33.1: cancel-job button on the render panel + sidebar cross-link */
 
 /* v0.35.3: render overrides JSON textarea (advanced, collapsible) */

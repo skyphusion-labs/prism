@@ -48,6 +48,18 @@ const renderState = {
   streamFallbackHit: false, // set after one failed stream attempt to skip retries
   currentProject: null,     // v0.37.0: display name for notifications
   currentLabel: null,       // v0.37.0: user-authored label, preferred over project
+  // v0.44.0: ms since epoch when the first IN_PROGRESS observation
+  // landed. Used to compute elapsed + ETA. Set lazily on the first
+  // non-IN_QUEUE status update so a long queue wait does not anchor
+  // the ETA computation against the wrong start time. Persisted via
+  // the v0.38.0 localStorage stash so a refresh-mid-render keeps the
+  // same baseline; cleared on terminal status.
+  startedAt: null,
+  // v0.44.0: ms timer that re-renders the elapsed + ETA text on a
+  // 1s cadence between SSE / poll updates. Without it the elapsed
+  // counter only advances when a new status snapshot lands (every
+  // ~3s under SSE), which feels frozen.
+  tickTimer: null,
 };
 
 // v0.37.0: browser notification state. `permission` mirrors Notification.
@@ -185,6 +197,10 @@ function collectRenderStageState() {
     adetailer: readVal("#planner-adetailer"),
     loraScaleText: readVal("#planner-lora-scale"),
     consistency: readVal("#planner-consistency"),
+    // v0.44.0: persist the render start timestamp so an elapsed +
+    // ETA computation survives a page refresh. null means "no in-
+    // flight render observed yet"; the updater anchors it lazily.
+    startedAt: renderState.startedAt,
     currentProject: renderState.currentProject,
     currentLabel: renderState.currentLabel,
     lastKnownStatus: lastKnownStatusFromPanel(),
@@ -366,6 +382,13 @@ function restoreRenderStagePanel(saved) {
   // v0.40.0: restore the keyframes-only checkbox.
   const kfOnlyEl = $("#planner-keyframes-only");
   if (kfOnlyEl) kfOnlyEl.checked = !!saved.keyframesOnly;
+  // v0.44.0: restore the elapsed/ETA anchor. If a render was in
+  // flight at save time, the next updateRenderProgress will paint
+  // the bar against this baseline + start the tick timer; no
+  // dedicated kickoff needed here.
+  if (typeof saved.startedAt === "number" && saved.startedAt > 0) {
+    renderState.startedAt = saved.startedAt;
+  }
   // v0.43.0: restore the structured render-settings fields. Any
   // non-empty field also opens the outer details panel so the user
   // can see what was carried across the reload.
@@ -1106,6 +1129,14 @@ async function submitRender() {
 
   renderState.jobId = data.jobId;
   renderState.streamFallbackHit = false;
+  // v0.44.0: reset the elapsed/ETA anchor on a fresh submit so a
+  // previous render's startedAt does not leak in. updateRenderProgress
+  // re-anchors on the first non-IN_QUEUE status update.
+  renderState.startedAt = null;
+  if (renderState.tickTimer !== null) {
+    clearInterval(renderState.tickTimer);
+    renderState.tickTimer = null;
+  }
   // v0.37.0: track display name for notifications. Use the bundle's
   // derived project slug here; resumeRender will overwrite with the
   // history row's label when available.
@@ -1311,6 +1342,124 @@ function updateRenderProgress(data) {
     err.hidden = false;
     err.textContent = data.error;
   }
+
+  // v0.44.0: progress bar + ETA. Anchor startedAt on the first non-
+  // queued observation so a long IN_QUEUE wait does not skew the
+  // elapsed math. Hide the widget entirely on terminal status; the
+  // tick timer is also cleaned up there.
+  const terminal = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"];
+  if (terminal.indexOf(data.status) >= 0) {
+    hideProgressWidget();
+    return;
+  }
+  if (data.status !== "IN_QUEUE" && renderState.startedAt === null) {
+    renderState.startedAt = Date.now();
+    savePersistedState();
+  }
+  if (renderState.startedAt !== null) {
+    refreshProgressWidget(out);
+    if (renderState.tickTimer === null) {
+      renderState.tickTimer = setInterval(() => {
+        // No new data; just re-render the elapsed / ETA text against
+        // the last-known progress fraction. cachedOut is the most
+        // recent output we saw; null means we never observed one
+        // (so the bar stays hidden until the first real update).
+        refreshProgressWidget(renderState.lastOut);
+      }, 1000);
+    }
+    // Cache the last observed output so the tick timer can re-render
+    // the elapsed / ETA without a fresh status snapshot.
+    renderState.lastOut = out && typeof out === "object" ? out : renderState.lastOut;
+  }
+}
+
+// v0.44.0: pure-ish helper that converts the GPU's status envelope into
+// a 0-1 progress fraction. Prefers out.progress (a float the GPU writes
+// to render_status.json as render_fraction()); falls back to a count of
+// completed scenes via (scene_index - 1) / scene_total when progress is
+// absent. Returns null when neither signal is available, which the
+// caller treats as "show the bar at 0% with 'computing...' ETA."
+function computeProgressFraction(out) {
+  if (!out || typeof out !== "object") return null;
+  if (typeof out.progress === "number" && out.progress >= 0 && out.progress <= 1) {
+    return out.progress;
+  }
+  if (
+    typeof out.scene_index === "number"
+    && typeof out.scene_total === "number"
+    && out.scene_total > 0
+  ) {
+    // scene_index is 1-based from the GPU. (scene_index - 1) shots
+    // completed gives a conservative estimate; once the GPU starts
+    // writing out.progress this branch becomes a fallback only.
+    const completed = Math.max(0, out.scene_index - 1);
+    return Math.min(1, completed / out.scene_total);
+  }
+  return null;
+}
+
+// v0.44.0: paint the progress bar + ETA from the current renderState
+// + an output snapshot. Called both on a real status update and on
+// the 1s tick timer (with the cached last output) so the elapsed
+// counter advances smoothly between snapshots.
+function refreshProgressWidget(out) {
+  const widget = $("#planner-render-progress");
+  if (!widget) return;
+  const startedAt = renderState.startedAt;
+  if (startedAt === null) {
+    widget.hidden = true;
+    return;
+  }
+  widget.hidden = false;
+  const elapsedMs = Math.max(0, Date.now() - startedAt);
+  const elapsedEl = $("#planner-render-progress-elapsed");
+  if (elapsedEl) elapsedEl.textContent = formatDuration(elapsedMs);
+
+  const frac = computeProgressFraction(out);
+  const pctEl = $("#planner-render-progress-pct");
+  const fillEl = $("#planner-render-progress-fill");
+  const etaEl = $("#planner-render-progress-eta");
+
+  if (frac === null) {
+    if (pctEl) pctEl.textContent = "?%";
+    if (fillEl) fillEl.style.width = "0%";
+    if (etaEl) etaEl.textContent = "computing...";
+    return;
+  }
+  const pct = Math.round(frac * 100);
+  if (pctEl) pctEl.textContent = pct + "%";
+  if (fillEl) fillEl.style.width = pct + "%";
+
+  // ETA: linear extrapolation from elapsed. Require at least 3% of
+  // the work done before we trust the estimate; the very early
+  // numbers are dominated by model-load time and produce wild over-
+  // estimates that would scare a user away. Below 3% the bar shows
+  // but the ETA stays "computing..." so the user has a visual sense
+  // of motion without a misleading number.
+  if (etaEl) {
+    if (frac < 0.03 || elapsedMs < 10_000) {
+      etaEl.textContent = "computing...";
+    } else {
+      const totalEstMs = elapsedMs / frac;
+      const remainingMs = Math.max(0, totalEstMs - elapsedMs);
+      etaEl.textContent = "~" + formatDuration(remainingMs);
+    }
+  }
+}
+
+// v0.44.0: tear down the progress widget on terminal status (and
+// clear the tick timer). Idempotent so finalizeRender / cancel /
+// re-submit can call it without checking state first.
+function hideProgressWidget() {
+  if (renderState.tickTimer !== null) {
+    clearInterval(renderState.tickTimer);
+    renderState.tickTimer = null;
+  }
+  renderState.lastOut = null;
+  renderState.startedAt = null;
+  const widget = $("#planner-render-progress");
+  if (widget) widget.hidden = true;
+  savePersistedState();
 }
 
 function finalizeRender(data) {

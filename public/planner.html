@@ -212,6 +212,25 @@
           <div id="planner-render-phase" hidden></div>
           <div id="planner-render-error" class="planner-render-error" hidden></div>
         </div>
+        <!-- v0.44.0: live progress bar + elapsed + ETA. The bar is
+             driven by out.progress (a 0-1 float the GPU writes to
+             render_status.json and the rp_handler forwards via
+             progress_update); falls back to scene_index / scene_total
+             when out.progress is absent. ETA is a linear extrapolation
+             from elapsed * (1 - progress) / progress, so accuracy
+             improves as the render gets further along. -->
+        <div id="planner-render-progress" class="planner-render-progress" hidden>
+          <div class="planner-render-progress-bar">
+            <div id="planner-render-progress-fill" class="planner-render-progress-fill"></div>
+          </div>
+          <div class="planner-render-progress-text">
+            <span id="planner-render-progress-pct">0%</span>
+            <span class="planner-render-progress-sep">·</span>
+            <span><span class="planner-render-label">elapsed</span> <span id="planner-render-progress-elapsed">0s</span></span>
+            <span class="planner-render-progress-sep">·</span>
+            <span><span class="planner-render-label">eta</span> <span id="planner-render-progress-eta">computing...</span></span>
+          </div>
+        </div>
         <div class="planner-actions">
           <button id="planner-render-cancel" type="button" class="planner-render-cancel" hidden>cancel job</button>
         </div>

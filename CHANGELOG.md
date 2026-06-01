@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.44.0
+
+Live progress bar + elapsed + ETA on in-flight renders. The render-stage panel grows a `[##########____] 42% · elapsed 5m 12s · eta ~7m 30s` strip between the meta block and the cancel button. The bar fills from the GPU's existing `progress` field (a 0-1 float `render_control.render_fraction()` writes to `render_status.json`); ETA is a linear extrapolation from elapsed-so-far. A 1-second tick timer re-renders the elapsed + ETA text between SSE / poll updates so the counter advances smoothly instead of freezing for 3-8s at a time.
+
+### Why
+
+In-flight feedback was minimal: a status pill, a "scene 3/6" line, a log tail. A user submitting a final-tier render had to keep the tab open for 30+ minutes with no sense of how much was left, or guess from the log. The legacy `studio_api.py` UI had a progress bar driven off the same `progress` field; this commit restores parity. ETA is a new addition (legacy did not show one); a linear extrapolation from elapsed is rough but useful once a render is past ~3% complete.
+
+### What
+
+- `public/planner.html`: new `<div id="planner-render-progress">` between the meta block and the cancel-actions row. Contains a `.planner-render-progress-bar` (6px tall, accent fill) and a text line with percentage + elapsed + ETA. Hidden by default; revealed on the first non-IN_QUEUE observation.
+- `public/planner.js`:
+  - `renderState.startedAt` (ms since epoch, set lazily on the first non-IN_QUEUE status update so a long queue wait does not skew the ETA baseline). Persisted via the v0.38.0 localStorage stash; restored on reload. Cleared on terminal status and on a fresh submit.
+  - `renderState.tickTimer` drives a 1s `setInterval` that calls `refreshProgressWidget(renderState.lastOut)` so the elapsed / ETA advance smoothly between snapshots. Cleaned up on terminal status, cancel, and re-submit.
+  - `computeProgressFraction(out)` (new, pure): prefers `out.progress` (the GPU's `render_fraction()` value), falls back to `(scene_index - 1) / scene_total` when progress is absent, returns null when neither is available (UI shows the bar at 0% with `computing...`).
+  - `refreshProgressWidget(out)` paints the bar fill + percentage + elapsed + ETA. ETA waits until both `frac >= 3%` and `elapsed >= 10s` before showing a number; below that it stays `computing...` so an early-stage render doesn't show a wildly-wrong estimate (the first minute is dominated by model-load time).
+  - `hideProgressWidget()` is the idempotent teardown: clears the tick timer, drops `lastOut`, nulls `startedAt`, hides the widget element, saves persisted state. Called on terminal status.
+  - `updateRenderProgress(data)` (existing) now also: anchors `startedAt` on first non-IN_QUEUE status, ensures the tick timer is running, caches `lastOut` for the timer to re-render against, and routes terminal status to `hideProgressWidget`.
+  - `submitRender` resets `startedAt` and tears down any prior tick timer on a fresh submission.
+- `public/styles.css`: `.planner-render-progress` flex column with 6px gap; `.planner-render-progress-bar` (full width, accent border, hidden overflow) holding `.planner-render-progress-fill` (accent background, animated `transition: width 0.4s ease-out` so the bar slides rather than jumps); monospace text line with subtle separators.
+
+### Behavior notes
+
+- **Progress source**: `out.progress` is the canonical signal. The GPU writes it via `render_control._set_phase` -> `status_snapshot()` (`render_control.py:246-255`). rp_handler's `_forward_progress` thread reads `render_status.json` every 3s and forwards via `runpod.serverless.progress_update(job, payload)`. RunPod surfaces it under `output` on the status endpoint, and the Worker passes it through unchanged.
+- **Fallback when GPU is older**: if a pre-v0.4.x image is on RunPod and `out.progress` is absent, the bar falls back to `(scene_index - 1) / scene_total`. Coarser (only updates per shot completion) but better than nothing.
+- **ETA accuracy**: linear extrapolation. The first shot is slow (model load + cold caches); subsequent shots are faster. Real wall-clock often comes in 15-30% under the early estimate and within 10% of the late estimate. Shown as `~Nm Ns` to signal it's an approximation.
+- **Refresh resilience**: `startedAt` persists across page reloads. A user who refreshes mid-render sees the bar resume at the correct elapsed (computed from `Date.now() - startedAt`) without restarting the counter at 0.
+- **Terminal cleanup**: when status transitions to COMPLETED / FAILED / CANCELLED / TIMED_OUT, the widget hides + the tick timer stops. The existing render-output panel handles the post-terminal "download MP4" affordance.
+
+No backend change. No D1 migration. No cross-repo coordination. The GPU already writes `progress` and the Worker already passes it through; v0.44.0 just reads it. Tests 370/370 unchanged. Typecheck clean.
+
+### Apply
+
+```
+npm run deploy
+```
+
 ## v0.43.0
 
 Render settings as first-class UI fields. The render-stage `render overrides (advanced)` collapsible used to be a freeform JSON textarea; v0.43.0 promotes the four most-tweaked fields to discoverable inputs (seed, adetailer face fix on keyframes, lora scale, consistency mode) and keeps the textarea below them as the power-user escape hatch. Empty / "use bundle default" entries are omitted from `render_overrides` so the bundle's own defaults win; explicit values land on the wire as the structured object. Textarea content wins on key conflict with the structured fields.
