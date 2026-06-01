@@ -2478,6 +2478,90 @@ textarea:focus {
   outline-offset: -1px;
 }
 
+/* v0.42.0: lock pin per keyframe. Same visual weight as the regen
+   button (sister chip beneath it). Locked state is rendered with the
+   accent color so a glance at the strip tells you which shots are
+   approved. v0.42.0 is metadata-only; finalize runs Wan I2V over
+   every shot regardless of lock state. */
+.planner-history-keyframe-lock {
+  font-size: 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 0;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  width: 96px;
+}
+
+.planner-history-keyframe-lock:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.planner-history-keyframe-lock:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.planner-history-keyframe-lock-on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(122, 162, 247, 0.12);
+}
+
+/* v0.42.0: finalize affordance on a completed keyframes-only preview.
+   Sits beneath the keyframe strip; same horizontal layout as the
+   actions row. The summary text on the left reads "N of M shots
+   locked" so the user can see at a glance how many they have
+   approved. */
+.planner-history-finalize-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 8px;
+  border-radius: 4px;
+  background: rgba(122, 162, 247, 0.06);
+  border: 1px solid var(--border);
+}
+
+.planner-history-finalize-summary {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.planner-history-finalize-btn {
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--accent);
+  color: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: filter 0.15s;
+  white-space: nowrap;
+}
+
+.planner-history-finalize-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.planner-history-finalize-btn:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+/* The finalize row is part of the expanded view; gate it the same
+   way as sub / actions / keyframes when the row is collapsed. */
+.planner-history-item-collapsed .planner-history-finalize-row {
+  display: none;
+}
+
 .planner-history-keyframe-cap {
   font-size: 10px;
   color: var(--fg-dim);

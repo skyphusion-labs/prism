@@ -1,5 +1,61 @@
 # Changelog
 
+## v0.42.0
+
+Lock + finalize. Completes the per-shot loop: preview keyframes (v0.40.0), regen the bad ones (v0.41.0), lock the good ones, then click finalize to run Wan I2V + assemble the silent MP4 over every keyframe on the volume.
+
+### Why
+
+v0.40-v0.41 let the user iterate on keyframes individually but had no terminal step. The only path from a keyframes-only preview to a finished movie was "submit a fresh full render," which re-runs SDXL on every shot and burns 30+ minutes losing any per-shot regen work. Finalize uses the keyframes already on the GPU volume as Wan I2V init images, skipping SDXL gen entirely; on `final` tier it takes about 20 to 30 minutes for a typical 6-shot storyboard.
+
+Lock state is metadata-only in v0.42.0. The UI lets the user click a `lock` pin on each keyframe to mark it as approved; the locked set is persisted to the renders row via PATCH so it survives across sessions. v0.42.0 does NOT pass the locked set to the GPU at finalize time, and the GPU runs Wan I2V over every shot regardless. A future commit may make the lock state actually gate selective rendering (skip / keep per shot).
+
+### Cross-repo coordination
+
+Needs **vivijure-serverless 0.4.4** on the RunPod endpoint.
+
+GPU side adds a new `action: "finalize"` dispatch in rp_handler:
+
+- `orchestrator.finalize(name, *, quality_tier, overrides, on_log)` sets `core.set_render_phase(name, "i2v_only")`, calls `_render_worker_body` (the existing render loop reads `_i2v_only_render(project)` per scene and reuses `clips/<sid>_keyframe.png` from disk instead of regenerating), then `studio_service.export_film` for assembly. Returns `{train, export, mode: "finalized"}`.
+- `_handle_finalize` in rp_handler pulls the bundle (idempotent; the project state on the volume from the preview pass is preserved), runs `orchestrator.finalize`, uploads the silent MP4 + state tarball + keyframes (re-uploaded to the finalize job's own R2 key shape so the new row's `keyframes_json` references its own job id, not the preview's).
+- The render and regen_shot branches are untouched. Pre-0.4.4 GPU endpoints reject the new action with `unknown action 'finalize'`; the Worker surfaces the 502 as a clear error.
+
+### Worker
+
+- `migrate-v0.42.0.sql` + `schema.sql`: new `locked_shots_json TEXT` column on `renders`. NULL means "nothing locked"; otherwise a JSON array of shot_id strings. Idempotency caveat: SQLite ALTER ADD COLUMN raises "duplicate column" on re-run; wrangler treats it as a warning.
+- `src/renders-db.ts`: `RenderRow.mode` widened to `"full" | "keyframes-only" | "finalized"`. `RenderRow.locked_shots: string[] | null` added. `normalizeLockedShots(raw)` pure helper validates each entry (string, 1-80 chars, deduped, capped at 200) and is exported for the route's PATCH validation. `setRenderLockedShots(env, id, userEmail, lockedShots)` mirrors `setRenderLabel`. The row normalizer parses the JSON column back, dropping malformed entries silently.
+- `src/runpod-submit.ts`: `FinalizeArgs` + `FinalizeJobInput` types, pure `buildFinalizePayload(args)` builder, `submitFinalizeJob(env, args)` dispatcher mirroring `submitRenderJob`'s contract.
+- `src/index.ts`:
+  - `handleRenderRowPatch` (existing label PATCH) extends to also accept `lockedShots`. Either field may be present alone or together; missing fields are not touched. Empty array clears the column. Validates the array (400 if not), normalizes via `normalizeLockedShots`, calls `setRenderLockedShots`. Response echoes the row's current `label` + `lockedShots`.
+  - New `POST /api/storyboard/renders/<id>/finalize` route. Same ownership pattern as the other `/renders/<id>/*` routes (404 on miss-or-not-owned). Requires `row.status === "COMPLETED"` and `row.mode === "keyframes-only"` (400 otherwise; finalize is only meaningful from a preview). Submits via `submitFinalizeJob`, inserts a NEW history row for the finalize job at submit time with `mode: "full"`; the GPU envelope's `mode: "finalized"` lands via `updateRenderFromView` on the COMPLETED poll. Returns the new jobId + `parentId: <preview id>`.
+
+### UI
+
+- `public/planner.js`:
+  - Each keyframe wrap (v0.41.0) now also gets a `lock` button next to the `regen` button. The button text is `lock` when unlocked, `locked` (with accent-tinted styling) when locked. Click flips the state optimistically and PATCHes the row's `lockedShots`. On PATCH failure the toggle is reverted with an alert.
+  - `toggleShotLock(row, shotId, btnEl)` handles the optimistic flip + PATCH round-trip. Mutates `row.locked_shots` in place so subsequent re-renders see the new value. Refreshes the finalize-row summary text in place so the "N of M shots locked" count updates without an auto-refresh wait.
+  - Completed keyframes-only rows get a finalize affordance beneath the keyframe strip. The row shows "N of M shots locked" on the left and a primary `finalize (Wan I2V + assemble)` button on the right. Click prompts for confirmation (warns about the 20-30 min duration + that v0.42.0 ignores lock state at finalize), POSTs to the new route, and reloads the history list so the new in-flight row appears next to its preview parent.
+- `public/styles.css`:
+  - `.planner-history-keyframe-lock` + `.planner-history-keyframe-lock-on` (chip sister to regen; accent-tinted when locked).
+  - `.planner-history-finalize-row` (subtle accent background, flex space-between), `.planner-history-finalize-summary` (dim left text), `.planner-history-finalize-btn` (primary accent button).
+  - Finalize row is gated by the existing `.planner-history-item-collapsed` class so collapsed rows stay one line.
+
+### Tests
+
+- `tests/runpod-submit.test.ts`: 6 new cases under `buildFinalizePayload (v0.42.0)` describe block (canonical shape, qualityTier default + explicit, render_overrides pass-through, user_email present / missing / empty, action always 'finalize').
+- `tests/renders-db.test.ts`: 7 new cases on `normalizeLockedShots` (non-array, canonical array, trim + drop empties, drop wrong-type + over-length entries, dedupe preserves order, MAX_LOCKED_SHOTS cap).
+
+Total 370 (357 prior + 13 new). Typecheck clean.
+
+### Apply
+
+```
+wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.42.0.sql
+npm run deploy
+```
+
+Then push vivijure-serverless 0.4.4 (Jenkins auto-builds on the version-bump commit subject) and bump the RunPod endpoint to the new tag.
+
 ## v0.41.1
 
 In-flight regen jobs survive a page refresh. `historyState.regenJobs` is now serialized into the existing localStorage stash on every `.set()` / `.delete()`, and `restorePersistedState()` rehydrates the Map + resumes polling for each surviving entry. The button comes back disabled with `regen...`, the thumbnail with its warn-tinted outline, and the poll picks up from wherever the GPU job is at without the user noticing the reload happened.

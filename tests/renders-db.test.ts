@@ -4,7 +4,7 @@
 // the GPU side's COMPLETED envelope.
 
 import { describe, it, expect } from "vitest";
-import { normalizeKeyframes } from "../src/renders-db";
+import { normalizeKeyframes, normalizeLockedShots } from "../src/renders-db";
 
 describe("normalizeKeyframes", () => {
   it("returns [] for non-array input", () => {
@@ -80,5 +80,62 @@ describe("normalizeKeyframes", () => {
         { shot_id: "shot_01", key: "renders/x.png" },
       ]),
     ).toEqual([{ shot_id: "shot_01", key: "renders/x.png" }]);
+  });
+});
+
+describe("normalizeLockedShots (v0.42.0)", () => {
+  it("returns [] for non-array input", () => {
+    expect(normalizeLockedShots(undefined)).toEqual([]);
+    expect(normalizeLockedShots(null)).toEqual([]);
+    expect(normalizeLockedShots({})).toEqual([]);
+    expect(normalizeLockedShots("shot_01")).toEqual([]);
+    expect(normalizeLockedShots(42)).toEqual([]);
+  });
+
+  it("returns [] for an empty array", () => {
+    expect(normalizeLockedShots([])).toEqual([]);
+  });
+
+  it("accepts a canonical shot_id array", () => {
+    expect(normalizeLockedShots(["shot_01", "shot_02", "shot_03"])).toEqual([
+      "shot_01",
+      "shot_02",
+      "shot_03",
+    ]);
+  });
+
+  it("trims surrounding whitespace and drops empty / whitespace-only entries", () => {
+    expect(normalizeLockedShots([" shot_01 ", "", "  ", "shot_02"])).toEqual([
+      "shot_01",
+      "shot_02",
+    ]);
+  });
+
+  it("drops non-string entries and entries longer than 80 chars", () => {
+    expect(
+      normalizeLockedShots([
+        "shot_01",
+        42,
+        null,
+        { id: "shot_02" },
+        "shot_02",
+        "x".repeat(81),
+        "x".repeat(80),
+      ]),
+    ).toEqual(["shot_01", "shot_02", "x".repeat(80)]);
+  });
+
+  it("dedupes identical entries while preserving first-seen order", () => {
+    expect(
+      normalizeLockedShots(["shot_02", "shot_01", "shot_02", "shot_01"]),
+    ).toEqual(["shot_02", "shot_01"]);
+  });
+
+  it("caps the list at 200 entries (MAX_LOCKED_SHOTS)", () => {
+    const overflow = Array.from({ length: 250 }, (_, i) => `shot_${i}`);
+    const out = normalizeLockedShots(overflow);
+    expect(out).toHaveLength(200);
+    expect(out[0]).toBe("shot_0");
+    expect(out[199]).toBe("shot_199");
   });
 });

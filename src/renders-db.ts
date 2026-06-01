@@ -61,10 +61,17 @@ export interface RenderRow {
   completed_at: number | null;
   label: string | null;
   keyframes: KeyframeRef[] | null;
-  // v0.40.0: 'full' or 'keyframes-only'. Legacy rows are stored NULL;
-  // the row normalizer collapses NULL -> 'full' so callers can rely on
-  // a non-null value.
-  mode: "full" | "keyframes-only";
+  // v0.40.0: 'full' or 'keyframes-only'. v0.42.0 adds 'finalized' as
+  // the mode for rows produced by the keyframes -> finalize pipeline.
+  // Legacy rows are stored NULL; the row normalizer collapses NULL ->
+  // 'full' so callers can rely on a non-null value.
+  mode: "full" | "keyframes-only" | "finalized";
+  // v0.42.0: shot_ids the user marked as approved in the keyframes-
+  // only preview, before clicking finalize. Metadata-only; the GPU
+  // is not informed of this set in v0.42.0 (finalize runs Wan I2V +
+  // assembly over every shot regardless). NULL or empty array means
+  // nothing locked.
+  locked_shots: string[] | null;
 }
 
 function nowSeconds(): number {
@@ -133,6 +140,8 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
     // v0.40.0: GPU 0.4.2+ surfaces the run mode in the envelope. We mirror
     // it into the row so the UI can render the keyframes-only flow even
     // if the row was inserted before the mode column had a value.
+    // v0.42.0: also recognize "finalized" mode from the GPU's finalize
+    // action; same COALESCE-write pattern.
     if (typeof o.mode === "string" && o.mode.length > 0) {
       modeFromOutput = o.mode;
     }
@@ -170,6 +179,29 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
     .run();
 }
 
+// v0.42.0: defensive parse of a locked-shots array stored as JSON in
+// the renders.locked_shots_json column OR coming in over the wire on
+// a PATCH. Drops non-string + empty + duplicate entries; clamps the
+// list length to a sane upper bound so a malformed client cannot
+// stuff arbitrary blobs into the row.
+const MAX_LOCKED_SHOTS = 200;
+
+export function normalizeLockedShots(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const trimmed = entry.trim();
+    if (!trimmed || trimmed.length > 80) continue;
+    if (seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+    if (out.length >= MAX_LOCKED_SHOTS) break;
+  }
+  return out;
+}
+
 // Best-effort coerce `output.keyframes` from a job envelope into a
 // well-formed KeyframeRef[]. Anything that does not look like an
 // object with string `shot_id` + `key` is dropped silently; that
@@ -201,7 +233,8 @@ export async function getRenderByIdForUser(
       id, user_email, job_id, project, bundle_key, quality_tier,
       render_overrides, status, output_key, output_json AS output,
       error, execution_time_ms, delay_time_ms,
-      submitted_at, updated_at, completed_at, label, keyframes_json, mode
+      submitted_at, updated_at, completed_at, label, keyframes_json, mode,
+      locked_shots_json
     FROM renders
     WHERE id = ? AND user_email = ?`,
   )
@@ -276,7 +309,8 @@ export async function listRendersForUser(
       id, user_email, job_id, project, bundle_key, quality_tier,
       render_overrides, status, output_key, output_json AS output,
       error, execution_time_ms, delay_time_ms,
-      submitted_at, updated_at, completed_at, label, keyframes_json, mode
+      submitted_at, updated_at, completed_at, label, keyframes_json, mode,
+      locked_shots_json
     FROM renders
     WHERE user_email = ?
     ORDER BY submitted_at DESC
@@ -359,6 +393,46 @@ function normalizeRow(r: Record<string, unknown>): RenderRow {
     // v0.40.0: collapse NULL / unknown values to 'full' so callers do
     // not need to do this themselves. Legacy rows pre-dating the mode
     // column read as NULL and are therefore 'full'.
-    mode: r.mode === "keyframes-only" ? "keyframes-only" : "full",
+    // v0.42.0 adds 'finalized' as a third recognized value.
+    mode:
+      r.mode === "keyframes-only"
+        ? "keyframes-only"
+        : r.mode === "finalized"
+          ? "finalized"
+          : "full",
+    // v0.42.0: parse the locked_shots_json column back into a string
+    // array; NULL / empty / malformed -> null (read as "nothing
+    // locked"). The normalizer keeps the same MAX_LOCKED_SHOTS cap as
+    // the write path so a corrupted row cannot bloat a list response.
+    locked_shots: (() => {
+      const lsRaw = r.locked_shots_json;
+      if (typeof lsRaw !== "string" || lsRaw.length === 0) return null;
+      try {
+        const parsed = JSON.parse(lsRaw);
+        const arr = normalizeLockedShots(parsed);
+        return arr.length > 0 ? arr : null;
+      } catch {
+        return null;
+      }
+    })(),
   };
+}
+
+// v0.42.0: PATCH locked_shots on a row, scoped to the caller's
+// user_email. Same return-bool semantics as setRenderLabel.
+export async function setRenderLockedShots(
+  env: Env,
+  id: number,
+  userEmail: string,
+  lockedShots: string[],
+): Promise<boolean> {
+  const now = Math.floor(Date.now() / 1000);
+  const json = lockedShots.length > 0 ? JSON.stringify(lockedShots) : null;
+  const result = await env.DB.prepare(
+    `UPDATE renders SET locked_shots_json = ?, updated_at = ? WHERE id = ? AND user_email = ?`,
+  )
+    .bind(json, now, id, userEmail)
+    .run();
+  const changes = (result.meta as { changes?: number } | undefined)?.changes ?? 0;
+  return changes > 0;
 }

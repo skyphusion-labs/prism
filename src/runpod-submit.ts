@@ -72,6 +72,28 @@ export interface RegenShotJobInput {
   user_email?: string;
 }
 
+// v0.42.0: finalize. Runs Wan I2V over the keyframes already on the
+// volume from a prior keyframes-only preview, then assembles the
+// silent MP4. Same wire shape as RenderSubmitArgs (qualityTier +
+// renderOverrides pass through to the GPU); only the action field
+// distinguishes it from a fresh render at the dispatcher.
+export interface FinalizeArgs {
+  project: string;
+  bundleKey: string;
+  qualityTier?: "draft" | "standard" | "final";
+  renderOverrides?: Record<string, unknown>;
+  userEmail?: string;
+}
+
+export interface FinalizeJobInput {
+  action: "finalize";
+  project: string;
+  bundle_key: string;
+  quality_tier: "draft" | "standard" | "final";
+  render_overrides?: Record<string, unknown>;
+  user_email?: string;
+}
+
 // RunPod queue-based job status. The platform uses these literal strings
 // across submit / poll / cancel responses. Anything else surfaces as the
 // raw string in `statusRaw` so the UI can show it without us silently
@@ -133,6 +155,25 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
     if (existing.keyframes_only === undefined) {
       input.render_overrides = { ...existing, keyframes_only: true };
     }
+  }
+  if (typeof args.userEmail === "string" && args.userEmail.length > 0) {
+    input.user_email = args.userEmail;
+  }
+  return { input };
+}
+
+// v0.42.0: pure builder for the finalize RunPod payload. Action gates
+// the GPU dispatcher into the Wan-I2V-only + assemble branch (no
+// fresh SDXL). Identical wire fields to buildSubmitPayload otherwise.
+export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobInput } {
+  const input: FinalizeJobInput = {
+    action: "finalize",
+    project: args.project,
+    bundle_key: args.bundleKey,
+    quality_tier: args.qualityTier ?? "final",
+  };
+  if (args.renderOverrides && Object.keys(args.renderOverrides).length > 0) {
+    input.render_overrides = args.renderOverrides;
   }
   if (typeof args.userEmail === "string" && args.userEmail.length > 0) {
     input.user_email = args.userEmail;
@@ -259,6 +300,60 @@ export async function submitRenderJob(
   const view = normalizeRunpodResponse(raw);
   if (!view) {
     return { ok: false, error: "RunPod submit returned an unrecognized envelope" };
+  }
+  return { ok: true, view };
+}
+
+// v0.42.0: submit a finalize job. Same transport contract as
+// submitRenderJob (never throws on HTTP; returns a normalized result).
+export async function submitFinalizeJob(
+  env: Env,
+  args: FinalizeArgs,
+): Promise<{ ok: true; view: RunpodJobView } | { ok: false; error: string; status?: number }> {
+  if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
+    return {
+      ok: false,
+      error:
+        "RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID must be set on the Worker (npx wrangler secret put ...)",
+    };
+  }
+  const url = buildSubmitUrl(env.RUNPOD_ENDPOINT_ID);
+  const body = JSON.stringify(buildFinalizePayload(args));
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${env.RUNPOD_API_KEY}`,
+      },
+      body,
+    });
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `RunPod finalize submit network error: ${m}` };
+  }
+  let raw: unknown;
+  try {
+    raw = await resp.json();
+  } catch {
+    const text = await resp.text().catch(() => "");
+    return {
+      ok: false,
+      error: `RunPod finalize submit returned non-JSON (status ${resp.status}): ${text.slice(0, 300)}`,
+      status: resp.status,
+    };
+  }
+  if (!resp.ok) {
+    const errStr =
+      raw && typeof raw === "object" && "error" in raw
+        ? String((raw as Record<string, unknown>).error)
+        : `HTTP ${resp.status}`;
+    return { ok: false, error: `RunPod finalize submit failed: ${errStr}`, status: resp.status };
+  }
+  const view = normalizeRunpodResponse(raw);
+  if (!view) {
+    return { ok: false, error: "RunPod finalize submit returned an unrecognized envelope" };
   }
   return { ok: true, view };
 }

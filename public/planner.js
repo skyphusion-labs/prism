@@ -1741,11 +1741,69 @@ function buildHistoryRow(r) {
           regenShot(r, kf, btn, img);
         });
         wrap.appendChild(btn);
+
+        // v0.42.0: lock pin. Toggles whether this shot is in r.locked_shots
+        // (the user's "approved" set). Click PATCHes the row; the new
+        // set is reflected immediately in the row's local data + the UI.
+        // Locked shots are surfaced to the user as a count next to the
+        // finalize button; v0.42.0 does NOT gate finalize on lock state
+        // (the GPU runs I2V over every shot regardless).
+        const lockedSet = new Set(Array.isArray(r.locked_shots) ? r.locked_shots : []);
+        const lockBtn = document.createElement("button");
+        lockBtn.type = "button";
+        lockBtn.className = "planner-history-keyframe-lock";
+        lockBtn.dataset.shotId = kf.shot_id;
+        const isLocked = lockedSet.has(kf.shot_id);
+        if (isLocked) lockBtn.classList.add("planner-history-keyframe-lock-on");
+        lockBtn.textContent = isLocked ? "locked" : "lock";
+        lockBtn.title = isLocked
+          ? "click to remove this shot from the approved set"
+          : "mark this shot as approved (informational; does not gate finalize)";
+        lockBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          toggleShotLock(r, kf.shot_id, lockBtn);
+        });
+        wrap.appendChild(lockBtn);
       }
 
       strip.appendChild(wrap);
     }
     if (strip.children.length > 0) li.appendChild(strip);
+  }
+
+  // v0.42.0: finalize button. Shown only on completed keyframes-only
+  // previews. Submits a finalize render (Wan I2V + assemble) using the
+  // same bundle the preview used; the result lands as a NEW history
+  // row, the preview row stays.
+  if (
+    r.mode === "keyframes-only"
+    && r.status === "COMPLETED"
+    && r.bundle_key
+    && Array.isArray(r.keyframes)
+    && r.keyframes.length > 0
+  ) {
+    const finalizeRow = document.createElement("div");
+    finalizeRow.className = "planner-history-finalize-row";
+    const lockedCount = Array.isArray(r.locked_shots) ? r.locked_shots.length : 0;
+    const summary = document.createElement("span");
+    summary.className = "planner-history-finalize-summary";
+    summary.textContent = lockedCount > 0
+      ? lockedCount + " of " + r.keyframes.length + " shots locked"
+      : r.keyframes.length + " keyframes ready; lock the shots you want to keep, then finalize";
+    finalizeRow.appendChild(summary);
+    const finalizeBtn = document.createElement("button");
+    finalizeBtn.type = "button";
+    finalizeBtn.className = "planner-history-finalize-btn";
+    finalizeBtn.textContent = "finalize (Wan I2V + assemble)";
+    finalizeBtn.title = "run Wan I2V on every keyframe + assemble silent MP4 (about 20 to 30 minutes)";
+    finalizeBtn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      finalizeRender(r, finalizeBtn);
+    });
+    finalizeRow.appendChild(finalizeBtn);
+    li.appendChild(finalizeRow);
   }
 
   return li;
@@ -1875,6 +1933,138 @@ function pollRegenJob(regenKey) {
       console.warn("regen poll failed:", err);
       setTimeout(() => pollRegenJob(regenKey), 4000);
     });
+}
+
+// v0.42.0: toggle a single shot's lock state on a row. Optimistic:
+// mutates row.locked_shots locally so the next buildHistoryRow shows
+// the new state before the PATCH round-trip lands; on PATCH failure
+// the toggle is reverted + the button reset. The row's data lives in
+// historyState.rows so subsequent renders see the mutation.
+async function toggleShotLock(row, shotId, btnEl) {
+  const current = new Set(Array.isArray(row.locked_shots) ? row.locked_shots : []);
+  const willLock = !current.has(shotId);
+  if (willLock) current.add(shotId);
+  else current.delete(shotId);
+  const next = Array.from(current);
+  // Optimistic UI flip first.
+  row.locked_shots = next;
+  if (willLock) {
+    btnEl.classList.add("planner-history-keyframe-lock-on");
+    btnEl.textContent = "locked";
+  } else {
+    btnEl.classList.remove("planner-history-keyframe-lock-on");
+    btnEl.textContent = "lock";
+  }
+  btnEl.disabled = true;
+  // PATCH the renders row with the new locked_shots set.
+  let resp = null;
+  let data = null;
+  try {
+    resp = await fetch(
+      "/api/storyboard/renders/" + encodeURIComponent(row.id),
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ lockedShots: next }),
+      },
+    );
+    data = await resp.json();
+  } catch (err) {
+    // Revert.
+    if (willLock) current.delete(shotId);
+    else current.add(shotId);
+    row.locked_shots = Array.from(current);
+    btnEl.classList.toggle("planner-history-keyframe-lock-on", current.has(shotId));
+    btnEl.textContent = current.has(shotId) ? "locked" : "lock";
+    btnEl.disabled = false;
+    window.alert("lock toggle failed: " + err.message);
+    return;
+  }
+  if (!resp.ok || !data || !data.ok) {
+    if (willLock) current.delete(shotId);
+    else current.add(shotId);
+    row.locked_shots = Array.from(current);
+    btnEl.classList.toggle("planner-history-keyframe-lock-on", current.has(shotId));
+    btnEl.textContent = current.has(shotId) ? "locked" : "lock";
+    btnEl.disabled = false;
+    const msg = (data && (data.error
+      || (Array.isArray(data.errors) && data.errors.join(", "))))
+      || ("HTTP " + (resp ? resp.status : "?"));
+    window.alert("lock toggle failed: " + msg);
+    return;
+  }
+  // Authoritative locked_shots back from the Worker; mirror onto the
+  // local row data so subsequent UI logic uses the canonical value.
+  if (Array.isArray(data.lockedShots)) {
+    row.locked_shots = data.lockedShots;
+  }
+  btnEl.disabled = false;
+  // Refresh the parent row's finalize-row summary if present so the
+  // "N of M shots locked" text reflects the new count without waiting
+  // for the next auto-refresh.
+  const li = btnEl.closest(".planner-history-item");
+  if (li) {
+    const summary = li.querySelector(".planner-history-finalize-summary");
+    if (summary && Array.isArray(row.keyframes)) {
+      const lockedCount = Array.isArray(row.locked_shots) ? row.locked_shots.length : 0;
+      summary.textContent = lockedCount > 0
+        ? lockedCount + " of " + row.keyframes.length + " shots locked"
+        : row.keyframes.length + " keyframes ready; lock the shots you want to keep, then finalize";
+    }
+  }
+}
+
+// v0.42.0: submit a finalize render from a completed keyframes-only
+// preview. Asks for confirmation since the operation is long (20 to
+// 30 min on final tier), then POSTs to the renders/{id}/finalize
+// route. On success a fresh history row is reloaded so the user sees
+// the in-flight finalize next to the preview it came from.
+async function finalizeRender(row, btnEl) {
+  const lockedCount = Array.isArray(row.locked_shots) ? row.locked_shots.length : 0;
+  const kfCount = Array.isArray(row.keyframes) ? row.keyframes.length : 0;
+  const confirmMsg =
+    "finalize this preview?\n\n"
+    + "this runs Wan I2V over " + kfCount + " keyframe"
+    + (kfCount === 1 ? "" : "s")
+    + " and assembles the silent MP4. "
+    + "approx 20 to 30 minutes on the final tier.\n\n"
+    + (lockedCount > 0
+      ? "you have " + lockedCount + " locked shots; v0.42.0 still runs I2V "
+        + "on every shot regardless of lock state."
+      : "no shots are locked; v0.42.0 does not gate finalize on lock state.");
+  if (!window.confirm(confirmMsg)) return;
+
+  btnEl.disabled = true;
+  btnEl.textContent = "submitting...";
+
+  let resp = null;
+  let data = null;
+  try {
+    resp = await fetch(
+      "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/finalize",
+      { method: "POST" },
+    );
+    data = await resp.json();
+  } catch (err) {
+    btnEl.disabled = false;
+    btnEl.textContent = "finalize (Wan I2V + assemble)";
+    window.alert("finalize submit failed: " + err.message);
+    return;
+  }
+  if (!resp.ok || !data || !data.ok) {
+    btnEl.disabled = false;
+    btnEl.textContent = "finalize (Wan I2V + assemble)";
+    const msg = (data && (data.error
+      || (Array.isArray(data.errors) && data.errors.join(", "))))
+      || ("HTTP " + (resp ? resp.status : "?"));
+    window.alert("finalize submit failed: " + msg);
+    return;
+  }
+  btnEl.textContent = "finalize submitted";
+  // Reload the history list so the new in-flight row appears alongside
+  // the preview it came from. loadHistory hydrates rows from the
+  // server; the auto-refresh handles further polling.
+  loadHistory();
 }
 
 // Minimal CSS.escape polyfill. Modern browsers ship it but planner.js

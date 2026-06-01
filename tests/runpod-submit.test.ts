@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  buildFinalizePayload,
   buildRegenShotPayload,
   buildSubmitPayload,
   buildSubmitUrl,
@@ -218,6 +219,87 @@ describe("buildRegenShotPayload (v0.41.0)", () => {
       parentJobId: "abc-123-u1",
     });
     expect(out.input.action).toBe("regen_shot");
+  });
+});
+
+describe("buildFinalizePayload (v0.42.0)", () => {
+  it("wraps the canonical finalize input shape with quality_tier defaulting to 'final'", () => {
+    const out = buildFinalizePayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+    });
+    expect(out).toEqual({
+      input: {
+        action: "finalize",
+        project: "cherry",
+        bundle_key: "bundles/cherry.tar.gz",
+        quality_tier: "final",
+      },
+    });
+  });
+
+  it("preserves an explicit qualityTier", () => {
+    expect(
+      buildFinalizePayload({
+        project: "cherry",
+        bundleKey: "bundles/cherry.tar.gz",
+        qualityTier: "draft",
+      }).input.quality_tier,
+    ).toBe("draft");
+  });
+
+  it("passes render_overrides through when non-empty", () => {
+    const out = buildFinalizePayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+      renderOverrides: { wan_inference_steps: 12, seed: 424242 },
+    });
+    expect(out.input.render_overrides).toEqual({
+      wan_inference_steps: 12,
+      seed: 424242,
+    });
+  });
+
+  it("omits render_overrides when undefined or empty", () => {
+    const out1 = buildFinalizePayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+    });
+    expect("render_overrides" in out1.input).toBe(false);
+    const out2 = buildFinalizePayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+      renderOverrides: {},
+    });
+    expect("render_overrides" in out2.input).toBe(false);
+  });
+
+  it("includes user_email when set, omits when missing or empty", () => {
+    const out1 = buildFinalizePayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+      userEmail: "alice@example.com",
+    });
+    expect(out1.input.user_email).toBe("alice@example.com");
+    const out2 = buildFinalizePayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+    });
+    expect("user_email" in out2.input).toBe(false);
+    const out3 = buildFinalizePayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+      userEmail: "",
+    });
+    expect("user_email" in out3.input).toBe(false);
+  });
+
+  it("always sets action='finalize' so the GPU dispatcher routes correctly", () => {
+    const out = buildFinalizePayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+    });
+    expect(out.input.action).toBe("finalize");
   });
 });
 

@@ -261,7 +261,8 @@ CREATE TABLE IF NOT EXISTS renders (
   completed_at      INTEGER,
   label             TEXT,            -- free-form user-authored name (v0.36.0)
   keyframes_json    TEXT,            -- JSON array of {shot_id,key} for SDXL keyframes (v0.39.0)
-  mode              TEXT             -- 'full' | 'keyframes-only' (v0.40.0; NULL = full on legacy rows)
+  mode              TEXT,            -- 'full' | 'keyframes-only' | 'finalized' (v0.40.0/v0.42.0; NULL = full on legacy rows)
+  locked_shots_json TEXT             -- JSON array of shot_id strings the user marked as approved (v0.42.0)
 );
 
 CREATE INDEX IF NOT EXISTS renders_by_user

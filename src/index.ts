@@ -42,6 +42,7 @@ import {
   deriveProjectFromBundleKey,
   isValidJobId,
   pollRenderJob,
+  submitFinalizeJob,
   submitRegenShotJob,
   submitRenderJob,
   type RenderSubmitArgs,
@@ -52,7 +53,9 @@ import {
   getRenderByIdForUser,
   insertRender,
   listRendersForUser,
+  normalizeLockedShots,
   setRenderLabel,
+  setRenderLockedShots,
   updateRenderFromView,
 } from "./renders-db";
 import { callWorkersAIStream } from "./providers/workers-ai";
@@ -390,6 +393,15 @@ export default {
     const rg = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)\/regen-shot$/);
     if (rg && request.method === "POST") {
       return handleRegenShotSubmit(request, env, rg[1]);
+    }
+    // v0.42.0: finalize a keyframes-only preview into a full render.
+    // Submits a finalize job to RunPod (vivijure-serverless 0.4.4+),
+    // which runs Wan I2V over the existing keyframes on the volume and
+    // assembles the silent MP4. Creates a NEW history row for the
+    // finalize job; the originating preview row stays untouched.
+    const rf = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)\/finalize$/);
+    if (rf && request.method === "POST") {
+      return handleFinalizeSubmit(request, env, rf[1]);
     }
     // v0.32.0: poll one render job by its RunPod-issued id.
     // v0.33.1: DELETE cancels the same job via RunPod's POST /cancel.
@@ -1342,6 +1354,12 @@ async function handleRenderRowDelete(
 
 interface RenderPatchRequest {
   label?: unknown;
+  // v0.42.0: shot_ids the user has approved in the keyframes-only
+  // preview. Either field may be present alone or together; missing
+  // fields are not touched. PATCH semantics: send only what you want
+  // to change. To clear the locked set, send `lockedShots: []` (the
+  // empty array stores NULL in the column).
+  lockedShots?: unknown;
 }
 
 async function handleRenderRowPatch(
@@ -1361,30 +1379,49 @@ async function handleRenderRowPatch(
   } catch {
     return json({ error: "Invalid JSON" }, { status: 400 });
   }
-  if (!("label" in body)) {
+  const hasLabel = "label" in body;
+  const hasLockedShots = "lockedShots" in body;
+  if (!hasLabel && !hasLockedShots) {
     return json(
-      { error: "body must include `label` (string, null, or empty)" },
+      { error: "body must include `label` and/or `lockedShots`" },
       { status: 400 },
     );
   }
 
-  let label: string | null;
-  if (body.label === null) {
-    label = null;
-  } else if (typeof body.label === "string") {
-    const trimmed = body.label.trim();
-    if (trimmed.length > 200) {
+  let label: string | null | undefined;
+  if (hasLabel) {
+    if (body.label === null) {
+      label = null;
+    } else if (typeof body.label === "string") {
+      const trimmed = body.label.trim();
+      if (trimmed.length > 200) {
+        return json(
+          { error: "label too long (200 char max)" },
+          { status: 400 },
+        );
+      }
+      label = trimmed.length === 0 ? null : trimmed;
+    } else {
       return json(
-        { error: "label too long (200 char max)" },
+        { error: "label must be a string or null" },
         { status: 400 },
       );
     }
-    label = trimmed.length === 0 ? null : trimmed;
-  } else {
-    return json(
-      { error: "label must be a string or null" },
-      { status: 400 },
-    );
+  }
+
+  // v0.42.0: lockedShots validation. Accept an array of strings; the
+  // normalizer in renders-db drops malformed entries + dedupes +
+  // caps the length. Reject non-array up front (a typed-but-not-
+  // array value almost always indicates a client bug).
+  let lockedShots: string[] | undefined;
+  if (hasLockedShots) {
+    if (!Array.isArray(body.lockedShots)) {
+      return json(
+        { error: "lockedShots must be an array of strings" },
+        { status: 400 },
+      );
+    }
+    lockedShots = normalizeLockedShots(body.lockedShots);
   }
 
   // Resolve the row first so a missing / not-owned id returns 404 with
@@ -1395,8 +1432,15 @@ async function handleRenderRowPatch(
     return json({ error: "render not found" }, { status: 404 });
   }
 
-  await setRenderLabel(env, id, userEmail, label);
-  return json({ ok: true, id, label, user: userEmail });
+  if (hasLabel) await setRenderLabel(env, id, userEmail, label ?? null);
+  if (hasLockedShots) await setRenderLockedShots(env, id, userEmail, lockedShots ?? []);
+  return json({
+    ok: true,
+    id,
+    label: hasLabel ? (label ?? null) : row.label,
+    lockedShots: hasLockedShots ? (lockedShots ?? []) : (row.locked_shots ?? []),
+    user: userEmail,
+  });
 }
 
 // ---------- /api/storyboard/renders/<id>/regen-shot (v0.41.0) ----------
@@ -1495,6 +1539,116 @@ async function handleRegenShotSubmit(
     statusRaw: result.view.statusRaw,
     parentId: id,
     shotId,
+    user: userEmail,
+  });
+}
+
+// ---------- /api/storyboard/renders/<id>/finalize (v0.42.0) ----------
+//
+// Submit a finalize job (Wan I2V + silent-MP4 assembly over the
+// existing keyframes from a prior keyframes-only preview) to the
+// vivijure-serverless RunPod endpoint. The originating renders row
+// supplies project + bundle_key (ownership via user_email like the
+// other /renders/<id>/* routes; 404 on miss-or-not-owned).
+//
+// Inserts a NEW history row for the finalize job so the user can
+// follow its progress in the list. The originating preview row is
+// untouched. The new row carries mode="full" at submit time; the
+// GPU envelope echoes mode="finalized" when COMPLETED arrives via
+// updateRenderFromView, so the badge becomes accurate post-render.
+
+async function handleFinalizeSubmit(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) {
+    return json({ error: "invalid id" }, { status: 400 });
+  }
+
+  // We do not require a JSON body; the row supplies all the inputs.
+  // Read defensively so a client that does pass {} or omits the body
+  // entirely does not 400.
+  void request;
+
+  const row = await getRenderByIdForUser(env, id, userEmail);
+  if (!row) {
+    return json({ error: "render not found" }, { status: 404 });
+  }
+
+  // Sanity: only completed keyframes-only previews are sensible
+  // sources for finalize. A still-running preview or a full render
+  // would be a client bug; surface it explicitly so the UI can show
+  // a useful error.
+  if (row.status !== "COMPLETED") {
+    return json(
+      { error: `cannot finalize a render with status ${row.status}` },
+      { status: 400 },
+    );
+  }
+  if (row.mode !== "keyframes-only") {
+    return json(
+      {
+        error:
+          `render ${id} is mode '${row.mode}'; finalize is only meaningful from a keyframes-only preview`,
+      },
+      { status: 400 },
+    );
+  }
+
+  if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
+    return json(
+      {
+        error:
+          "RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID must be set on the Worker. Configure via: npx wrangler secret put RUNPOD_API_KEY, then RUNPOD_ENDPOINT_ID.",
+      },
+      { status: 503 },
+    );
+  }
+
+  const result = await submitFinalizeJob(env, {
+    project: row.project,
+    bundleKey: row.bundle_key,
+    qualityTier: row.quality_tier as "draft" | "standard" | "final" | undefined,
+    renderOverrides: row.render_overrides ?? undefined,
+    userEmail,
+  });
+  if (!result.ok) {
+    return json(
+      { ok: false, errors: [result.error], user: userEmail },
+      { status: 502 },
+    );
+  }
+
+  // Insert a new history row for the finalize. Same best-effort
+  // semantics as the regular submit: a DB failure does NOT fail the
+  // response (the GPU job is already on RunPod). The mode is stored
+  // as 'full' at submit time and updated to 'finalized' when the
+  // GPU envelope arrives in updateRenderFromView.
+  try {
+    await insertRender(env, {
+      userEmail,
+      jobId: result.view.jobId,
+      project: row.project,
+      bundleKey: row.bundle_key,
+      qualityTier: row.quality_tier,
+      renderOverrides: row.render_overrides ?? undefined,
+      status: result.view.status,
+      mode: "full",
+    });
+  } catch (err) {
+    console.error("finalize renders insert failed:", err);
+  }
+
+  return json({
+    ok: true,
+    jobId: result.view.jobId,
+    status: result.view.status,
+    statusRaw: result.view.statusRaw,
+    parentId: id,
+    project: row.project,
     user: userEmail,
   });
 }
