@@ -13,6 +13,9 @@ describe("isRendersKey", () => {
     expect(isRendersKey("bundles/cherry.tar.gz")).toBe(true);
     expect(isRendersKey("projects/cherry/state.tar.gz")).toBe(true);
     expect(isRendersKey("character-refs/abc-123.png")).toBe(true);
+    // v0.46.0+ persisted cast portraits + refs.
+    expect(isRendersKey("cast/7/portrait.png")).toBe(true);
+    expect(isRendersKey("cast/7/refs/abc.jpg")).toBe(true);
   });
 
   it("leaves chat-side prefixes on R2", () => {

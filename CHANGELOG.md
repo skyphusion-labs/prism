@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.47.1
+
+Hotfix on v0.47.0: GET `/api/artifact/cast/<id>/portrait.<ext>` returned 404 because `isRendersKey` (the artifact-route bucket-picker) did not know about the new `cast/` prefix. Cast portraits and refs are physically in env.R2_RENDERS (the vivijure bucket), where the GPU worker also reads them; the read path was selecting env.R2 (the chat bucket) by default and missing. Adds `cast/` to the renders-bucket prefix list and a regression test. Smoke test on prod with a v0.47.1 deploy: portrait save round-trips through /api/artifact correctly; the training-set generator can now resolve the portrait URL the same way the browser does.
+
 ## v0.47.0
 
 In-page portrait generation + automated 10-image LoRA training-set generation on /cast. The v0.46.0 backend supported "save a chat-side image as portrait" via `{from_chat_artifact: key}`, but the user had to go to /, generate via chat, then come back. v0.47.0 wires both flows directly into /cast so the inner loop stays on one page.
