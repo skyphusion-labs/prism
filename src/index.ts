@@ -850,6 +850,9 @@ interface RenderSubmitRequest {
   project?: unknown;
   qualityTier?: unknown;
   renderOverrides?: unknown;
+  // v0.40.0: opt out of the I2V + assembly pass. Merged into
+  // render_overrides.keyframes_only on the wire (runpod-submit.ts).
+  keyframesOnly?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -883,6 +886,9 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
   if (body.project !== undefined && typeof body.project !== "string") {
     return json({ error: "project must be a string if provided" }, { status: 400 });
   }
+  if (body.keyframesOnly !== undefined && typeof body.keyframesOnly !== "boolean") {
+    return json({ error: "keyframesOnly must be a boolean if provided" }, { status: 400 });
+  }
 
   if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
     return json(
@@ -894,6 +900,7 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     );
   }
 
+  const keyframesOnly = body.keyframesOnly === true;
   const args: RenderSubmitArgs = {
     bundleKey: body.bundleKey,
     project: typeof body.project === "string" ? body.project : undefined,
@@ -902,6 +909,8 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     // v0.39.0: stamp the GPU side's R2 uploads with the user_email so the
     // existing /api/artifact ownership check works for renders too.
     userEmail,
+    // v0.40.0: opt into the keyframes-only preview pass.
+    keyframesOnly,
   };
 
   const result = await submitRenderJob(env, args);
@@ -927,6 +936,10 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
       qualityTier: args.qualityTier ?? "final",
       renderOverrides: args.renderOverrides,
       status: result.view.status,
+      // v0.40.0: record the mode at submit time so the history list can
+      // render the keyframes-only badge + suppress the download MP4 link
+      // even before the GPU envelope echoes a mode field back.
+      mode: keyframesOnly ? "keyframes-only" : "full",
     });
   } catch (err) {
     console.error("renders insert failed:", err);

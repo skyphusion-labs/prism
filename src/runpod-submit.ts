@@ -30,6 +30,14 @@ export interface RenderSubmitArgs {
   // artifacts. Pre-0.39.0 jobs (no user_email) still render, but their
   // artifacts are not fetchable through the ownership-checked route.
   userEmail?: string;
+  // v0.40.0: skip Wan I2V + silent-MP4 assembly; produce only SDXL
+  // keyframes so the user can preview shots before committing to the
+  // full render. Merged into render_overrides.keyframes_only=true on
+  // the wire; the GPU side (vivijure-serverless 0.4.2+) reads it from
+  // the payload and short-circuits the orchestrator after the SDXL
+  // pass. A render_overrides.keyframes_only set via the freeform
+  // overrides textarea wins over an unset top-level keyframesOnly.
+  keyframesOnly?: boolean;
 }
 
 // What the vivijure-serverless rp_handler.py reads off the job input. Field
@@ -94,6 +102,16 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   };
   if (args.renderOverrides && Object.keys(args.renderOverrides).length > 0) {
     input.render_overrides = args.renderOverrides;
+  }
+  // v0.40.0: merge the top-level keyframesOnly flag into render_overrides.
+  // A render_overrides.keyframes_only already in the textarea wins (so a
+  // power-user override is never silently dropped), otherwise we set the
+  // GPU-side flag from the boolean.
+  if (args.keyframesOnly) {
+    const existing = (input.render_overrides ?? {}) as Record<string, unknown>;
+    if (existing.keyframes_only === undefined) {
+      input.render_overrides = { ...existing, keyframes_only: true };
+    }
   }
   if (typeof args.userEmail === "string" && args.userEmail.length > 0) {
     input.user_email = args.userEmail;

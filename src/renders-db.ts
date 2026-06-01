@@ -24,6 +24,10 @@ export interface NewRenderRow {
   qualityTier: string;
   renderOverrides?: Record<string, unknown>;
   status: string;
+  // v0.40.0: 'full' = the train + keyframes + I2V + assemble pipeline;
+  // 'keyframes-only' = preview pass producing SDXL keyframes only.
+  // Stored verbatim. Defaults to 'full' when omitted.
+  mode?: "full" | "keyframes-only";
 }
 
 // One uploaded SDXL keyframe (v0.39.0). The GPU side writes these to R2
@@ -57,6 +61,10 @@ export interface RenderRow {
   completed_at: number | null;
   label: string | null;
   keyframes: KeyframeRef[] | null;
+  // v0.40.0: 'full' or 'keyframes-only'. Legacy rows are stored NULL;
+  // the row normalizer collapses NULL -> 'full' so callers can rely on
+  // a non-null value.
+  mode: "full" | "keyframes-only";
 }
 
 function nowSeconds(): number {
@@ -73,11 +81,12 @@ const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
 export async function insertRender(env: Env, row: NewRenderRow): Promise<void> {
   const now = nowSeconds();
   const overrides = row.renderOverrides ? JSON.stringify(row.renderOverrides) : null;
+  const mode = row.mode ?? "full";
   await env.DB.prepare(
     `INSERT INTO renders (
       user_email, job_id, project, bundle_key, quality_tier,
-      render_overrides, status, submitted_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      render_overrides, status, submitted_at, updated_at, mode
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(job_id) DO NOTHING`,
   )
     .bind(
@@ -90,6 +99,7 @@ export async function insertRender(env: Env, row: NewRenderRow): Promise<void> {
       row.status,
       now,
       now,
+      mode,
     )
     .run();
 }
@@ -106,6 +116,7 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
   // Pull output_key out of the GPU side's COMPLETED envelope when present.
   let outputKey: string | null = null;
   let keyframesJson: string | null = null;
+  let modeFromOutput: string | null = null;
   if (
     view.output &&
     typeof view.output === "object" &&
@@ -119,6 +130,12 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
     // thumbnails in the history row without re-parsing output_json.
     const refs = normalizeKeyframes(o.keyframes);
     if (refs.length > 0) keyframesJson = JSON.stringify(refs);
+    // v0.40.0: GPU 0.4.2+ surfaces the run mode in the envelope. We mirror
+    // it into the row so the UI can render the keyframes-only flow even
+    // if the row was inserted before the mode column had a value.
+    if (typeof o.mode === "string" && o.mode.length > 0) {
+      modeFromOutput = o.mode;
+    }
   }
 
   const outputJson = view.output !== undefined ? JSON.stringify(view.output) : null;
@@ -133,7 +150,8 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
       delay_time_ms = ?,
       updated_at = ?,
       completed_at = COALESCE(?, completed_at),
-      keyframes_json = COALESCE(?, keyframes_json)
+      keyframes_json = COALESCE(?, keyframes_json),
+      mode = COALESCE(?, mode)
     WHERE job_id = ?`,
   )
     .bind(
@@ -146,6 +164,7 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
       now,
       completed,
       keyframesJson,
+      modeFromOutput,
       view.jobId,
     )
     .run();
@@ -182,7 +201,7 @@ export async function getRenderByIdForUser(
       id, user_email, job_id, project, bundle_key, quality_tier,
       render_overrides, status, output_key, output_json AS output,
       error, execution_time_ms, delay_time_ms,
-      submitted_at, updated_at, completed_at, label, keyframes_json
+      submitted_at, updated_at, completed_at, label, keyframes_json, mode
     FROM renders
     WHERE id = ? AND user_email = ?`,
   )
@@ -257,7 +276,7 @@ export async function listRendersForUser(
       id, user_email, job_id, project, bundle_key, quality_tier,
       render_overrides, status, output_key, output_json AS output,
       error, execution_time_ms, delay_time_ms,
-      submitted_at, updated_at, completed_at, label, keyframes_json
+      submitted_at, updated_at, completed_at, label, keyframes_json, mode
     FROM renders
     WHERE user_email = ?
     ORDER BY submitted_at DESC
@@ -337,5 +356,9 @@ function normalizeRow(r: Record<string, unknown>): RenderRow {
     label:
       typeof r.label === "string" && r.label.length > 0 ? r.label : null,
     keyframes,
+    // v0.40.0: collapse NULL / unknown values to 'full' so callers do
+    // not need to do this themselves. Legacy rows pre-dating the mode
+    // column read as NULL and are therefore 'full'.
+    mode: r.mode === "keyframes-only" ? "keyframes-only" : "full",
   };
 }

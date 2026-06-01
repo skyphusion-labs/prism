@@ -2273,6 +2273,26 @@ textarea:focus {
   cursor: pointer;
 }
 
+/* v0.40.0: an inline labeled checkbox inside a planner stage form
+   (used by the render stage's "render keyframes only" toggle).
+   Sits under the quality-tier select with the same vertical rhythm
+   as a .planner-field row. */
+.planner-field-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  color: var(--fg);
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+}
+
+.planner-field-check input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
 .planner-history-filter-check:hover {
   color: var(--accent);
 }
@@ -2444,6 +2464,21 @@ textarea:focus {
 .planner-history-status-running { color: var(--warn); }
 .planner-history-status-done { color: var(--accent); }
 .planner-history-status-error { color: var(--error); }
+
+/* v0.40.0: run-mode badge on a history row. Sits next to the status so
+   the user can tell at a glance which rows ran the SDXL keyframe
+   preview pass (no Wan I2V, no silent MP4). Same visual weight as
+   .planner-history-tier; warn-tinted background so it reads as
+   "intentional preview" rather than "broken". */
+.planner-history-mode {
+  font-size: 11px;
+  color: var(--warn);
+  background: rgba(255, 200, 80, 0.12);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  text-transform: lowercase;
+}
 
 .planner-history-sub {
   font-size: 12px;

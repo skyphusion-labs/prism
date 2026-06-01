@@ -155,11 +155,15 @@ function collectRenderStageState() {
   if (!renderState.jobId && !bundleState.bundleKey) return null;
   const tierEl = $("#planner-quality-tier");
   const overridesEl = $("#planner-render-overrides");
+  const kfOnlyEl = $("#planner-keyframes-only");
   return {
     jobId: renderState.jobId,
     bundleKey: bundleState.bundleKey,
     qualityTier: tierEl ? tierEl.value : "final",
     renderOverridesText: overridesEl ? overridesEl.value : "",
+    // v0.40.0: persist the checkbox so a refresh-mid-flow does not
+    // silently flip an in-progress preview into a full render.
+    keyframesOnly: kfOnlyEl ? kfOnlyEl.checked : false,
     currentProject: renderState.currentProject,
     currentLabel: renderState.currentLabel,
     lastKnownStatus: lastKnownStatusFromPanel(),
@@ -288,6 +292,9 @@ function restoreRenderStagePanel(saved) {
       if (details) details.open = true;
     }
   }
+  // v0.40.0: restore the keyframes-only checkbox.
+  const kfOnlyEl = $("#planner-keyframes-only");
+  if (kfOnlyEl) kfOnlyEl.checked = !!saved.keyframesOnly;
 
   if (!saved.jobId) {
     // Render stage was open but no submit happened. Reveal the stage and
@@ -946,7 +953,16 @@ async function submitRender() {
     renderState.pollTimer = null;
   }
   const qualityTier = $("#planner-quality-tier").value;
-  setRenderStatus("submitting to RunPod...", "loading");
+  // v0.40.0: the checkbox is the source of truth for the next submission.
+  // The Worker merges this into render_overrides.keyframes_only=true on
+  // the wire; the GPU side (vivijure-serverless 0.4.2+) short-circuits
+  // the orchestrator after the SDXL pass when it is set.
+  const kfOnlyEl = $("#planner-keyframes-only");
+  const keyframesOnly = !!(kfOnlyEl && kfOnlyEl.checked);
+  setRenderStatus(
+    keyframesOnly ? "submitting keyframes-only preview..." : "submitting to RunPod...",
+    "loading",
+  );
   $("#planner-render-btn").disabled = true;
 
   const reqBody = {
@@ -954,6 +970,7 @@ async function submitRender() {
     qualityTier,
   };
   if (renderOverrides) reqBody.renderOverrides = renderOverrides;
+  if (keyframesOnly) reqBody.keyframesOnly = true;
 
   let resp = null;
   let data = null;
@@ -1509,6 +1526,19 @@ function buildHistoryRow(r) {
     "planner-history-status planner-history-status-" + historyStatusKind(r.status);
   status.textContent = r.status;
   meta.appendChild(status);
+
+  // v0.40.0: keyframes-only badge. Marks rows that ran the SDXL preview
+  // pass with no Wan I2V or silent-MP4 assembly. The badge sits right
+  // after the status so it is visible in both collapsed and expanded
+  // views. row.mode is collapsed to 'full' for legacy rows in
+  // renders-db.ts so the equality check is safe without a NULL guard.
+  if (r.mode === "keyframes-only") {
+    const modeBadge = document.createElement("span");
+    modeBadge.className = "planner-history-mode planner-history-mode-keyframes-only";
+    modeBadge.textContent = "kf only";
+    modeBadge.title = "this render produced SDXL keyframes only; no motion / no silent MP4";
+    meta.appendChild(modeBadge);
+  }
 
   // v0.38.1: inline label preview, shown only while the row is collapsed
   // (CSS gates this). Read-only here; the editable input below takes over
@@ -2089,6 +2119,10 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#planner-model").addEventListener("change", persistSoon);
   $("#planner-quality-tier").addEventListener("change", persistSoon);
   $("#planner-render-overrides").addEventListener("input", persistSoon);
+  // v0.40.0: persist the keyframes-only checkbox alongside the other
+  // render-stage form fields.
+  const kfOnlyEl = $("#planner-keyframes-only");
+  if (kfOnlyEl) kfOnlyEl.addEventListener("change", persistSoon);
   $("#planner-plan").addEventListener("click", plan);
   $("#planner-reprompt").addEventListener("click", repromptWithErrors);
   $("#planner-bundle-btn").addEventListener("click", bundleNow);

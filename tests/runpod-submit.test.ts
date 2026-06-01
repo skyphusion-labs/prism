@@ -119,6 +119,46 @@ describe("buildSubmitPayload", () => {
     });
     expect("user_email" in out.input).toBe(false);
   });
+
+  it("merges keyframesOnly:true into render_overrides.keyframes_only (v0.40.0)", () => {
+    const out = buildSubmitPayload({
+      bundleKey: "bundles/cherry.tar.gz",
+      keyframesOnly: true,
+    });
+    expect(out.input.render_overrides).toEqual({ keyframes_only: true });
+  });
+
+  it("preserves an existing render_overrides.keyframes_only over keyframesOnly (v0.40.0)", () => {
+    const out = buildSubmitPayload({
+      bundleKey: "bundles/cherry.tar.gz",
+      keyframesOnly: true,
+      renderOverrides: { keyframes_only: false, seed: 42 },
+    });
+    expect(out.input.render_overrides).toEqual({ keyframes_only: false, seed: 42 });
+  });
+
+  it("merges keyframesOnly:true alongside other overrides (v0.40.0)", () => {
+    const out = buildSubmitPayload({
+      bundleKey: "bundles/cherry.tar.gz",
+      keyframesOnly: true,
+      renderOverrides: { seed: 42, wan_inference_steps: 12 },
+    });
+    expect(out.input.render_overrides).toEqual({
+      seed: 42,
+      wan_inference_steps: 12,
+      keyframes_only: true,
+    });
+  });
+
+  it("omits keyframes_only when keyframesOnly is false / undefined (v0.40.0)", () => {
+    const out1 = buildSubmitPayload({ bundleKey: "bundles/cherry.tar.gz" });
+    expect(out1.input.render_overrides).toBeUndefined();
+    const out2 = buildSubmitPayload({
+      bundleKey: "bundles/cherry.tar.gz",
+      keyframesOnly: false,
+    });
+    expect(out2.input.render_overrides).toBeUndefined();
+  });
 });
 
 describe("URL builders", () => {

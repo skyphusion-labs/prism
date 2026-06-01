@@ -140,6 +140,14 @@
           <option value="final" selected>final (97 frames, 22 steps; production quality)</option>
         </select>
       </label>
+      <!-- v0.40.0: keyframes-only preview pass. Renders SDXL keyframes
+           only, skips Wan I2V + silent-MP4 assembly. Lets the user
+           preview shots before committing to a full render (which on
+           the "final" tier can take 30+ minutes). -->
+      <label class="planner-field-check">
+        <input id="planner-keyframes-only" type="checkbox" />
+        <span>render keyframes only (preview before generating motion)</span>
+      </label>
       <!-- v0.35.3: optional per-shot Wan / SDXL parameter overrides as JSON. -->
       <details class="planner-overrides-details">
         <summary class="planner-overrides-summary">render overrides (advanced, optional)</summary>

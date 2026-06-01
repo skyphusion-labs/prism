@@ -260,7 +260,8 @@ CREATE TABLE IF NOT EXISTS renders (
   updated_at        INTEGER NOT NULL,
   completed_at      INTEGER,
   label             TEXT,            -- free-form user-authored name (v0.36.0)
-  keyframes_json    TEXT             -- JSON array of {shot_id,key} for SDXL keyframes (v0.39.0)
+  keyframes_json    TEXT,            -- JSON array of {shot_id,key} for SDXL keyframes (v0.39.0)
+  mode              TEXT             -- 'full' | 'keyframes-only' (v0.40.0; NULL = full on legacy rows)
 );
 
 CREATE INDEX IF NOT EXISTS renders_by_user

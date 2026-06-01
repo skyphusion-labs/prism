@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.40.0
+
+Keyframes-only preview pass. Render-stage gets a `[ ] render keyframes only (preview before generating motion)` checkbox. When set, the job submits with `keyframes_only: true` merged into `render_overrides`, the GPU side (vivijure-serverless 0.4.2+) skips Wan I2V and silent-MP4 assembly after the SDXL pass, and the COMPLETED envelope returns `mode: "keyframes-only"` with `output_key: null` plus the populated `keyframes` array. The history row shows a `kf only` badge in the meta line and the download MP4 button stays hidden (no MP4 to download).
+
+### Why
+
+A final-tier full render is 30+ minutes per job. The user has no way to see SDXL output until everything has run, so a bad anchor or off-prompt look costs the whole pipeline. With the preview pass they can submit, see thumbnails, decide if the keyframes are good, then commit to motion + assembly with a separate job. v0.40.0 ships the preview path; per-shot regenerate (v0.41.0) and finalize-from-locked (v0.42.0) build on top.
+
+### Cross-repo coordination
+
+Needs **vivijure-serverless 0.4.2** on the RunPod endpoint. The GPU-side change is in two files:
+
+- `orchestrator.run_project` reads `keyframes_only` from `overrides`, logs `Stage 2/2` instead of `Stage 2/3`, skips `export_film`, and counts keyframes on disk instead of clips for the success check.
+- `rp_handler.handler` returns `output_key: None` + `seconds: None` + `has_audio: False` for keyframes-only runs, and surfaces `mode: "keyframes-only"` on the envelope.
+
+Pre-0.4.2 GPU endpoints will ignore the `keyframes_only` payload field and run the full pipeline, so a user who unintentionally checks the box on an old endpoint still gets a complete render (just slower than the preview was supposed to be).
+
+### Worker
+
+- `migrate-v0.40.0.sql` + `schema.sql`: new `mode TEXT` column on `renders`. Legacy rows stay NULL; the row normalizer collapses NULL to `"full"` so callers can treat the field as non-null. Same idempotency caveat as the v0.36/v0.39 ALTERs.
+- `src/renders-db.ts`: `NewRenderRow.mode` optional ("full" | "keyframes-only"; defaults "full" when omitted). `RenderRow.mode` always present. `insertRender` writes the column at submit time. `updateRenderFromView` extracts `output.mode` from the GPU envelope and writes through `COALESCE(?, mode)` so re-polls stay idempotent and a missing-mode poll (e.g. from a pre-0.4.2 GPU) does not blank the column.
+- `src/runpod-submit.ts`: `RenderSubmitArgs.keyframesOnly?: boolean`. `buildSubmitPayload` merges into `render_overrides.keyframes_only=true`; a `render_overrides.keyframes_only` already supplied via the freeform overrides textarea wins so a power-user override is never silently dropped.
+- `src/index.ts`: `handleRenderSubmit` validates `keyframesOnly` is a boolean (400 if not), threads it through to `submitRenderJob`, and stores `mode: "keyframes-only" | "full"` on the new D1 row at submit time. The mode column gets a value before the GPU envelope echoes one back, so the history list can render the badge immediately on the in-flight row.
+
+### UI
+
+- `public/planner.html`: new `<input id="planner-keyframes-only" type="checkbox" />` under the quality-tier select.
+- `public/planner.js`: render submit reads the checkbox and includes `keyframesOnly: true` in the request body. The checkbox value is persisted in localStorage alongside the rest of the render-stage form state (extends `collectRenderStageState` + `restoreRenderStagePanel`). `buildHistoryRow` adds a `kf only` badge in the meta line when `r.mode === "keyframes-only"`. The download MP4 button is already gated on `r.output_key` so it stays hidden for keyframes-only rows without an extra check.
+- `public/styles.css`: `.planner-history-mode` + `.planner-history-mode-keyframes-only` (warn-tinted background, matches the visual weight of `.planner-history-tier`). `.planner-field-check` for the inline checkbox row.
+
+### Tests
+
+`tests/runpod-submit.test.ts` gets 4 new cases:
+
+- `keyframesOnly: true` merges to `render_overrides.keyframes_only: true`
+- A pre-existing `render_overrides.keyframes_only: false` wins over `keyframesOnly: true`
+- `keyframesOnly: true` merges alongside other overrides without dropping them
+- `keyframesOnly: false` / undefined leaves `render_overrides` undefined
+
+Total 353 (349 prior + 4 new). Typecheck clean.
+
+### Apply
+
+```
+wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.40.0.sql
+npm run deploy
+```
+
+Then build + push vivijure-serverless 0.4.2 to the RunPod endpoint.
+
 ## v0.39.1
 
 Separate R2 binding for storyboard / render artifacts (`R2_RENDERS`). Fixes the 404 on `/api/artifact/renders/...` and `/api/artifact/bundles/...` URLs: the GPU side writes to its own R2 bucket (default `vivijure` per the vivijure-serverless docs), the Worker was only bound to the chat-side bucket (`skyphusion-llm`), so even when D1 had the right key the lookup hit the wrong bucket and returned 404.
