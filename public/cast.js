@@ -179,6 +179,12 @@
       const prog = document.getElementById("cast-training-progress");
       if (prog) prog.innerHTML = "";
     }
+
+    // v0.57.0: render the LoRA training pane state.
+    renderLoraPane(c);
+    if (c.lora_status === "training") {
+      schedulePollLoraStatus(c.id);
+    }
   }
 
   function selectCast(id) {
@@ -655,6 +661,9 @@
       setPortraitGenStatus("");
     });
     $("#cast-training-btn").addEventListener("click", generateTrainingSet);
+    // v0.57.0: standalone LoRA training.
+    const loraBtn = $("#cast-lora-train-btn");
+    if (loraBtn) loraBtn.addEventListener("click", trainLora);
 
     // Populate the image-gen model picker on demand (first time a user
     // opens the "generate via chat" disclosure).
@@ -663,6 +672,151 @@
       portraitDetails.addEventListener("toggle", () => {
         if (portraitDetails.open) ensurePortraitGenModelOptions();
       }, { once: false });
+    }
+  }
+
+  // ---------- v0.57.0: standalone LoRA training ----------
+
+  const LORA_POLL_MS = 5000;
+  let loraPollTimer = null;
+  let loraPollInflight = false;
+
+  function timeAgoSeconds(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return "";
+    if (seconds < 60) return Math.floor(seconds) + "s";
+    if (seconds < 3600) return Math.floor(seconds / 60) + "m";
+    if (seconds < 86400) return Math.floor(seconds / 3600) + "h";
+    return Math.floor(seconds / 86400) + "d";
+  }
+
+  function setLoraStatusText(text, kind) {
+    const el = $("#cast-lora-status-text");
+    if (!el) return;
+    el.textContent = text || "";
+    el.className = "cast-gen-status" + (kind ? " is-" + kind : "");
+  }
+
+  function renderLoraPane(c) {
+    const badge = $("#cast-lora-badge");
+    const meta = $("#cast-lora-meta");
+    const btn = $("#cast-lora-train-btn");
+    const dl = $("#cast-lora-download");
+    if (!badge || !meta || !btn || !dl) return;
+    if (!c) {
+      badge.textContent = "idle";
+      badge.className = "cast-lora-badge cast-lora-badge-idle";
+      meta.textContent = "";
+      btn.disabled = true;
+      dl.hidden = true;
+      setLoraStatusText("");
+      return;
+    }
+    const status = c.lora_status || "idle";
+    badge.textContent = status;
+    badge.className = "cast-lora-badge cast-lora-badge-" + status;
+    // Meta text: ready -> "trained Xm ago, N.M MB"; training -> job id
+    // tail; failed -> show the error (truncated); idle -> nothing.
+    let metaText = "";
+    if (status === "ready" && c.lora_trained_at) {
+      const trained = new Date(c.lora_trained_at + "Z");
+      const ageS = (Date.now() - trained.getTime()) / 1000;
+      metaText = "trained " + timeAgoSeconds(ageS) + " ago";
+    } else if (status === "training" && c.lora_job_id) {
+      metaText = "job " + c.lora_job_id.slice(0, 18) + "…";
+    } else if (status === "failed" && c.lora_error) {
+      metaText = c.lora_error.slice(0, 120) + (c.lora_error.length > 120 ? "…" : "");
+    }
+    meta.textContent = metaText;
+    // Train button enabled when we have the inputs and no run is in
+    // flight. Retraining (status: ready / failed) is allowed.
+    const ready = !!c.portrait_key && Array.isArray(c.ref_keys) && c.ref_keys.length >= 4;
+    btn.disabled = status === "training" || !ready;
+    btn.textContent = status === "ready" || status === "failed" ? "retrain LoRA" : "train LoRA";
+    if (status === "ready" && c.lora_key) {
+      dl.href = "/api/artifact/" + c.lora_key;
+      dl.hidden = false;
+    } else {
+      dl.hidden = true;
+      dl.href = "";
+    }
+    if (!ready) {
+      setLoraStatusText(
+        c.portrait_key
+          ? "add at least 4 training references before training"
+          : "save a portrait first",
+        "warn"
+      );
+    } else if (status === "idle") {
+      setLoraStatusText("");
+    } else if (status === "training") {
+      setLoraStatusText("training in progress, ~8-15 min on the GPU", "loading");
+    } else if (status === "ready") {
+      setLoraStatusText("LoRA ready to use in future renders", "success");
+    } else if (status === "failed") {
+      setLoraStatusText("training failed; see meta above", "error");
+    }
+  }
+
+  async function trainLora() {
+    const id = state.selectedId;
+    if (!id) return;
+    const c = findCast(id);
+    if (!c) return;
+    if (!window.confirm(
+      "Train LoRA for " + c.name + "?\n\n"
+      + "This kicks off a standalone training job on the GPU. "
+      + "Typical wall-clock: 8-15 minutes. Estimated cost: $0.50-$2 of GPU time.\n\n"
+      + (c.lora_status === "ready"
+        ? "This will retrain (the existing .safetensors stays in R2 until you delete it).\n\n"
+        : "")
+      + "Continue?"
+    )) return;
+    setLoraStatusText("submitting...", "loading");
+    try {
+      const data = await api("/api/cast/" + id + "/train-lora", { method: "POST" });
+      const idx = state.cast.findIndex((x) => x.id === id);
+      if (idx >= 0) state.cast[idx] = data.cast;
+      renderLoraPane(data.cast);
+      schedulePollLoraStatus(id);
+    } catch (e) {
+      setLoraStatusText("submit failed: " + e.message, "error");
+    }
+  }
+
+  function schedulePollLoraStatus(id) {
+    if (loraPollTimer) clearTimeout(loraPollTimer);
+    loraPollTimer = setTimeout(() => pollLoraStatus(id), LORA_POLL_MS);
+  }
+
+  async function pollLoraStatus(id) {
+    if (loraPollInflight) {
+      schedulePollLoraStatus(id);
+      return;
+    }
+    if (state.selectedId !== id) {
+      // User switched to another character; let the new selection
+      // restart polling if needed.
+      loraPollTimer = null;
+      return;
+    }
+    loraPollInflight = true;
+    try {
+      const data = await api("/api/cast/" + id + "/lora-status");
+      const idx = state.cast.findIndex((x) => x.id === id);
+      if (idx >= 0) state.cast[idx] = data.cast;
+      if (state.selectedId === id) {
+        renderLoraPane(data.cast);
+      }
+      if (data.cast && data.cast.lora_status === "training") {
+        schedulePollLoraStatus(id);
+      } else {
+        loraPollTimer = null;
+      }
+    } catch (e) {
+      setLoraStatusText("poll error: " + e.message + " (retrying)", "error");
+      schedulePollLoraStatus(id);
+    } finally {
+      loraPollInflight = false;
     }
   }
 

@@ -592,6 +592,85 @@ describe("summarize", () => {
 // ownership lookup happens in the route handler.
 import { normalizeProjectIdInput } from "../src/renders-db";
 
+// v0.57.0: standalone LoRA training helpers. Pure functions that build
+// the synthesized single-slot bundle and the destination R2 key for
+// the trained .safetensors. Module lives in src/lora-bundle.ts so the
+// node test pool can import without cloudflare:workers.
+import { buildLoraTrainingBundleArgs, deriveLoraDestKey } from "../src/lora-bundle";
+
+describe("buildLoraTrainingBundleArgs", () => {
+  const cast = {
+    id: 7,
+    user_email: "u@x",
+    slug: "kira",
+    name: "Kira",
+    bible: "tall green-haired warrior",
+    portrait_key: "cast/7/portrait.png",
+    portrait_mime: "image/png",
+    ref_keys: [
+      { key: "cast/7/refs/a.png", mime: "image/png" },
+      { key: "cast/7/refs/b.png", mime: "image/png" },
+      { key: "cast/7/refs/c.png", mime: "image/png" },
+      { key: "cast/7/refs/d.png", mime: "image/png" },
+    ],
+    created_at: "2026-06-01 10:00:00",
+    updated_at: "2026-06-01 10:00:00",
+    lora_key: null,
+    lora_status: "idle" as const,
+    lora_job_id: null,
+    lora_error: null,
+    lora_trained_at: null,
+  };
+
+  it("populates storyboard with one synthetic scene + use_characters=[A]", () => {
+    const args = buildLoraTrainingBundleArgs(cast, "1234567890");
+    expect(args.storyboard.title).toBe("lora-kira-1234567890");
+    expect(args.storyboard.projectName).toBe("lora-kira-1234567890");
+    expect(args.storyboard.use_characters).toEqual(["A"]);
+    expect(args.storyboard.scenes).toHaveLength(1);
+    expect(args.storyboard.scenes[0].character_slots).toEqual(["A"]);
+  });
+
+  it("maps cast ref_keys into characterRefs.A.trainingImages", () => {
+    const args = buildLoraTrainingBundleArgs(cast, "ts");
+    const A = args.characterRefs.A;
+    expect(A.name).toBe("Kira");
+    expect(A.prompt).toBe("tall green-haired warrior");
+    expect(A.trainingImages.map((i) => i.key)).toEqual([
+      "cast/7/refs/a.png",
+      "cast/7/refs/b.png",
+      "cast/7/refs/c.png",
+      "cast/7/refs/d.png",
+    ]);
+    expect(A.portrait).toEqual({ key: "cast/7/portrait.png" });
+  });
+
+  it("falls back to cast.name when bible is empty", () => {
+    const noBible = { ...cast, bible: null };
+    const args = buildLoraTrainingBundleArgs(noBible, "ts");
+    expect(args.characterRefs.A.prompt).toBe("Kira");
+  });
+
+  it("omits portrait when not set (LoRA training would fail gate, but the function does not enforce that)", () => {
+    const noPortrait = { ...cast, portrait_key: null };
+    const args = buildLoraTrainingBundleArgs(noPortrait, "ts");
+    expect(args.characterRefs.A.portrait).toBeUndefined();
+  });
+
+  it("uses cast-{id} as the project slug fallback when slug is missing", () => {
+    const noSlug = { ...cast, slug: "" };
+    const args = buildLoraTrainingBundleArgs(noSlug, "ts");
+    expect(args.storyboard.title).toBe("lora-cast-7-ts");
+  });
+});
+
+describe("deriveLoraDestKey", () => {
+  it("namespaces per cast id with a timestamp version", () => {
+    expect(deriveLoraDestKey(7, 1234567890)).toBe("loras/cast-7/1234567890.safetensors");
+    expect(deriveLoraDestKey(42, 999)).toBe("loras/cast-42/999.safetensors");
+  });
+});
+
 describe("normalizeProjectIdInput", () => {
   it("accepts positive integers", () => {
     expect(normalizeProjectIdInput(1)).toBe(1);

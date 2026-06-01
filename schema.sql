@@ -328,6 +328,23 @@ CREATE INDEX IF NOT EXISTS idx_cast_user
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cast_slug_user
   ON cast_members(user_email, slug);
 
+-- v0.57.0: standalone LoRA training. The cast manager kicks off a
+-- training job via POST /api/cast/:id/train-lora; lora_job_id is the
+-- RunPod jobId we poll; on COMPLETED we adopt lora_key into the row
+-- and flip status to 'ready'. Future renders can pass lora_key into
+-- the bundle so vivijure-serverless 0.4.14+ can skip Stage 1.
+--
+-- status vocabulary: 'idle' | 'training' | 'ready' | 'failed'
+-- lora_key shape: 'loras/cast-<id>/<timestamp>.safetensors' (immutable
+--   artifact per training run; retraining writes a new versioned key
+--   and re-points the cast row, the old artifact stays in R2 until a
+--   future GC pass).
+ALTER TABLE cast_members ADD COLUMN lora_key TEXT;
+ALTER TABLE cast_members ADD COLUMN lora_status TEXT NOT NULL DEFAULT 'idle';
+ALTER TABLE cast_members ADD COLUMN lora_job_id TEXT;
+ALTER TABLE cast_members ADD COLUMN lora_error TEXT;
+ALTER TABLE cast_members ADD COLUMN lora_trained_at TEXT;
+
 -- ---------- Storyboard projects (v0.53.0) ----------
 --
 -- One row per persisted storyboard project per user_email. Holds the

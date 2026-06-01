@@ -113,6 +113,29 @@ export interface FinalizeJobInput {
   audio_key?: string;
 }
 
+// v0.57.0: standalone LoRA training. The cast manager UI on /cast
+// submits this via POST /api/cast/:id/train-lora; the GPU
+// (vivijure-serverless 0.4.13+) dispatches on action=="train_lora",
+// pulls the synthesized single-slot bundle, runs orchestrator.train_
+// lora_only, and uploads the .safetensors to lora_dest_key.
+export interface TrainLoraArgs {
+  project: string;
+  bundleKey: string;
+  userEmail?: string;
+  // R2 key the GPU side should upload the trained .safetensors to.
+  // Must start with "loras/" (the worker validates the prefix so a
+  // misbehaving client cannot redirect writes elsewhere in the bucket).
+  loraDestKey: string;
+}
+
+export interface TrainLoraJobInput {
+  action: "train_lora";
+  project: string;
+  bundle_key: string;
+  user_email?: string;
+  lora_dest_key: string;
+}
+
 // RunPod queue-based job status. The platform uses these literal strings
 // across submit / poll / cancel responses. Anything else surfaces as the
 // raw string in `statusRaw` so the UI can show it without us silently
@@ -214,6 +237,22 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   // v0.52.0: same audio_key passthrough as buildSubmitPayload.
   if (typeof args.audioKey === "string" && args.audioKey.length > 0) {
     input.audio_key = args.audioKey;
+  }
+  return { input };
+}
+
+// v0.57.0: pure builder for the standalone LoRA training payload.
+// Same wire shape as the render/finalize/regen actions; the GPU
+// dispatcher routes on the `action` field.
+export function buildTrainLoraPayload(args: TrainLoraArgs): { input: TrainLoraJobInput } {
+  const input: TrainLoraJobInput = {
+    action: "train_lora",
+    project: args.project,
+    bundle_key: args.bundleKey,
+    lora_dest_key: args.loraDestKey,
+  };
+  if (typeof args.userEmail === "string" && args.userEmail.length > 0) {
+    input.user_email = args.userEmail;
   }
   return { input };
 }
@@ -447,6 +486,61 @@ export async function submitRegenShotJob(
   const view = normalizeRunpodResponse(raw);
   if (!view) {
     return { ok: false, error: "RunPod regen submit returned an unrecognized envelope" };
+  }
+  return { ok: true, view };
+}
+
+// v0.57.0: submit a standalone LoRA training job. Same transport
+// shape as the render / finalize / regen submitters; differs only in
+// the payload builder.
+export async function submitTrainLoraJob(
+  env: Env,
+  args: TrainLoraArgs,
+): Promise<{ ok: true; view: RunpodJobView } | { ok: false; error: string; status?: number }> {
+  if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
+    return {
+      ok: false,
+      error:
+        "RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID must be set on the Worker (npx wrangler secret put ...)",
+    };
+  }
+  const url = buildSubmitUrl(env.RUNPOD_ENDPOINT_ID);
+  const body = JSON.stringify(buildTrainLoraPayload(args));
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${env.RUNPOD_API_KEY}`,
+      },
+      body,
+    });
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `RunPod train-lora submit network error: ${m}` };
+  }
+  let raw: unknown;
+  try {
+    raw = await resp.json();
+  } catch {
+    const text = await resp.text().catch(() => "");
+    return {
+      ok: false,
+      error: `RunPod train-lora submit returned non-JSON (status ${resp.status}): ${text.slice(0, 300)}`,
+      status: resp.status,
+    };
+  }
+  if (!resp.ok) {
+    const errStr =
+      raw && typeof raw === "object" && "error" in raw
+        ? String((raw as Record<string, unknown>).error)
+        : `HTTP ${resp.status}`;
+    return { ok: false, error: `RunPod train-lora submit failed: ${errStr}`, status: resp.status };
+  }
+  const view = normalizeRunpodResponse(raw);
+  if (!view) {
+    return { ok: false, error: "RunPod train-lora submit returned an unrecognized envelope" };
   }
   return { ok: true, view };
 }

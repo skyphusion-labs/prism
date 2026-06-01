@@ -110,6 +110,29 @@
         </details>
       </section>
 
+      <!-- v0.57.0: standalone LoRA training. Kicks off a vivijure-
+           serverless train_lora job using the portrait + refs above;
+           the resulting .safetensors lands at loras/cast-<id>/<ts>.
+           safetensors and the cast row's lora_status flips to ready.
+           Future renders that pick this cast member at the planner
+           can skip Stage 1 by passing the pre-trained LoRA in the
+           bundle (Phase 3, follow-up PR). -->
+      <section class="cast-lora-pane">
+        <header class="cast-section-header">
+          <h3>LoRA training</h3>
+          <p class="cast-section-hint">train a character LoRA standalone (separate from rendering). takes ~8-15 minutes on the GPU; uses the portrait + training refs above. costs ~$0.50-$2 of GPU time per training run.</p>
+        </header>
+        <div id="cast-lora-status-row" class="cast-lora-status-row">
+          <span id="cast-lora-badge" class="cast-lora-badge cast-lora-badge-idle">idle</span>
+          <span id="cast-lora-meta" class="cast-lora-meta"></span>
+        </div>
+        <div class="cast-lora-actions">
+          <button id="cast-lora-train-btn" type="button" class="cast-upload-btn" disabled>train LoRA</button>
+          <a id="cast-lora-download" class="cast-secondary-btn" target="_blank" rel="noopener" hidden>download .safetensors</a>
+          <span id="cast-lora-status-text" class="cast-gen-status"></span>
+        </div>
+      </section>
+
       <footer class="cast-editor-footer">
         <button id="cast-delete-btn" type="button" class="cast-danger-btn">delete this character</button>
       </footer>

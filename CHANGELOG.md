@@ -1,5 +1,58 @@
 # Changelog
 
+## v0.57.0
+
+Standalone LoRA training for cast members. The user can now kick off a LoRA training run from `/cast` without going through a full render; the trained `.safetensors` is uploaded to R2 and the cast row tracks status across sessions. Future renders (Phase 3, a follow-up PR) will be able to skip Stage 1 by passing the pre-trained LoRA in the bundle.
+
+### Cross-repo coordination
+
+Needs **vivijure-serverless 0.4.13** on the RunPod endpoint (the new `train_lora` action). Pre-0.4.13 endpoints reject the action with "unknown action".
+
+### Schema
+
+- `cast_members.lora_key TEXT NULL` — R2 key of the trained `.safetensors`. Convention: `loras/cast-<id>/<timestamp>.safetensors`.
+- `cast_members.lora_status TEXT NOT NULL DEFAULT 'idle'` — one of `idle | training | ready | failed`.
+- `cast_members.lora_job_id TEXT NULL` — RunPod job id while training is in flight.
+- `cast_members.lora_error TEXT NULL` — capped error string on failed runs.
+- `cast_members.lora_trained_at TEXT NULL` — ISO timestamp when the row flipped to `ready`.
+- Migration delta at `migrations/v0.57.0-cast-lora.sql`.
+
+### Backend
+
+- `src/lora-bundle.ts` (new, pure): `buildLoraTrainingBundleArgs(cast, suffix)` builds the synthesized single-slot bundle (storyboard with one shot, characterRefs.A from the cast member's portrait + ref keys); `deriveLoraDestKey(castId, ts)` returns the destination R2 key.
+- `src/cast-db.ts`: `LoraStatus` type + new fields on `CastMember`/`CastRow`; helpers `setLoraJob`, `markLoraReady`, `markLoraFailed`.
+- `src/runpod-submit.ts`: `TrainLoraArgs` + `TrainLoraJobInput` + `buildTrainLoraPayload` + `submitTrainLoraJob`. Validates `lora_dest_key` starts with `loras/` on the worker side; the Worker handler enforces it again before submitting.
+- `src/index.ts`: `POST /api/cast/:id/train-lora` validates ownership + readiness (portrait + ≥4 refs), assembles the bundle, submits the RunPod job, persists `job_id` + `status=training`. `GET /api/cast/:id/lora-status` polls RunPod with the stored job id and adopts `lora_key` into the row on COMPLETED, flips to `failed` on FAILED/TIMED_OUT/CANCELLED.
+
+### Frontend
+
+- `public/cast.html`: new "LoRA training" section under "training references" with a status badge (idle / training / ready / failed), meta line, train button, and a download `.safetensors` link when ready.
+- `public/cast.js`: `renderLoraPane` + `trainLora` + a 5s polling loop (`pollLoraStatus`) that kicks in when the cast row is in `training` state and stops automatically on terminal status. Switching to another character cancels the previous poller.
+
+### Tests
+
+7 new vitest tests in `tests/cast-db.test.ts`:
+
+- `buildLoraTrainingBundleArgs` — storyboard shape, characterRefs mapping, bible fallback to name, portrait omission, slug fallback
+- `deriveLoraDestKey` — namespace + version format
+
+450/450 passing, type-check clean, cast.js syntax-checks.
+
+### Deploy
+
+Apply the D1 delta first:
+
+```bash
+npx wrangler d1 execute skyphusion-llm --remote --file=migrations/v0.57.0-cast-lora.sql
+npm run deploy
+```
+
+### What is NOT in this PR (Phase 3 follow-up)
+
+- Renders skipping Stage 1 when the cast members in their bundle have a pre-trained `lora_key`. Right now the trained LoRA is downloadable + tracked but not yet wired into the render-time bundle. The Phase 3 PR will add `cast_lora_keys` to the bundle assembler and have the vivijure-serverless side detect them in `train_loras` to skip retraining.
+- "Train all cast members in this project" batch action.
+- Versioned download/inspect UI (currently the most recent training is what `lora_key` points at; older versions stay in R2 but are not surfaced).
+
 ## v0.56.0
 
 Auto-preflight on edit. The v0.54.0 preflight panel runs on a successful plan + on the manual "run preflight" button. v0.56.0 wires it into every edit path that affects the storyboard, cast bindings, or audio bed so the panel stays current without the user clicking.

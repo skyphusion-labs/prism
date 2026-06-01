@@ -13,6 +13,8 @@ export interface CastRefImage {
   mime: string;
 }
 
+export type LoraStatus = "idle" | "training" | "ready" | "failed";
+
 export interface CastMember {
   id: number;
   user_email: string;
@@ -24,6 +26,12 @@ export interface CastMember {
   ref_keys: CastRefImage[];
   created_at: string;
   updated_at: string;
+  // v0.57.0: standalone LoRA training fields.
+  lora_key: string | null;
+  lora_status: LoraStatus;
+  lora_job_id: string | null;
+  lora_error: string | null;
+  lora_trained_at: string | null;
 }
 
 interface CastRow {
@@ -37,6 +45,12 @@ interface CastRow {
   ref_keys_json: string;
   created_at: string;
   updated_at: string;
+  // v0.57.0
+  lora_key: string | null;
+  lora_status: string | null;
+  lora_job_id: string | null;
+  lora_error: string | null;
+  lora_trained_at: string | null;
 }
 
 function parseRefKeys(raw: string | null): CastRefImage[] {
@@ -54,6 +68,11 @@ function parseRefKeys(raw: string | null): CastRefImage[] {
   }
 }
 
+function normalizeLoraStatus(raw: string | null): LoraStatus {
+  if (raw === "training" || raw === "ready" || raw === "failed") return raw;
+  return "idle";
+}
+
 function rowToCast(row: CastRow): CastMember {
   return {
     id: row.id,
@@ -66,6 +85,11 @@ function rowToCast(row: CastRow): CastMember {
     ref_keys: parseRefKeys(row.ref_keys_json),
     created_at: row.created_at,
     updated_at: row.updated_at,
+    lora_key: row.lora_key,
+    lora_status: normalizeLoraStatus(row.lora_status),
+    lora_job_id: row.lora_job_id,
+    lora_error: row.lora_error,
+    lora_trained_at: row.lora_trained_at,
   };
 }
 
@@ -103,7 +127,8 @@ export async function allocateCastSlug(env: Env, userEmail: string, base: string
 export async function listCastForUser(env: Env, userEmail: string): Promise<CastMember[]> {
   const result = await env.DB.prepare(
     `SELECT id, user_email, slug, name, bible, portrait_key, portrait_mime,
-            ref_keys_json, created_at, updated_at
+            ref_keys_json, created_at, updated_at,
+            lora_key, lora_status, lora_job_id, lora_error, lora_trained_at
        FROM cast_members
       WHERE user_email = ?
       ORDER BY created_at DESC`
@@ -120,7 +145,8 @@ export async function getCastById(
 ): Promise<CastMember | null> {
   const row = await env.DB.prepare(
     `SELECT id, user_email, slug, name, bible, portrait_key, portrait_mime,
-            ref_keys_json, created_at, updated_at
+            ref_keys_json, created_at, updated_at,
+            lora_key, lora_status, lora_job_id, lora_error, lora_trained_at
        FROM cast_members
       WHERE id = ? AND user_email = ?
       LIMIT 1`
@@ -141,7 +167,8 @@ export async function createCast(
     `INSERT INTO cast_members (user_email, slug, name, bible)
      VALUES (?, ?, ?, ?)
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at`
+               ref_keys_json, created_at, updated_at,
+            lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(userEmail, slug, input.name, input.bible ?? null)
     .first<CastRow>();
@@ -174,7 +201,8 @@ export async function updateCast(
     `UPDATE cast_members SET ${fields.join(", ")}
       WHERE id = ? AND user_email = ?
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at`
+               ref_keys_json, created_at, updated_at,
+            lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(...values)
     .first<CastRow>();
@@ -210,7 +238,8 @@ export async function setPortrait(
         SET portrait_key = ?, portrait_mime = ?, updated_at = datetime('now')
       WHERE id = ? AND user_email = ?
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at`
+               ref_keys_json, created_at, updated_at,
+            lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(key, mime, id, userEmail)
     .first<CastRow>();
@@ -227,7 +256,8 @@ export async function clearPortrait(
         SET portrait_key = NULL, portrait_mime = NULL, updated_at = datetime('now')
       WHERE id = ? AND user_email = ?
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at`
+               ref_keys_json, created_at, updated_at,
+            lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(id, userEmail)
     .first<CastRow>();
@@ -248,7 +278,8 @@ export async function addRef(
         SET ref_keys_json = ?, updated_at = datetime('now')
       WHERE id = ? AND user_email = ?
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at`
+               ref_keys_json, created_at, updated_at,
+            lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(JSON.stringify(next), id, userEmail)
     .first<CastRow>();
@@ -272,9 +303,84 @@ export async function removeRef(
         SET ref_keys_json = ?, updated_at = datetime('now')
       WHERE id = ? AND user_email = ?
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at`
+               ref_keys_json, created_at, updated_at,
+            lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(JSON.stringify(next), id, userEmail)
     .first<CastRow>();
   return { row: result ? rowToCast(result) : null, removedKey: refKey };
+}
+
+// v0.57.0: standalone LoRA training fields. setLoraJob is called when
+// the user clicks "Train LoRA" on /cast (status -> 'training', job_id
+// stored). markLoraReady is called by the poll route on COMPLETED
+// (status -> 'ready', lora_key stored, trained_at set). markLoraFailed
+// is called on FAILED / errored polls.
+
+export async function setLoraJob(
+  env: Env,
+  id: number,
+  userEmail: string,
+  jobId: string,
+): Promise<CastMember | null> {
+  const result = await env.DB.prepare(
+    `UPDATE cast_members
+        SET lora_status = 'training',
+            lora_job_id = ?,
+            lora_error = NULL,
+            updated_at = datetime('now')
+      WHERE id = ? AND user_email = ?
+     RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
+               ref_keys_json, created_at, updated_at,
+               lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
+  )
+    .bind(jobId, id, userEmail)
+    .first<CastRow>();
+  return result ? rowToCast(result) : null;
+}
+
+export async function markLoraReady(
+  env: Env,
+  id: number,
+  userEmail: string,
+  loraKey: string,
+): Promise<CastMember | null> {
+  const result = await env.DB.prepare(
+    `UPDATE cast_members
+        SET lora_status = 'ready',
+            lora_key = ?,
+            lora_trained_at = datetime('now'),
+            lora_job_id = NULL,
+            lora_error = NULL,
+            updated_at = datetime('now')
+      WHERE id = ? AND user_email = ?
+     RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
+               ref_keys_json, created_at, updated_at,
+               lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
+  )
+    .bind(loraKey, id, userEmail)
+    .first<CastRow>();
+  return result ? rowToCast(result) : null;
+}
+
+export async function markLoraFailed(
+  env: Env,
+  id: number,
+  userEmail: string,
+  errorMessage: string,
+): Promise<CastMember | null> {
+  const result = await env.DB.prepare(
+    `UPDATE cast_members
+        SET lora_status = 'failed',
+            lora_error = ?,
+            lora_job_id = NULL,
+            updated_at = datetime('now')
+      WHERE id = ? AND user_email = ?
+     RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
+               ref_keys_json, created_at, updated_at,
+               lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
+  )
+    .bind(errorMessage.slice(0, 4000), id, userEmail)
+    .first<CastRow>();
+  return result ? rowToCast(result) : null;
 }

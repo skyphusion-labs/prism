@@ -29,7 +29,9 @@ import {
   listCastForUser, getCastById, createCast, updateCast, deleteCast,
   setPortrait as castSetPortrait, clearPortrait as castClearPortrait,
   addRef as castAddRef, removeRef as castRemoveRef,
+  setLoraJob, markLoraReady, markLoraFailed,
 } from "./cast-db";
+import { buildLoraTrainingBundleArgs, deriveLoraDestKey } from "./lora-bundle";
 import {
   listProjectsForUser, getProjectById, createProject, updateProjectMeta,
   setLastStoryboard, deleteProject,
@@ -61,6 +63,7 @@ import {
   submitFinalizeJob,
   submitRegenShotJob,
   submitRenderJob,
+  submitTrainLoraJob,
   type RenderSubmitArgs,
 } from "./runpod-submit";
 import {
@@ -538,6 +541,17 @@ export default {
     const castRefOne = url.pathname.match(/^\/api\/cast\/(\d+)\/refs\/(.+)$/);
     if (castRefOne && request.method === "DELETE") {
       return handleCastRefRemove(request, env, castRefOne[1], decodeURIComponent(castRefOne[2]));
+    }
+    // v0.57.0: standalone LoRA training. POST kicks off the job (cast
+    // member must have a portrait + refs); GET polls and adopts
+    // lora_key on the cast row when the job completes.
+    const castLoraTrain = url.pathname.match(/^\/api\/cast\/(\d+)\/train-lora$/);
+    if (castLoraTrain && request.method === "POST") {
+      return handleCastTrainLora(request, env, castLoraTrain[1]);
+    }
+    const castLoraStatus = url.pathname.match(/^\/api\/cast\/(\d+)\/lora-status$/);
+    if (castLoraStatus && request.method === "GET") {
+      return handleCastLoraStatus(request, env, castLoraStatus[1]);
     }
     // v0.32.0: poll one render job by its RunPod-issued id.
     // v0.33.1: DELETE cancels the same job via RunPod's POST /cancel.
@@ -2560,6 +2574,145 @@ async function handleCastRefRemove(
   }
   try { await env.R2_RENDERS.delete(result.removedKey); } catch { /* ignore */ }
   return json({ cast: result.row });
+}
+
+// ---------- /api/cast/:id/train-lora + /lora-status (v0.57.0) ----------
+//
+// Standalone LoRA training. The cast manager UI on /cast kicks off a
+// training job via POST /train-lora; the GPU (vivijure-serverless
+// 0.4.13+) trains a LoRA from the cast member's portrait + ref keys
+// and uploads the .safetensors to loras/cast-<id>/<timestamp>.safetensors.
+// GET /lora-status polls RunPod with the saved job_id and adopts
+// lora_key into the cast row on COMPLETED.
+
+// Pure helpers (buildLoraTrainingBundleArgs, deriveLoraDestKey) live in
+// src/lora-bundle.ts so vitest can import without dragging
+// cloudflare:workers into the node test pool. Imported above.
+
+async function handleCastTrainLora(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) {
+    return json({ error: "invalid id" }, { status: 400 });
+  }
+  const cast = await getCastById(env, id, userEmail);
+  if (!cast) return json({ error: "cast not found" }, { status: 404 });
+  if (cast.lora_status === "training") {
+    return json(
+      { error: "a LoRA training job is already in flight for this cast member", jobId: cast.lora_job_id },
+      { status: 409 },
+    );
+  }
+  if (!cast.portrait_key) {
+    return json(
+      { error: "cast member needs a portrait before training (set one via /cast)" },
+      { status: 400 },
+    );
+  }
+  if (cast.ref_keys.length < 4) {
+    return json(
+      {
+        error: `cast member has only ${cast.ref_keys.length} training refs; 4+ recommended (8+ for a stable LoRA). Add more via /cast.`,
+      },
+      { status: 400 },
+    );
+  }
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const args = buildLoraTrainingBundleArgs(cast, String(timestamp));
+
+  // Assemble the synthesized bundle. characterRefs reuses the same
+  // shape the planner's storyboard bundle does, so assembleBundle
+  // already knows how to fetch the portrait + ref keys out of
+  // R2_RENDERS and embed them in the tar.
+  let bundleResult;
+  try {
+    bundleResult = await assembleBundle(env, args);
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    return json({ error: `bundle assembly failed: ${m}` }, { status: 500 });
+  }
+  if (!bundleResult.ok) {
+    return json(
+      { error: "bundle assembly failed", details: bundleResult.errors },
+      { status: 500 },
+    );
+  }
+
+  const loraDestKey = deriveLoraDestKey(cast.id, timestamp);
+  const submit = await submitTrainLoraJob(env, {
+    project: args.storyboard.projectName,
+    bundleKey: bundleResult.bundleKey,
+    userEmail,
+    loraDestKey,
+  });
+  if (!submit.ok) {
+    return json({ error: submit.error }, { status: 502 });
+  }
+  // Persist the job_id so /lora-status can poll it across page reloads.
+  const updated = await setLoraJob(env, cast.id, userEmail, submit.view.jobId);
+  return json({
+    ok: true,
+    jobId: submit.view.jobId,
+    status: submit.view.status,
+    statusRaw: submit.view.statusRaw,
+    bundleKey: bundleResult.bundleKey,
+    loraDestKey,
+    cast: updated || cast,
+  });
+}
+
+async function handleCastLoraStatus(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) {
+    return json({ error: "invalid id" }, { status: 400 });
+  }
+  const cast = await getCastById(env, id, userEmail);
+  if (!cast) return json({ error: "cast not found" }, { status: 404 });
+  if (!cast.lora_job_id) {
+    // No in-flight training; return the current cast state without
+    // touching RunPod.
+    return json({ cast, view: null });
+  }
+  const poll = await pollRenderJob(env, cast.lora_job_id);
+  if (!poll.ok) {
+    return json({ error: poll.error, cast }, { status: 502 });
+  }
+  const view = poll.view;
+  // On COMPLETED: harvest the lora_key from the envelope and flip the
+  // cast row. The vivijure-serverless 0.4.13 envelope shape is
+  // {project, mode:"lora-only", lora_key, lora_size_bytes, slot, train}.
+  if (view.status === "COMPLETED") {
+    const output = view.output as Record<string, unknown> | undefined;
+    const loraKey = output && typeof output.lora_key === "string" ? output.lora_key : null;
+    if (!loraKey) {
+      const updated = await markLoraFailed(
+        env,
+        cast.id,
+        userEmail,
+        "GPU job completed but envelope did not include lora_key",
+      );
+      return json({ cast: updated || cast, view });
+    }
+    const updated = await markLoraReady(env, cast.id, userEmail, loraKey);
+    return json({ cast: updated || cast, view });
+  }
+  if (view.status === "FAILED" || view.status === "TIMED_OUT" || view.status === "CANCELLED") {
+    const msg = view.error || `training ${view.status.toLowerCase()}`;
+    const updated = await markLoraFailed(env, cast.id, userEmail, msg);
+    return json({ cast: updated || cast, view });
+  }
+  // Still pending. Don't update the cast row; let the next poll catch the change.
+  return json({ cast, view });
 }
 
 // ---------- Chat (text generation, multimodal in) ----------
