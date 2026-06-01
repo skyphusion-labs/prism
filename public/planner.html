@@ -34,32 +34,6 @@
       <h1>storyboard planner</h1>
     </header>
 
-    <!-- v0.34.1: render history. Loaded on page open from /api/storyboard/renders.
-         Hidden when the user has no past renders. Each row has a "view" action
-         that loads its status into the render stage (and starts polling if the
-         job is still in flight) and a "download" link when the silent MP4 is
-         already in R2. -->
-    <section id="planner-history" class="planner-history" hidden>
-      <header class="planner-history-header">
-        <h2 class="planner-stage-title">recent renders</h2>
-        <div class="planner-history-tools">
-          <button id="planner-history-custom" type="button" class="planner-history-refresh" title="render an existing R2 bundle by key">use bundle key...</button>
-          <button id="planner-history-refresh" type="button" class="planner-history-refresh">refresh</button>
-        </div>
-      </header>
-      <!-- v0.37.1: client-side filter bar over the already-loaded history rows.
-           Text input matches project name + label substring; checkboxes gate
-           status buckets. Filtering does not refetch. -->
-      <div class="planner-history-filters">
-        <input id="planner-history-search" type="text" placeholder="search project or label" autocomplete="off" />
-        <label class="planner-history-filter-check"><input type="checkbox" id="planner-filter-inflight" checked /> in-flight</label>
-        <label class="planner-history-filter-check"><input type="checkbox" id="planner-filter-done" checked /> done</label>
-        <label class="planner-history-filter-check"><input type="checkbox" id="planner-filter-failed" checked /> failed</label>
-        <span id="planner-history-counter" class="planner-history-counter"></span>
-      </div>
-      <ul id="planner-history-list" class="planner-history-list"></ul>
-    </section>
-
     <!-- v0.53.0: persisted project picker. Optional; planner still works
          transient (no project picked). Picking a project loads its prefs +
          last saved storyboard; "save to project" stashes the current
@@ -83,7 +57,7 @@
     </section>
 
     <section class="planner-form">
-      <h2 class="planner-stage-title">1. plan</h2>
+      <h2 class="planner-stage-title">plan</h2>
 
       <label class="planner-field">
         <span>model</span>
@@ -142,7 +116,7 @@
          not replayed to the model. Hidden until a plan resolves. -->
     <section id="planner-refine" class="planner-stage" hidden>
       <header class="planner-stage-header">
-        <h2 class="planner-stage-title">1a. refine via chat</h2>
+        <h2 class="planner-stage-title">refine via chat</h2>
         <span id="planner-refine-status" class="planner-status"></span>
       </header>
       <p class="planner-stage-hint">type instructions ("add a fight scene before the ending", "make scene 2 darker", "shorten the opening"). each turn rewrites the storyboard and refreshes the editor + YAML below.</p>
@@ -159,7 +133,7 @@
          successful plan resolves. -->
     <section id="planner-scenes" class="planner-stage" hidden>
       <header class="planner-stage-header">
-        <h2 class="planner-stage-title">1b. scene editor</h2>
+        <h2 class="planner-stage-title">scene editor</h2>
         <span id="planner-scenes-status" class="planner-status"></span>
       </header>
       <p class="planner-stage-hint">edit prompts, durations, and per-scene cast assignments before bundling. changes flow into the bundle automatically; the YAML pane refreshes after each edit.</p>
@@ -185,7 +159,7 @@
          pane refreshes automatically through the v0.49.0 hook. -->
     <section id="planner-audio" class="planner-stage" hidden>
       <header class="planner-stage-header">
-        <h2 class="planner-stage-title">1c. audio bed + beat timing</h2>
+        <h2 class="planner-stage-title">audio bed + beat timing</h2>
         <span id="planner-audio-status" class="planner-status"></span>
       </header>
       <p class="planner-stage-hint">optional. generate a track or upload your own. set BPM, then snap shot durations to musical phrases so the cuts land on the beat.</p>
@@ -242,7 +216,7 @@
          panel is open; warnings are advisory and pass through. -->
     <section id="planner-preflight" class="planner-stage" hidden>
       <header class="planner-stage-header">
-        <h2 class="planner-stage-title">1d. preflight</h2>
+        <h2 class="planner-stage-title">preflight</h2>
         <span id="planner-preflight-status" class="planner-status"></span>
       </header>
       <p class="planner-stage-hint">runs validator + scene shape checks + cast readiness + bundle / audio existence. errors gate the bundle button; warnings pass through.</p>
@@ -260,7 +234,7 @@
     <!-- v0.33.0: bundle stage. Revealed after a successful plan. -->
     <section id="planner-bundle" class="planner-stage" hidden>
       <header class="planner-stage-header">
-        <h2 class="planner-stage-title">2. assemble bundle</h2>
+        <h2 class="planner-stage-title">assemble bundle</h2>
         <span id="planner-bundle-status" class="planner-status"></span>
       </header>
       <p class="planner-stage-hint">
@@ -280,7 +254,7 @@
     <!-- v0.33.0: render stage. Revealed after a successful bundle. -->
     <section id="planner-render" class="planner-stage" hidden>
       <header class="planner-stage-header">
-        <h2 class="planner-stage-title">3. render</h2>
+        <h2 class="planner-stage-title">render</h2>
         <button id="planner-notify-toggle" type="button" class="planner-notify-toggle" hidden title="get a browser notification when this render finishes">enable notifications</button>
         <span id="planner-render-status" class="planner-status"></span>
       </header>
@@ -455,6 +429,35 @@
           </div>
         </div>
       </div>
+    </section>
+
+    <!-- v0.34.1: render history. Loaded on page open from /api/storyboard/renders.
+         Hidden when the user has no past renders. Each row has a "view" action
+         that loads its status into the render stage (and starts polling if the
+         job is still in flight) and a "download" link when the silent MP4 is
+         already in R2.
+         v0.67.0: moved to the bottom of the page so the live workflow (plan ->
+         bundle -> render) sits at the top and history is a reference area
+         below it, not the first thing the user scrolls past every load. -->
+    <section id="planner-history" class="planner-history" hidden>
+      <header class="planner-history-header">
+        <h2 class="planner-stage-title">recent renders</h2>
+        <div class="planner-history-tools">
+          <button id="planner-history-custom" type="button" class="planner-history-refresh" title="render an existing R2 bundle by key">use bundle key...</button>
+          <button id="planner-history-refresh" type="button" class="planner-history-refresh">refresh</button>
+        </div>
+      </header>
+      <!-- v0.37.1: client-side filter bar over the already-loaded history rows.
+           Text input matches project name + label substring; checkboxes gate
+           status buckets. Filtering does not refetch. -->
+      <div class="planner-history-filters">
+        <input id="planner-history-search" type="text" placeholder="search project or label" autocomplete="off" />
+        <label class="planner-history-filter-check"><input type="checkbox" id="planner-filter-inflight" checked /> in-flight</label>
+        <label class="planner-history-filter-check"><input type="checkbox" id="planner-filter-done" checked /> done</label>
+        <label class="planner-history-filter-check"><input type="checkbox" id="planner-filter-failed" checked /> failed</label>
+        <span id="planner-history-counter" class="planner-history-counter"></span>
+      </div>
+      <ul id="planner-history-list" class="planner-history-list"></ul>
     </section>
   </main>
 

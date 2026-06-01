@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.67.0
+
+Planner page layout cleanup. Recent renders moved to the bottom of the page so the live workflow (project -> plan -> ... -> render) sits at the top and history is a reference area below it, not the first thing the user scrolls past on every load. Stage-title numbering ("1. plan", "1a. refine via chat", "2. assemble bundle", "3. render", etc.) dropped - the visual order on the page already conveys the sequence and the numbering looked dated next to the new topbar chrome.
+
+### Frontend
+
+- `public/planner.html`: reordered. Old: history, project, plan, refine, scenes, audio, preflight, bundle, render. New: project, plan, refine, scenes, audio, preflight, bundle, render, history. No JS changes - the section IDs are unchanged, so planner.js's selectors keep working.
+- Stage titles renamed: `1. plan -> plan`, `1a. refine via chat -> refine via chat`, `1b. scene editor -> scene editor`, `1c. audio bed + beat timing -> audio bed + beat timing`, `1d. preflight -> preflight`, `2. assemble bundle -> assemble bundle`, `3. render -> render`.
+
+464/464 still passing.
+
 ## v0.66.0
 
 Shared Vivijure topbar across the planner and cast pages. Brings the legacy `Wave` + `vryn` wordmark forward (the styled-text logo from the legacy FastAPI app's `vivijure-runpod/static/index.html`, gradient + cyan glow preserved) and gives every page a single header chrome with logo, page nav, and signed-in user pill. The pill is wrapped in a `<button>` so future User Options (preferences, sign-out, theme) can hang off it without revisiting markup.
