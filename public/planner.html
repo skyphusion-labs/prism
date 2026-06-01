@@ -399,6 +399,54 @@
             trained cast LoRAs (via /cast) are reused as-is and ignore these.
           </p>
         </details>
+        <!-- v0.69.0: multi_character composite overrides. Vivijure-serverless
+             0.4.23+ accepts these on the job payload and merges them over
+             the pod's production.multi_character config block. Empty fields
+             = use pod defaults. -->
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">multi-character composite (advanced)</summary>
+          <div class="planner-overrides-fields">
+            <label class="planner-field">
+              <span>mode</span>
+              <select id="planner-mc-mode">
+                <option value="">(use pod default: auto)</option>
+                <option value="auto">auto (composite when scene has 2+ slots)</option>
+                <option value="always">always (composite any multi-slot scene)</option>
+                <option value="off">off (skip composite entirely)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>layout</span>
+              <select id="planner-mc-layout">
+                <option value="">(use pod default: layer)</option>
+                <option value="layer">layer (feathered alpha overlay)</option>
+                <option value="side_by_side">side_by_side (horizontal tile)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>max slots (pod default 2)</span>
+              <input id="planner-mc-max-slots" type="number" min="1" max="4" step="1" placeholder="2" />
+            </label>
+            <label class="planner-field">
+              <span>feather px (pod default 48)</span>
+              <input id="planner-mc-feather" type="number" min="0" max="256" step="4" placeholder="48" />
+            </label>
+            <label class="planner-field">
+              <span>auto when multi-slot</span>
+              <select id="planner-mc-auto">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true (auto-composite at 2+ slots)</option>
+                <option value="false">false (require mode=always)</option>
+              </select>
+            </label>
+          </div>
+          <p class="planner-overrides-hint">
+            forwarded as <code>multi_character_overrides</code>. controls how
+            SDXL keyframes for scenes with 2+ cast slots get composited
+            (separate solo gen per slot, then stitched). leave fields blank
+            to use the pod's <code>config.yaml</code> defaults.
+          </p>
+        </details>
         <details class="planner-overrides-raw-details">
           <summary class="planner-overrides-summary">raw JSON overrides (wins on conflict)</summary>
           <textarea id="planner-render-overrides" rows="3" placeholder='{"wan_inference_steps": 12, "wan_num_frames": 33}' spellcheck="false"></textarea>

@@ -603,6 +603,35 @@ function buildCastLoraSubmit() {
   return out;
 }
 
+// v0.69.0: read the five multi-character inputs in the advanced block.
+// Same drop-on-empty pattern as buildLoraTrainOverrides: returns
+// undefined when nothing was overridden so the caller skips the key.
+function buildMultiCharacterOverrides() {
+  const readStr = (sel) => {
+    const el = $(sel);
+    return el ? (el.value || "").trim() : "";
+  };
+  const readNum = (sel) => {
+    const raw = readStr(sel);
+    if (!raw) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const out = {};
+  const mode = readStr("#planner-mc-mode");
+  if (mode === "auto" || mode === "always" || mode === "off") out.mode = mode;
+  const layout = readStr("#planner-mc-layout");
+  if (layout === "layer" || layout === "side_by_side") out.layout = layout;
+  const maxSlots = readNum("#planner-mc-max-slots");
+  if (maxSlots !== undefined && maxSlots >= 1 && maxSlots <= 4) out.max_slots = Math.round(maxSlots);
+  const feather = readNum("#planner-mc-feather");
+  if (feather !== undefined && feather >= 0 && feather <= 256) out.feather_px = Math.round(feather);
+  const auto = readStr("#planner-mc-auto");
+  if (auto === "true") out.auto_when_multi_slot = true;
+  else if (auto === "false") out.auto_when_multi_slot = false;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // v0.68.0: read the four LoRA-training inputs in the advanced block and
 // shape them into the wire object the Worker expects. Empty/non-numeric
 // fields are dropped so the pod's config.yaml defaults apply. Returns
@@ -2560,6 +2589,9 @@ async function submitRender() {
   // inputs are dropped so the pod's config.yaml defaults win.
   const loraTrainOverrides = buildLoraTrainOverrides();
   if (loraTrainOverrides) reqBody.loraTrainOverrides = loraTrainOverrides;
+  // v0.69.0: multi_character composite overrides.
+  const mcOverrides = buildMultiCharacterOverrides();
+  if (mcOverrides) reqBody.multiCharacterOverrides = mcOverrides;
 
   let resp = null;
   let data = null;

@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.69.0
+
+Phase 2 of the worker-pod config pull (Phase 1 was LoRA training in v0.68.0 / vivijure-serverless 0.4.19). The `production.multi_character` block from the pod's `config.yaml` becomes routable from the web Worker via a new `multiCharacterOverrides` field on render + finalize submit bodies. Pod side landed in vivijure-serverless 0.4.23.
+
+### Backend
+
+- `src/runpod-submit.ts`: new `MultiCharacterOverrides` interface + `normalizeMultiCharacterOverrides` validator. Per-key validation: `mode` must be one of `"auto"|"always"|"off"`; `layout` must be `"layer"|"side_by_side"`; `max_slots` is 1..4 (integer); `feather_px` is 0..256 (rounded); `auto_when_multi_slot` is a strict boolean. Anything else is silently dropped client-side; the pod re-validates and 400s on a coercion error. `RenderJobInput`, `FinalizeJobInput`, `RenderSubmitArgs`, `FinalizeArgs` all carry the field; `buildSubmitPayload` and `buildFinalizePayload` forward it through.
+- `src/index.ts`: `RenderSubmitRequest` accepts `multiCharacterOverrides`; `handleRenderSubmit` and `handleFinalizeSubmit` read it off the body and forward through to the submit args.
+
+### Frontend
+
+- `public/planner.html`: new "multi-character composite (advanced)" disclosure inside the existing advanced render-settings block, with five controls: mode (select), layout (select), max slots (number), feather px (number), auto when multi-slot (select). Each shows the pod default in its placeholder so an empty / "(use pod default)" entry is obviously a fallback.
+- `public/planner.js`: `buildMultiCharacterOverrides()` reads the five inputs, coerces / validates, returns undefined when nothing is set. Attached to the submit body alongside `loraTrainOverrides`, `castLoras`, and `audioKey`.
+
+### Tests
+
+464/464 still passing, type-check clean.
+
 ## v0.68.0
 
 Phase 1 of the worker-pod config pull. LoRA training hyperparams (steps, learning_rate, rank, resolution, timeout_seconds) become routable from the web Worker to the GPU pod via a new `lora_train_overrides` wire field. Pod side landed in vivijure-serverless 0.4.19. Web-Worker side this version: types, builders, route handlers, and a small UI block in the planner's advanced render-settings.

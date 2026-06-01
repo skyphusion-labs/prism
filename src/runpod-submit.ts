@@ -53,6 +53,11 @@ export interface RenderSubmitArgs {
   // hyperparams without an image rebuild. Unset/empty fields fall back
   // to the pod's config.yaml defaults.
   loraTrainOverrides?: LoraTrainOverrides;
+  // v0.69.0: multi_character composite overrides. Routes through to
+  // vivijure-serverless 0.4.23+'s multi_character.set_overrides which
+  // every existing reader (mode_from_prefs, should_composite, layout,
+  // generate_composite_keyframe) merges over config.yaml.
+  multiCharacterOverrides?: MultiCharacterOverrides;
 }
 
 export interface LoraTrainOverrides {
@@ -61,6 +66,29 @@ export interface LoraTrainOverrides {
   rank?: number;
   resolution?: number;
   timeout_seconds?: number;
+}
+
+// v0.69.0: matching multi_character config that the pod previously read
+// from config.yaml's production.multi_character block. Routes through
+// to vivijure-serverless 0.4.23+'s _parse_multi_character_overrides.
+// All fields optional; missing entries fall back to the pod's defaults.
+export interface MultiCharacterOverrides {
+  // "auto" composites only when a scene has 2+ slots; "always" forces
+  // composite mode whenever any slot is present; "off" skips composite
+  // entirely so SDXL renders the scene's natural multi-subject prompt.
+  mode?: "auto" | "always" | "off";
+  // Affects "auto" mode only: when true (the pod default), composite
+  // fires automatically as soon as 2+ slots are present in a scene.
+  auto_when_multi_slot?: boolean;
+  // Cap on slots-per-composite. Pod default 2 (SDXL's hard limit for
+  // coherent two-subject prompts). Lifting this is experimental.
+  max_slots?: number;
+  // Feather width in pixels at the layer / side-by-side boundary.
+  // Pod default 48. Lower = sharper seam, higher = softer blend.
+  feather_px?: number;
+  // "layer" overlays the panels with a feathered alpha mask;
+  // "side_by_side" tiles them horizontally.
+  layout?: "layer" | "side_by_side";
 }
 
 // What the vivijure-serverless rp_handler.py reads off the job input. Field
@@ -81,6 +109,9 @@ export interface RenderJobInput {
   // 0.4.19+). Sent over the wire only when non-empty so older pods
   // (which ignore unknown keys) keep working.
   lora_train_overrides?: LoraTrainOverrides;
+  // v0.69.0: multi_character composite overrides (vivijure-serverless
+  // 0.4.23+). Same forward-compat rule.
+  multi_character_overrides?: MultiCharacterOverrides;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -128,6 +159,8 @@ export interface FinalizeArgs {
   pretrainedLoras?: Record<string, string>;
   // v0.68.0: same LoRA training overrides as RenderSubmitArgs.
   loraTrainOverrides?: LoraTrainOverrides;
+  // v0.69.0: same multi_character overrides as RenderSubmitArgs.
+  multiCharacterOverrides?: MultiCharacterOverrides;
 }
 
 export interface FinalizeJobInput {
@@ -141,6 +174,7 @@ export interface FinalizeJobInput {
   audio_key?: string;
   pretrained_loras?: Record<string, string>;
   lora_train_overrides?: LoraTrainOverrides;
+  multi_character_overrides?: MultiCharacterOverrides;
 }
 
 // v0.57.0: standalone LoRA training. The cast manager UI on /cast
@@ -259,6 +293,9 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   // no diff.
   const lto = normalizeLoraTrainOverrides(args.loraTrainOverrides);
   if (lto) input.lora_train_overrides = lto;
+  // v0.69.0: multi_character composite overrides. Same wire-omit rule.
+  const mco = normalizeMultiCharacterOverrides(args.multiCharacterOverrides);
+  if (mco) input.multi_character_overrides = mco;
   return { input };
 }
 
@@ -295,6 +332,8 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   }
   const ltoF = normalizeLoraTrainOverrides(args.loraTrainOverrides);
   if (ltoF) input.lora_train_overrides = ltoF;
+  const mcoF = normalizeMultiCharacterOverrides(args.multiCharacterOverrides);
+  if (mcoF) input.multi_character_overrides = mcoF;
   return { input };
 }
 
@@ -335,6 +374,32 @@ export function normalizeLoraTrainOverrides(
     if (typeof v === "number" && Number.isFinite(v) && v > 0) {
       out[k] = v;
     }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.69.0: same shape, applied to multi_character overrides. Validates
+// each field's union/range; drops anything that doesn't conform so a
+// UI typo doesn't reach the pod. The pod re-validates anyway.
+export function normalizeMultiCharacterOverrides(
+  raw: MultiCharacterOverrides | undefined,
+): MultiCharacterOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: MultiCharacterOverrides = {};
+  if (raw.mode === "auto" || raw.mode === "always" || raw.mode === "off") {
+    out.mode = raw.mode;
+  }
+  if (typeof raw.auto_when_multi_slot === "boolean") {
+    out.auto_when_multi_slot = raw.auto_when_multi_slot;
+  }
+  if (typeof raw.max_slots === "number" && Number.isInteger(raw.max_slots) && raw.max_slots >= 1 && raw.max_slots <= 4) {
+    out.max_slots = raw.max_slots;
+  }
+  if (typeof raw.feather_px === "number" && Number.isFinite(raw.feather_px) && raw.feather_px >= 0 && raw.feather_px <= 256) {
+    out.feather_px = Math.round(raw.feather_px);
+  }
+  if (raw.layout === "layer" || raw.layout === "side_by_side") {
+    out.layout = raw.layout;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

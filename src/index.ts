@@ -1477,6 +1477,13 @@ interface RenderSubmitRequest {
   // submit builder drops any non-positive / non-finite values so a UI
   // typo doesn't reach the pod.
   loraTrainOverrides?: unknown;
+  // v0.69.0: multi_character composite overrides routed to vivijure-
+  // serverless 0.4.23+'s multi_character.set_overrides. Recognized
+  // keys: mode ("auto"|"always"|"off"), auto_when_multi_slot (bool),
+  // max_slots (1-4), feather_px (0-256), layout ("layer"|"side_by_
+  // side"). The builder's normalizer drops anything that doesn't
+  // satisfy the per-key union/range.
+  multiCharacterOverrides?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1616,6 +1623,12 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     loraTrainOverrides:
       body.loraTrainOverrides && typeof body.loraTrainOverrides === "object"
         ? (body.loraTrainOverrides as RenderSubmitArgs["loraTrainOverrides"])
+        : undefined,
+    // v0.69.0: optional multi_character composite overrides. Same
+    // shape-passthrough as loraTrainOverrides above.
+    multiCharacterOverrides:
+      body.multiCharacterOverrides && typeof body.multiCharacterOverrides === "object"
+        ? (body.multiCharacterOverrides as RenderSubmitArgs["multiCharacterOverrides"])
         : undefined,
   };
 
@@ -2278,6 +2291,7 @@ async function handleFinalizeSubmit(
   let bodyAudioKey: string | null = null;
   let bodyCastLoras: CastLoraBindings | undefined;
   let bodyLoraTrainOverrides: RenderSubmitArgs["loraTrainOverrides"] | undefined;
+  let bodyMultiCharacterOverrides: RenderSubmitArgs["multiCharacterOverrides"] | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
@@ -2285,6 +2299,7 @@ async function handleFinalizeSubmit(
         audioKey?: unknown;
         castLoras?: unknown;
         loraTrainOverrides?: unknown;
+        multiCharacterOverrides?: unknown;
       };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
@@ -2295,6 +2310,13 @@ async function handleFinalizeSubmit(
         && !Array.isArray(parsed.loraTrainOverrides)
       ) {
         bodyLoraTrainOverrides = parsed.loraTrainOverrides as RenderSubmitArgs["loraTrainOverrides"];
+      }
+      if (
+        parsed?.multiCharacterOverrides
+        && typeof parsed.multiCharacterOverrides === "object"
+        && !Array.isArray(parsed.multiCharacterOverrides)
+      ) {
+        bodyMultiCharacterOverrides = parsed.multiCharacterOverrides as RenderSubmitArgs["multiCharacterOverrides"];
       }
       if (parsed?.castLoras !== undefined) {
         if (
@@ -2402,6 +2424,9 @@ async function handleFinalizeSubmit(
     // v0.68.0: forward the body's LoRA training overrides through to the
     // GPU (vivijure-serverless 0.4.19+).
     loraTrainOverrides: bodyLoraTrainOverrides,
+    // v0.69.0: same for multi_character overrides (vivijure-serverless
+    // 0.4.23+).
+    multiCharacterOverrides: bodyMultiCharacterOverrides,
   });
   if (!result.ok) {
     return json(
