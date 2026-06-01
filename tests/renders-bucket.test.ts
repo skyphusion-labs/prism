@@ -16,6 +16,9 @@ describe("isRendersKey", () => {
     // v0.46.0+ persisted cast portraits + refs.
     expect(isRendersKey("cast/7/portrait.png")).toBe(true);
     expect(isRendersKey("cast/7/refs/abc.jpg")).toBe(true);
+    // v0.51.0+ audio beds (uploaded BYO or generated via MiniMax Music).
+    expect(isRendersKey("audio/abc-123.mp3")).toBe(true);
+    expect(isRendersKey("audio/xyz.wav")).toBe(true);
   });
 
   it("leaves chat-side prefixes on R2", () => {

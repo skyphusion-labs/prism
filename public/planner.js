@@ -48,6 +48,17 @@ const planState = {
   // v0.50.0: refinement chat history. Each entry is {role: "user"|"assistant",
   // content: string, ts: number}. Display-only; not replayed to the model.
   refineHistory: [],
+  // v0.51.0: audio bed + beat timing. audioKey is the R2 key (under
+  // audio/ for BYO uploads or out/ for MiniMax-generated tracks
+  // copied across buckets via the cast-style {from_chat_artifact}
+  // path). bpm + beatsPerShot drive the snap-to-beat math.
+  audioKey: null,
+  audioMime: null,
+  audioSourceLabel: null,
+  bpm: 120,
+  beatsPerShot: 4,
+  // Workflow tracking for an in-flight MiniMax Music job.
+  pendingMusicChatId: null,
 };
 
 const bundleState = {
@@ -186,6 +197,15 @@ function collectPlanResultState() {
     // v0.50.0: persist the refinement chat history so the user does not
     // lose the conversation log on a tab close.
     refineHistory: planState.refineHistory,
+    // v0.51.0: persist the audio bed key + BPM + snap settings + any
+    // in-flight music-gen chat id so a refresh restores the audio
+    // workflow.
+    audioKey: planState.audioKey,
+    audioMime: planState.audioMime,
+    audioSourceLabel: planState.audioSourceLabel,
+    bpm: planState.bpm,
+    beatsPerShot: planState.beatsPerShot,
+    pendingMusicChatId: planState.pendingMusicChatId,
   };
 }
 
@@ -373,6 +393,19 @@ function restorePlanResultPanel(saved) {
   // predate the field fall back to an empty log.
   planState.refineHistory = Array.isArray(saved.refineHistory) ? saved.refineHistory : [];
   showRefineSection();
+  // v0.51.0: restore audio bed key + BPM + snap settings + in-flight
+  // music-gen chat id. The audio section becomes visible whenever a
+  // plan resolves, regardless of whether audio is set.
+  planState.audioKey = typeof saved.audioKey === "string" ? saved.audioKey : null;
+  planState.audioMime = typeof saved.audioMime === "string" ? saved.audioMime : null;
+  planState.audioSourceLabel = typeof saved.audioSourceLabel === "string" ? saved.audioSourceLabel : null;
+  planState.bpm = typeof saved.bpm === "number" && saved.bpm > 0 ? saved.bpm : 120;
+  planState.beatsPerShot = typeof saved.beatsPerShot === "number" && saved.beatsPerShot > 0
+    ? saved.beatsPerShot : 4;
+  planState.pendingMusicChatId = typeof saved.pendingMusicChatId === "number"
+    ? saved.pendingMusicChatId : null;
+  showAudioSection();
+  if (planState.pendingMusicChatId) resumeMusicPolling();
 }
 
 function restoreBundleStagePanel(savedBundle, savedPlanResult) {
@@ -839,6 +872,224 @@ async function sendRefine() {
   input.focus();
 }
 
+// ---------- Audio bed + beat timing (v0.51.0) ----------
+//
+// Two paths to set planState.audioKey: generate via MiniMax Music 2.6
+// through the existing /api/chat music dispatcher (async via the
+// LongRunWorkflow; we poll /api/job/:id), or upload a BYO mp3/wav/aac/
+// m4a/ogg via POST /api/storyboard/audio-upload (binary, returns the
+// R2 key directly). Once set, BPM + beats-per-shot drive a pure-JS
+// snap that rounds each scene's target_seconds to a musical-phrase
+// multiple. Each snap goes through onSceneChanged so the YAML pane
+// refresh + dirty badge stay correct.
+
+const MUSIC_MODEL_ID = "minimax/music-2.6";
+const MUSIC_POLL_MS = 5000;
+let musicPollTimer = null;
+
+// Pure helper. Given a duration in seconds, a BPM, and a beat count,
+// returns the duration rounded to the nearest multiple of
+// (60 / BPM) * beatsPerShot, floored at one phrase so a 0.4s scene at
+// 4-beat snap does not collapse to zero. Vitest covers this.
+function snapToBeats(seconds, bpm, beatsPerShot) {
+  const safeBpm = Number(bpm);
+  const safeBeats = Number(beatsPerShot);
+  if (!Number.isFinite(safeBpm) || safeBpm <= 0) return seconds;
+  if (!Number.isFinite(safeBeats) || safeBeats <= 0) return seconds;
+  const phraseSeconds = (60 / safeBpm) * safeBeats;
+  const snapped = Math.round((Number(seconds) || 0) / phraseSeconds) * phraseSeconds;
+  return Math.max(phraseSeconds, Number.parseFloat(snapped.toFixed(3)));
+}
+
+function setMusicGenStatus(text, kind) {
+  const el = $("#planner-music-gen-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "planner-status" + (kind ? " planner-" + kind : "");
+}
+
+function setSnapStatus(text, kind) {
+  const el = $("#planner-snap-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "planner-status" + (kind ? " planner-" + kind : "");
+}
+
+function showAudioSection() {
+  const section = $("#planner-audio");
+  if (!section) return;
+  if (!planState.storyboard) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  // Hydrate inputs from current state.
+  const bpmEl = $("#planner-bpm");
+  if (bpmEl) bpmEl.value = String(planState.bpm || 120);
+  const beatsEl = $("#planner-beats-per-shot");
+  if (beatsEl) beatsEl.value = String(planState.beatsPerShot || 4);
+  renderAudioCurrent();
+}
+
+function renderAudioCurrent() {
+  const wrap = $("#planner-audio-current");
+  if (!wrap) return;
+  if (!planState.audioKey) {
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+  $("#planner-audio-meta").textContent =
+    (planState.audioSourceLabel || "audio") + " · " + planState.audioKey;
+  const audio = $("#planner-audio-player");
+  if (audio) audio.src = "/api/artifact/" + planState.audioKey;
+}
+
+function clearAudio() {
+  if (!planState.audioKey) return;
+  if (!window.confirm("clear the audio bed? the file stays in R2; this just unlinks it from this plan.")) return;
+  planState.audioKey = null;
+  planState.audioMime = null;
+  planState.audioSourceLabel = null;
+  renderAudioCurrent();
+  persistSoon();
+}
+
+async function uploadAudioFile(file) {
+  if (!file) return;
+  try {
+    const resp = await fetch("/api/storyboard/audio-upload", {
+      method: "POST",
+      headers: { "content-type": file.type || "audio/mpeg" },
+      body: file,
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
+    planState.audioKey = data.key;
+    planState.audioMime = data.mime;
+    planState.audioSourceLabel = "uploaded " + file.name;
+    renderAudioCurrent();
+    persistSoon();
+  } catch (err) {
+    window.alert("audio upload failed: " + err.message);
+  }
+}
+
+async function generateMusic() {
+  if (planState.pendingMusicChatId) {
+    setMusicGenStatus("a music job is already in flight; wait or refresh.", "error");
+    return;
+  }
+  const prompt = ($("#planner-music-prompt").value || "").trim();
+  if (!prompt) {
+    setMusicGenStatus("describe the track first.", "error");
+    return;
+  }
+  $("#planner-music-gen").disabled = true;
+  setMusicGenStatus("submitting to MiniMax Music 2.6...", "loading");
+  try {
+    const resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: MUSIC_MODEL_ID, user_input: prompt }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      setMusicGenStatus("submit failed: " + (data.error || "HTTP " + resp.status), "error");
+      $("#planner-music-gen").disabled = false;
+      return;
+    }
+    if (data.status !== "pending" || !data.id) {
+      setMusicGenStatus("unexpected response shape", "error");
+      $("#planner-music-gen").disabled = false;
+      return;
+    }
+    planState.pendingMusicChatId = data.id;
+    persistSoon();
+    setMusicGenStatus("generating (this is async; ~30-90s)...", "loading");
+    pollMusicJob();
+  } catch (err) {
+    setMusicGenStatus("network error: " + err.message, "error");
+    $("#planner-music-gen").disabled = false;
+  }
+}
+
+function resumeMusicPolling() {
+  if (!planState.pendingMusicChatId) return;
+  setMusicGenStatus("resuming poll on prior MiniMax Music job...", "loading");
+  $("#planner-music-gen").disabled = true;
+  pollMusicJob();
+}
+
+async function pollMusicJob() {
+  if (!planState.pendingMusicChatId) return;
+  try {
+    const resp = await fetch("/api/job/" + planState.pendingMusicChatId);
+    const data = await resp.json();
+    if (data.status === "done" && data.output_artifact && data.output_artifact.key) {
+      // Adopt the music artifact as the audio bed. The artifact lives in
+      // env.R2 (out/<uuid>.<ext>) since /api/chat writes there; the
+      // artifact route handles cross-bucket reads via isRendersKey so
+      // <audio src="/api/artifact/out/..."> resolves correctly.
+      planState.audioKey = data.output_artifact.key;
+      planState.audioMime = data.output_artifact.mime || "audio/mpeg";
+      planState.audioSourceLabel = "MiniMax Music 2.6";
+      planState.pendingMusicChatId = null;
+      renderAudioCurrent();
+      setMusicGenStatus("done.", "success");
+      $("#planner-music-gen").disabled = false;
+      persistSoon();
+      return;
+    }
+    if (data.status === "failed") {
+      planState.pendingMusicChatId = null;
+      setMusicGenStatus("model failed: " + (data.job_error || "(no detail)"), "error");
+      $("#planner-music-gen").disabled = false;
+      persistSoon();
+      return;
+    }
+    // Still pending. Re-arm.
+    musicPollTimer = setTimeout(pollMusicJob, MUSIC_POLL_MS);
+  } catch (err) {
+    setMusicGenStatus("poll error: " + err.message + " (retrying)", "error");
+    musicPollTimer = setTimeout(pollMusicJob, MUSIC_POLL_MS);
+  }
+}
+
+function snapAllScenes() {
+  if (!planState.storyboard || !Array.isArray(planState.storyboard.scenes)) {
+    setSnapStatus("no storyboard to snap.", "error");
+    return;
+  }
+  const bpm = Number($("#planner-bpm").value);
+  const beats = Number($("#planner-beats-per-shot").value);
+  if (!Number.isFinite(bpm) || bpm <= 0) { setSnapStatus("invalid BPM.", "error"); return; }
+  if (!Number.isFinite(beats) || beats <= 0) { setSnapStatus("invalid beats per shot.", "error"); return; }
+  planState.bpm = bpm;
+  planState.beatsPerShot = beats;
+  let changed = 0;
+  for (const scene of planState.storyboard.scenes) {
+    const before = scene.target_seconds || 0;
+    const after = snapToBeats(before || ((60 / bpm) * beats), bpm, beats);
+    if (Math.abs((before || 0) - after) > 0.001) {
+      scene.target_seconds = after;
+      changed++;
+    }
+  }
+  renderSceneEditor(planState.storyboard);
+  onSceneChanged();
+  setSnapStatus(
+    "snapped " + changed + " of " + planState.storyboard.scenes.length + " scenes "
+    + "(phrase = " + ((60 / bpm) * beats).toFixed(3) + "s).",
+    "success",
+  );
+}
+
+// Expose pure helper for vitest. window assignment is a no-op in Node
+// (the unit test imports the mirror at the bottom of cast-db.test.ts),
+// but lets the browser console inspect the function.
+if (typeof window !== "undefined") window.__plannerHelpers = { snapToBeats };
+
 // ---------- Scene editor (v0.49.0) ----------
 //
 // Mutates planState.storyboard.scenes[i] in place; the bundle stage
@@ -1221,6 +1472,12 @@ function renderPlanResult(httpStatus, data, model, characters) {
     // storyboard is a new conversation).
     planState.refineHistory = [];
     showRefineSection();
+    // v0.51.0: a fresh plan keeps the audio bed + BPM (those are about
+    // the music + tempo, not the storyboard structure) but resets the
+    // pending music-gen chat id and re-renders the section so the
+    // controls reflect the new storyboard's scene set.
+    planState.pendingMusicChatId = null;
+    showAudioSection();
     renderSceneEditor(data.storyboard);
     showBundleStage(data.storyboard, characters);
     savePersistedState();
@@ -3514,6 +3771,33 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
+  // v0.51.0: audio bed + beat timing.
+  const musicGen = $("#planner-music-gen");
+  if (musicGen) musicGen.addEventListener("click", generateMusic);
+  const audioFile = $("#planner-audio-file");
+  if (audioFile) {
+    audioFile.addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (f) uploadAudioFile(f);
+      e.target.value = "";
+    });
+  }
+  const audioClear = $("#planner-audio-clear");
+  if (audioClear) audioClear.addEventListener("click", clearAudio);
+  const snapBtn = $("#planner-snap-btn");
+  if (snapBtn) snapBtn.addEventListener("click", snapAllScenes);
+  const bpmEl = $("#planner-bpm");
+  if (bpmEl) bpmEl.addEventListener("change", () => {
+    const v = Number(bpmEl.value);
+    if (Number.isFinite(v) && v > 0) planState.bpm = v;
+    persistSoon();
+  });
+  const beatsEl = $("#planner-beats-per-shot");
+  if (beatsEl) beatsEl.addEventListener("change", () => {
+    const v = Number(beatsEl.value);
+    if (Number.isFinite(v) && v > 0) planState.beatsPerShot = v;
+    persistSoon();
+  });
   // v0.38.0: persist on brief / model picker change so the planner's
   // long-form input survives a tab close. Cast field listeners are
   // wired in renderCast().

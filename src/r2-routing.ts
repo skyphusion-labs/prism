@@ -10,6 +10,7 @@
 //   projects/*        -> R2_RENDERS  (project state tarballs)
 //   character-refs/*  -> R2_RENDERS  (staged cast portraits + ref images)
 //   cast/*            -> R2_RENDERS  (persisted cast portraits + refs, v0.46.0+)
+//   audio/*           -> R2_RENDERS  (uploaded / generated audio beds, v0.51.0+)
 //   everything else   -> R2          (in/, out/, zip/, ...)
 //
 // Lives in its own file so vitest can unit-test the helper without
@@ -22,6 +23,7 @@ export function isRendersKey(key: string): boolean {
     key.startsWith("bundles/") ||
     key.startsWith("projects/") ||
     key.startsWith("character-refs/") ||
-    key.startsWith("cast/")
+    key.startsWith("cast/") ||
+    key.startsWith("audio/")
   );
 }

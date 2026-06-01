@@ -374,6 +374,17 @@ export default {
     if (url.pathname === "/api/storyboard/refine" && request.method === "POST") {
       return handleStoryboardRefine(request, env);
     }
+    // v0.51.0: upload an audio bed (BYO mp3/wav/aac/ogg/m4a) for the
+    // music + beat-driven timing workflow. Returns the R2 key so the
+    // planner can reference it from planState.audioKey. Music gen via
+    // MiniMax Music 2.6 goes through the existing /api/chat path; this
+    // route covers the "I already have a track" case.
+    if (
+      url.pathname === "/api/storyboard/audio-upload"
+      && request.method === "POST"
+    ) {
+      return handleAudioUpload(request, env);
+    }
     // v0.31.0: stage one character reference image. Returns the R2 key so
     // multiple images can be referenced from /api/storyboard/bundle without
     // base64-inflating the bundle request body.
@@ -774,6 +785,59 @@ async function handleStoryboardPlan(request: Request, env: Env): Promise<Respons
 // extension. Reuses the existing r2Put helper so the staged object shows up
 // in R2 under `in/<uuid>.<ext>` with the user's email on customMetadata, and
 // is deletable via the same artifact-cleanup paths that already exist.
+
+// ---------- /api/storyboard/audio-upload (v0.51.0) ----------
+//
+// Upload one audio bed (mp3/wav/aac/ogg/m4a) and get back an R2 key
+// the planner can reference from planState.audioKey. Mirrors the
+// character-ref / portrait upload pattern: binary body, content-type
+// header drives mime + filename extension, customMetadata.user_email
+// gates GET via /api/artifact. Lands in env.R2_RENDERS under audio/
+// so it lives in the same bucket the GPU worker reads bundles from
+// (a future bundle-assembler change can wrap it into the tar without
+// a cross-bucket copy).
+
+const AUDIO_MIME_TO_EXT: Record<string, string> = {
+  "audio/mpeg": "mp3",
+  "audio/mp3": "mp3",
+  "audio/wav": "wav",
+  "audio/wave": "wav",
+  "audio/x-wav": "wav",
+  "audio/aac": "aac",
+  "audio/mp4": "m4a",
+  "audio/x-m4a": "m4a",
+  "audio/ogg": "ogg",
+  "audio/webm": "webm",
+};
+const AUDIO_MAX_BYTES = 32 * 1024 * 1024;
+
+async function handleAudioUpload(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const mime = (request.headers.get("content-type") || "").toLowerCase();
+  const ext = AUDIO_MIME_TO_EXT[mime];
+  if (!ext) {
+    return json(
+      {
+        error:
+          "content-type must be one of "
+          + Object.keys(AUDIO_MIME_TO_EXT).join(", ")
+          + " (got " + (mime || "<missing>") + ")",
+      },
+      { status: 400 },
+    );
+  }
+  const buf = await request.arrayBuffer();
+  if (buf.byteLength === 0) return json({ error: "empty body" }, { status: 400 });
+  if (buf.byteLength > AUDIO_MAX_BYTES) {
+    return json({ error: "audio too large (32 MB max)" }, { status: 413 });
+  }
+  const key = `audio/${crypto.randomUUID()}.${ext}`;
+  await env.R2_RENDERS.put(key, new Uint8Array(buf), {
+    httpMetadata: { contentType: mime },
+    customMetadata: { user_email: userEmail },
+  });
+  return json({ key, mime, size: buf.byteLength, user: userEmail });
+}
 
 // ---------- /api/storyboard/refine (v0.50.0) ----------
 //

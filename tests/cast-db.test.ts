@@ -238,3 +238,49 @@ describe("refinement prompt builders", () => {
     expect(built).not.toMatch(/USER REQUEST:\n\s+\n/);
   });
 });
+
+// v0.51.0: snapToBeats helper. Pure; lives in public/planner.js. Mirror
+// here so vitest can lock it in without spinning up jsdom.
+function snapToBeats(seconds: number, bpm: number, beatsPerShot: number): number {
+  const safeBpm = Number(bpm);
+  const safeBeats = Number(beatsPerShot);
+  if (!Number.isFinite(safeBpm) || safeBpm <= 0) return seconds;
+  if (!Number.isFinite(safeBeats) || safeBeats <= 0) return seconds;
+  const phraseSeconds = (60 / safeBpm) * safeBeats;
+  const snapped = Math.round((Number(seconds) || 0) / phraseSeconds) * phraseSeconds;
+  return Math.max(phraseSeconds, Number.parseFloat(snapped.toFixed(3)));
+}
+
+describe("snapToBeats", () => {
+  it("snaps a typical scene to the nearest 4-beat phrase at 120 BPM (phrase = 2s)", () => {
+    // 5s / 2s = 2.5 -> rounds to 3 (JS Math.round) -> 3 * 2 = 6s
+    expect(snapToBeats(5, 120, 4)).toBe(6);
+    // 5.5s / 2 = 2.75 -> 3 -> 6s
+    expect(snapToBeats(5.5, 120, 4)).toBe(6);
+    // 7s / 2 = 3.5 -> 4 -> 8s
+    expect(snapToBeats(7, 120, 4)).toBe(8);
+    // exact phrase boundary stays put
+    expect(snapToBeats(4, 120, 4)).toBe(4);
+  });
+
+  it("snaps to 1-beat at 90 BPM (phrase ~= 0.667s)", () => {
+    // 1s / 0.667 = 1.5 -> 2 -> 1.333s
+    expect(snapToBeats(1, 90, 1)).toBeCloseTo(1.333, 2);
+  });
+
+  it("floors at one phrase so a tiny scene does not collapse to zero", () => {
+    expect(snapToBeats(0.1, 120, 4)).toBe(2); // never below one phrase
+    expect(snapToBeats(0, 120, 4)).toBe(2);
+  });
+
+  it("returns the original seconds when BPM is invalid", () => {
+    expect(snapToBeats(5, 0, 4)).toBe(5);
+    expect(snapToBeats(5, -1, 4)).toBe(5);
+    expect(snapToBeats(5, NaN, 4)).toBe(5);
+  });
+
+  it("returns the original seconds when beatsPerShot is invalid", () => {
+    expect(snapToBeats(5, 120, 0)).toBe(5);
+    expect(snapToBeats(5, 120, NaN)).toBe(5);
+  });
+});

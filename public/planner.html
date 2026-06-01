@@ -136,6 +136,66 @@
       <ol id="planner-scenes-list" class="planner-scenes-list"></ol>
     </section>
 
+    <!-- v0.51.0: audio bed + beat-driven shot timing. Optional; the
+         render still produces silent video either way (server-side
+         mux is a follow-up). Generate via MiniMax Music 2.6 through
+         the existing /api/chat music dispatcher, or upload a BYO
+         mp3/wav/aac/ogg/m4a via /api/storyboard/audio-upload. BPM
+         input + snap buttons mutate scene target_seconds; the YAML
+         pane refreshes automatically through the v0.49.0 hook. -->
+    <section id="planner-audio" class="planner-stage" hidden>
+      <header class="planner-stage-header">
+        <h2 class="planner-stage-title">1c. audio bed + beat timing</h2>
+        <span id="planner-audio-status" class="planner-status"></span>
+      </header>
+      <p class="planner-stage-hint">optional. generate a track or upload your own. set BPM, then snap shot durations to musical phrases so the cuts land on the beat.</p>
+
+      <div id="planner-audio-current" class="planner-audio-current" hidden>
+        <strong>audio bed:</strong>
+        <span id="planner-audio-meta" class="planner-audio-meta"></span>
+        <audio id="planner-audio-player" controls preload="metadata"></audio>
+        <button id="planner-audio-clear" type="button" class="planner-secondary">clear</button>
+      </div>
+
+      <details class="planner-audio-block">
+        <summary>generate music via MiniMax 2.6</summary>
+        <p class="planner-stage-hint">describe the track: genre, mood, instrumentation, era. duration is up to the model; expect ~30-60 seconds.</p>
+        <textarea id="planner-music-prompt" rows="3" placeholder="cinematic orchestral, slow build, strings + piano, melancholic, modern film score"></textarea>
+        <div class="planner-audio-actions">
+          <button id="planner-music-gen" type="button" class="planner-primary">generate</button>
+          <span id="planner-music-gen-status" class="planner-status"></span>
+        </div>
+      </details>
+
+      <details class="planner-audio-block">
+        <summary>upload your own track</summary>
+        <p class="planner-stage-hint">mp3, wav, aac, m4a, ogg up to 32 MB.</p>
+        <label class="cast-upload-btn">
+          choose file
+          <input id="planner-audio-file" type="file" accept="audio/mpeg,audio/mp3,audio/wav,audio/aac,audio/mp4,audio/ogg" hidden />
+        </label>
+      </details>
+
+      <div class="planner-audio-timing">
+        <label class="planner-field">
+          <span>BPM</span>
+          <input id="planner-bpm" type="number" min="20" max="300" step="1" value="120" />
+        </label>
+        <label class="planner-field">
+          <span>snap shots to (beats)</span>
+          <select id="planner-beats-per-shot">
+            <option value="1">1 (every beat)</option>
+            <option value="2">2 (half bar)</option>
+            <option value="4" selected>4 (one bar)</option>
+            <option value="8">8 (two bars)</option>
+            <option value="16">16 (four bars)</option>
+          </select>
+        </label>
+        <button id="planner-snap-btn" type="button" class="planner-secondary">snap all scene durations</button>
+        <span id="planner-snap-status" class="planner-status"></span>
+      </div>
+    </section>
+
     <!-- v0.33.0: bundle stage. Revealed after a successful plan. -->
     <section id="planner-bundle" class="planner-stage" hidden>
       <header class="planner-stage-header">

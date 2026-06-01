@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.51.0
+
+Audio bed + beat-driven shot timing on the planner. The user can generate a track via MiniMax Music 2.6 through the existing /api/chat music dispatcher, or upload their own mp3/wav/aac/m4a/ogg, then set a BPM and snap all scene durations to a musical-phrase multiple so cuts land on the beat.
+
+This PR is the audio + timing surface. Server-side ffmpeg muxing (gluing the generated audio onto the silent_full.mp4 the GPU worker produces) is intentionally NOT in scope; that's a vivijure-serverless change for a follow-up. For now the workflow is: generate or upload audio → snap shots to it → render the silent video on RunPod → mux locally with `ffmpeg -i silent.mp4 -i track.mp3 -c:v copy -c:a aac out.mp4` (or wait for the future mux PR).
+
+### Backend
+
+- `POST /api/storyboard/audio-upload`: accepts binary audio via Content-Type header (mp3, wav, aac, m4a, ogg, webm). 32 MB cap. Writes to env.R2_RENDERS at `audio/<uuid>.<ext>` with customMetadata.user_email. Returns `{key, mime, size, user}`.
+- `src/r2-routing.ts`: `isRendersKey` now also matches `audio/`, so `/api/artifact/audio/<key>` resolves to the right bucket. Two new vitest assertions cover the prefix.
+- Music generation goes through the EXISTING `/api/chat` route with `model: "minimax/music-2.6"` (catalog entry was already shipped pre-v0.51.0). Returns the same `{id, job_id, status: "pending"}` envelope; the planner polls `/api/job/:id` on the v0.12.0 LongRunWorkflow pattern.
+
+### Frontend (`#planner-audio`)
+
+New section between the scene editor and the bundle stage. Hidden until a plan resolves. Three sub-blocks:
+
+1. **Current audio bed** (visible only when planState.audioKey is set): label, R2 key, inline `<audio controls>`, clear button.
+2. **Generate via MiniMax** disclosure: prompt textarea + Generate button. Submits to `/api/chat` and polls; the chat id is persisted via localStorage so a refresh mid-job resumes polling. On success, adopts `output_artifact.key` as `planState.audioKey`. ~30-90s wall-clock per generation.
+3. **Upload your own** disclosure: file picker, POSTs to `/api/storyboard/audio-upload`. The returned R2 key becomes the audio bed.
+
+Below the source blocks: BPM number input (default 120, range 20-300) + beats-per-shot select (1, 2, 4, 8, 16; default 4 = one bar of 4/4). The **snap all scene durations** button mutates every `scene.target_seconds` in `planState.storyboard.scenes` via `snapToBeats(seconds, bpm, beats)`, rounds to the nearest phrase, and floors at one phrase so a 0.1s scene does not collapse to zero. Snap goes through the existing `onSceneChanged` flow so the v0.49.0 YAML preview + dirty badge stay current; the v0.49.0 "discard all edits" still rolls back snap mutations.
+
+### Persistence
+
+`audioKey`, `audioMime`, `audioSourceLabel`, `bpm`, `beatsPerShot`, and `pendingMusicChatId` are added to the localStorage stash. Refreshing the tab restores all of them; an in-flight music-gen job auto-resumes polling.
+
+### Tests
+
+5 new vitest tests for the pure `snapToBeats` helper: 4-beat snap at 120 BPM, 1-beat snap at 90 BPM, floor protection on tiny / zero seconds, return-original on invalid BPM, return-original on invalid beats. 402/402 passing.
+
+### What is NOT in this PR
+
+- Server-side mux (combining generated audio with the GPU's silent_full.mp4 — needs a vivijure-serverless 0.4.11 step or a worker-side WASM ffmpeg). The audio key is staged in R2 ready for that pipeline.
+- Real beat detection from an uploaded waveform (current snap uses user-supplied BPM; auto-detect would need an audio-analysis library).
+- Per-scene per-beat override (current snap is uniform; advanced editors can already type a custom target_seconds in the v0.49.0 scene editor).
+
 ## v0.50.0
 
 Iterative refinement chat on a planned storyboard. The plan route is single-shot: brief in, storyboard out. After v0.50.0 the user can keep talking to the model ("add a fight before the ending", "make scene 2 darker", "swap who appears in scene 4") and each turn rewrites the in-flight storyboard. Closes the legacy `/api/plan/chat/*` gap with a stateless backend variant: the chat history is a UI concern (shown to the user as a turn log) and is NOT replayed to the model. The current storyboard already reflects every accepted change, so the model only needs the current JSON + the latest user message to compute the next state.
