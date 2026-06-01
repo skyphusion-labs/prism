@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.71.0
+
+Phase 4 of the worker-pod config pull. Five render-output and Wan-inference knobs become first-class fields in the planner's advanced render block instead of hiding behind the raw-JSON textarea. Pod side landed in vivijure-serverless 0.4.27 (which made the previously-hardcoded `KEYFRAME_SDXL_SIZE` and friends payload-routable).
+
+### Frontend
+
+- `public/planner.html`: new "render output + Wan (advanced)" disclosure with eight controls (`keyframe_sdxl_size`, `output_width`, `output_height`, `fps`, `crossfade_seconds`, `wan_num_frames`, `wan_inference_steps`, `wan_guidance_scale`). Each shows the pod default in its placeholder so empty == "use default" is obvious.
+- `public/planner.js`: `buildRenderOverrides` extended with the eight new fields. Each validates (positive int / positive float in a sensible UI range) and goes onto the wire as a flat `render_overrides.<key>` entry. The pod's existing render_overrides → CONFIG / KEYFRAME_SDXL_SIZE install (0.4.27) picks them up transparently.
+
+### Wire shape
+
+These are already routable as raw JSON. v0.71.0 promotes them to first-class for discoverability + validation:
+
+  `keyframe_sdxl_size`  → "WxH" string (e.g. "1216x832")
+  `output_width`        → integer 64..7680
+  `output_height`       → integer 64..7680
+  `fps`                 → integer 1..120
+  `crossfade_seconds`   → float 0..5
+  `wan_num_frames`      → integer 1..256
+  `wan_inference_steps` → integer 1..64
+  `wan_guidance_scale`  → float 0..30
+
+464/464 still passing, type-check clean.
+
 ## v0.70.0
 
 Phase 3 of the worker-pod config pull (Phase 1: LoRA training, Phase 2: multi_character). The `loras.quality_gate` block from the pod's `config.yaml` becomes routable from the web Worker via a new `qualityGateOverrides` field on render + finalize + train-lora submit bodies. Pod side landed in vivijure-serverless 0.4.25.

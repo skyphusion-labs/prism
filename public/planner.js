@@ -2558,6 +2558,15 @@ async function submitRender() {
       multiCharacterMode: readVal("#planner-multi-character"),
       identityLock: readVal("#planner-identity-lock"),
       faceLockMode: readVal("#planner-face-lock-mode"),
+      // v0.71.0: render-output + Wan inference knobs.
+      keyframeSdxlSize: readVal("#planner-keyframe-sdxl-size"),
+      fpsText: readVal("#planner-fps"),
+      crossfadeSecondsText: readVal("#planner-crossfade-seconds"),
+      outputWidthText: readVal("#planner-output-width"),
+      outputHeightText: readVal("#planner-output-height"),
+      wanNumFramesText: readVal("#planner-wan-num-frames"),
+      wanInferenceStepsText: readVal("#planner-wan-inference-steps"),
+      wanGuidanceScaleText: readVal("#planner-wan-guidance-scale"),
       textareaText: readVal("#planner-render-overrides"),
     });
   } catch (err) {
@@ -3770,6 +3779,18 @@ function buildRenderOverrides({
   multiCharacterMode,
   identityLock,
   faceLockMode,
+  // v0.71.0: first-class render-output / Wan inference knobs. Pre-
+  // 0.71.0 these were power-user-only via the raw JSON textarea or
+  // (for KEYFRAME_SDXL_SIZE) not configurable from the worker at all.
+  // vivijure-serverless 0.4.27+ honors them on the wire.
+  keyframeSdxlSize,
+  fpsText,
+  crossfadeSecondsText,
+  outputWidthText,
+  outputHeightText,
+  wanNumFramesText,
+  wanInferenceStepsText,
+  wanGuidanceScaleText,
   textareaText,
 }) {
   const out = {};
@@ -3820,6 +3841,54 @@ function buildRenderOverrides({
   ) {
     out.face_lock_mode = faceLockMode;
   }
+
+  // v0.71.0: SDXL keyframe gen resolution. Accepts "WxH" string; the
+  // pod parses both this and a tuple/array shape. Bypass-validated
+  // for the W/H pair so a typo doesn't ship.
+  if (typeof keyframeSdxlSize === "string" && keyframeSdxlSize.trim().length > 0) {
+    const m = keyframeSdxlSize.trim().toLowerCase().match(/^(\d+)\s*x\s*(\d+)$/);
+    if (!m) {
+      throw new Error("keyframe SDXL size must be 'WxH' (e.g. 1216x832)");
+    }
+    out.keyframe_sdxl_size = `${m[1]}x${m[2]}`;
+  }
+
+  // v0.71.0: numeric render-output / Wan inference knobs. Each empty/
+  // unset stays off the wire so the pod's config.yaml + module
+  // defaults win. Ranges are conservative (not the pod's hard maxes)
+  // since the UI should warn before submitting an impossible value.
+  function parsePositiveInt(text, label, min, max) {
+    const t = (text || "").trim();
+    if (!t) return undefined;
+    const n = Number(t);
+    if (!Number.isInteger(n) || n < min || n > max) {
+      throw new Error(`${label} must be an integer between ${min} and ${max}`);
+    }
+    return n;
+  }
+  function parsePositiveFloat(text, label, min, max) {
+    const t = (text || "").trim();
+    if (!t) return undefined;
+    const n = Number(t);
+    if (!Number.isFinite(n) || n < min || n > max) {
+      throw new Error(`${label} must be a number between ${min} and ${max}`);
+    }
+    return n;
+  }
+  const fps = parsePositiveInt(fpsText, "fps", 1, 120);
+  if (fps !== undefined) out.fps = fps;
+  const cross = parsePositiveFloat(crossfadeSecondsText, "crossfade seconds", 0, 5);
+  if (cross !== undefined) out.crossfade_seconds = cross;
+  const ow = parsePositiveInt(outputWidthText, "output width", 64, 7680);
+  if (ow !== undefined) out.output_width = ow;
+  const oh = parsePositiveInt(outputHeightText, "output height", 64, 7680);
+  if (oh !== undefined) out.output_height = oh;
+  const wnf = parsePositiveInt(wanNumFramesText, "wan num_frames", 1, 256);
+  if (wnf !== undefined) out.wan_num_frames = wnf;
+  const wis = parsePositiveInt(wanInferenceStepsText, "wan inference_steps", 1, 64);
+  if (wis !== undefined) out.wan_inference_steps = wis;
+  const wgs = parsePositiveFloat(wanGuidanceScaleText, "wan guidance_scale", 0, 30);
+  if (wgs !== undefined) out.wan_guidance_scale = wgs;
 
   if (typeof textareaText === "string" && textareaText.trim().length > 0) {
     let parsed;

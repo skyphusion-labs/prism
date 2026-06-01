@@ -497,6 +497,53 @@
             <code>config.yaml</code> defaults.
           </p>
         </details>
+        <!-- v0.71.0: render-output + Wan inference knobs that vivijure-
+             serverless 0.4.27+ accepts as flat render_overrides keys. -->
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">render output + Wan (advanced)</summary>
+          <div class="planner-overrides-fields">
+            <label class="planner-field">
+              <span>keyframe SDXL size (pod default 1216x832)</span>
+              <input id="planner-keyframe-sdxl-size" type="text" placeholder="1216x832" pattern="\d+x\d+" />
+            </label>
+            <label class="planner-field">
+              <span>output width (pod default 1920)</span>
+              <input id="planner-output-width" type="number" min="64" max="7680" step="8" placeholder="1920" />
+            </label>
+            <label class="planner-field">
+              <span>output height (pod default 1080)</span>
+              <input id="planner-output-height" type="number" min="64" max="7680" step="8" placeholder="1080" />
+            </label>
+            <label class="planner-field">
+              <span>fps (pod default 24)</span>
+              <input id="planner-fps" type="number" min="1" max="120" step="1" placeholder="24" />
+            </label>
+            <label class="planner-field">
+              <span>crossfade seconds (pod default 0.45)</span>
+              <input id="planner-crossfade-seconds" type="number" min="0" max="5" step="0.05" placeholder="0.45" />
+            </label>
+            <label class="planner-field">
+              <span>Wan num_frames (pod default 33-97 by tier)</span>
+              <input id="planner-wan-num-frames" type="number" min="1" max="256" step="1" placeholder="33" />
+            </label>
+            <label class="planner-field">
+              <span>Wan inference_steps (pod default 8-22 by tier)</span>
+              <input id="planner-wan-inference-steps" type="number" min="1" max="64" step="1" placeholder="22" />
+            </label>
+            <label class="planner-field">
+              <span>Wan guidance_scale (pod default 3.5-4.5 by tier)</span>
+              <input id="planner-wan-guidance-scale" type="number" min="0" max="30" step="0.1" placeholder="4.5" />
+            </label>
+          </div>
+          <p class="planner-overrides-hint">
+            written into <code>render_overrides</code> on the wire. lower
+            <code>wan_inference_steps</code> trades quality for speed;
+            <code>wan_guidance_scale</code> controls prompt adherence (low
+            = creative, high = literal). <code>keyframe_sdxl_size</code> is
+            the SDXL bucket SDXL renders the still in - 1216x832 is the
+            v0.4.7 multi-subject coherence fix.
+          </p>
+        </details>
         <details class="planner-overrides-raw-details">
           <summary class="planner-overrides-summary">raw JSON overrides (wins on conflict)</summary>
           <textarea id="planner-render-overrides" rows="3" placeholder='{"wan_inference_steps": 12, "wan_num_frames": 33}' spellcheck="false"></textarea>
