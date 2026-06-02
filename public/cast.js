@@ -121,6 +121,11 @@
       li.addEventListener("click", () => selectCast(c.id));
       ul.appendChild(li);
     }
+    // v0.92.0: keep the multi-character scene pickers synced with the
+    // cast list. Cheap enough to do on every renderCastList call.
+    if (typeof populateMultiScenePickers === "function") {
+      populateMultiScenePickers();
+    }
   }
 
   function findCast(id) {
@@ -847,6 +852,163 @@
     );
   }
 
+  // ---------- v0.92.0: multi-character scene preview ----------
+  //
+  // Pick two cast members, write a scene prompt, get one composed
+  // image via FLUX 2 multi-reference (each character's saved portrait
+  // becomes one of the input images; FLUX 2 accepts up to 4 total).
+  // No D1 / R2 writes; the result lives only as a chat artifact, with
+  // download. Distinct from the planner's regional render path - this
+  // is the fast 2D preview tool, the planner is for video.
+
+  const multiScene = { busy: false, pendingKey: null, model: null };
+
+  function populateMultiScenePickers() {
+    const aSel = $("#cast-multi-a");
+    const bSel = $("#cast-multi-b");
+    if (!aSel || !bSel) return;
+    // Preserve current selection across refreshes so a new-cast-create
+    // or save does not nuke whatever the user was lining up.
+    const prevA = aSel.value;
+    const prevB = bSel.value;
+    const opts = state.cast
+      .map((c) => `<option value="${c.id}">${escapeForOption(c.name)}</option>`)
+      .join("");
+    const empty = "<option value=''>(none)</option>";
+    aSel.innerHTML = empty + opts;
+    bSel.innerHTML = empty + opts;
+    aSel.value = prevA && state.cast.some((c) => String(c.id) === prevA) ? prevA : "";
+    bSel.value = prevB && state.cast.some((c) => String(c.id) === prevB) ? prevB : "";
+    updateMultiSceneGate();
+  }
+
+  function escapeForOption(s) {
+    return String(s || "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+  }
+
+  function multiSceneRefFor(cast) {
+    if (!cast) return null;
+    if (cast.portrait_key) return { key: cast.portrait_key, mime: cast.portrait_mime || "image/png" };
+    if (Array.isArray(cast.source_keys) && cast.source_keys.length > 0) return cast.source_keys[0];
+    return null;
+  }
+
+  function updateMultiSceneGate() {
+    const aId = $("#cast-multi-a") && Number($("#cast-multi-a").value);
+    const bId = $("#cast-multi-b") && Number($("#cast-multi-b").value);
+    const a = aId ? findCast(aId) : null;
+    const b = bId ? findCast(bId) : null;
+    const prompt = ($("#cast-multi-prompt") || {}).value || "";
+    const model = $("#cast-multi-model") && $("#cast-multi-model").value;
+    const aRef = multiSceneRefFor(a);
+    const bRef = multiSceneRefFor(b);
+    let reason = "";
+    if (!a || !b) reason = "pick two characters";
+    else if (a.id === b.id) reason = "pick two different characters";
+    else if (!aRef) reason = `${a.name} needs a portrait or a source photo first`;
+    else if (!bRef) reason = `${b.name} needs a portrait or a source photo first`;
+    else if (!prompt.trim()) reason = "write a scene prompt";
+    else if (!model) reason = "pick a model";
+    const btn = $("#cast-multi-gen-btn");
+    if (btn) btn.disabled = !!reason || multiScene.busy;
+    const status = $("#cast-multi-gen-status");
+    if (status && !multiScene.busy) status.textContent = reason;
+  }
+
+  async function ensureMultiSceneModels() {
+    const sel = $("#cast-multi-model");
+    if (!sel || sel.options.length > 0) return;
+    for (const m of TRAINING_MODELS) {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = m.label;
+      sel.appendChild(opt);
+    }
+    sel.value = DEFAULT_TRAINING_MODEL_ID;
+    updateMultiSceneGate();
+  }
+
+  function showMultiScenePreview(key) {
+    multiScene.pendingKey = key;
+    const url = artifactUrl(key);
+    const img = $("#cast-multi-img");
+    const dl = $("#cast-multi-download");
+    if (img) img.src = url;
+    if (dl) dl.href = url;
+    $("#cast-multi-preview").hidden = false;
+  }
+
+  function hideMultiScenePreview() {
+    multiScene.pendingKey = null;
+    const img = $("#cast-multi-img");
+    if (img) img.src = "";
+    const preview = $("#cast-multi-preview");
+    if (preview) preview.hidden = true;
+  }
+
+  async function generateMultiScene() {
+    if (multiScene.busy) return;
+    const aId = Number($("#cast-multi-a").value);
+    const bId = Number($("#cast-multi-b").value);
+    const a = findCast(aId);
+    const b = findCast(bId);
+    const promptInput = $("#cast-multi-prompt").value.trim();
+    const modelId = $("#cast-multi-model").value;
+    const aRef = multiSceneRefFor(a);
+    const bRef = multiSceneRefFor(b);
+    if (!a || !b || a.id === b.id || !aRef || !bRef || !promptInput || !modelId) {
+      updateMultiSceneGate();
+      return;
+    }
+
+    multiScene.busy = true;
+    $("#cast-multi-gen-btn").disabled = true;
+    const status = $("#cast-multi-gen-status");
+    if (status) status.textContent = `loading references for ${a.name} + ${b.name}...`;
+    hideMultiScenePreview();
+
+    let aData, bData;
+    try {
+      aData = await fetchPortraitAsDataUrl(aRef.key);
+      bData = await fetchPortraitAsDataUrl(bRef.key);
+    } catch (e) {
+      if (status) status.textContent = "could not load references: " + e.message;
+      multiScene.busy = false;
+      $("#cast-multi-gen-btn").disabled = false;
+      return;
+    }
+
+    // Bias the prompt with the cast names so the model knows who is
+    // who. Appearance details stay out (those come from the reference
+    // images), matching the v0.88.0 storyboard convention.
+    const effectivePrompt = `${a.name} and ${b.name}. ${promptInput}`;
+    if (status) status.textContent = "generating (10-40s depending on model)...";
+
+    try {
+      const result = await api("/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: modelId,
+          user_input: effectivePrompt,
+          attachments: [
+            { type: "image", mime: aRef.mime || "image/png", filename: `${a.slug || "a"}.png`, data: aData },
+            { type: "image", mime: bRef.mime || "image/png", filename: `${b.slug || "b"}.png`, data: bData },
+          ],
+        }),
+      });
+      const oa = result && result.output_artifact;
+      if (!oa || oa.type !== "image" || !oa.key) throw new Error("model did not return an image");
+      showMultiScenePreview(oa.key);
+      if (status) status.textContent = "preview ready. download to keep, discard to retry.";
+    } catch (e) {
+      if (status) status.textContent = "generation failed: " + e.message;
+    } finally {
+      multiScene.busy = false;
+      updateMultiSceneGate();
+    }
+  }
+
   function wire() {
     $("#cast-new-btn").addEventListener("click", newCast);
     $("#cast-save-btn").addEventListener("click", saveCast);
@@ -890,25 +1052,37 @@
     const loraBtn = $("#cast-lora-train-btn");
     if (loraBtn) loraBtn.addEventListener("click", trainLora);
 
-    // Populate the image-gen model picker on demand (first time a user
-    // opens the "generate via chat" disclosure).
-    const portraitDetails = document.querySelector(".cast-portrait-pane .cast-gen-block");
-    if (portraitDetails) {
-      portraitDetails.addEventListener("toggle", () => {
-        if (portraitDetails.open) ensurePortraitGenModelOptions();
-      }, { once: false });
-    }
-
-    // v0.65.0: populate the training-set model dropdown the same way (lazy
-    // on the disclosure toggle). The list is static so this is cheap, but
-    // doing it on-demand keeps page-load symmetrical with portrait gen.
+    // v0.90.0: portrait-gen lives in a first-class <section> now (no
+    // <details> wrapper), so populate the model picker eagerly. Same
+    // for the training-set model picker.
+    ensurePortraitGenModelOptions();
+    ensureTrainingModelOptions();
     const trainingDetails = $("#cast-training-block");
     if (trainingDetails) {
-      ensureTrainingModelOptions();
       trainingDetails.addEventListener("toggle", () => {
         if (trainingDetails.open) ensureTrainingModelOptions();
       }, { once: false });
     }
+
+    // v0.92.0: multi-character scene preview wirings.
+    populateMultiScenePickers();
+    ensureMultiSceneModels();
+    const multiA = $("#cast-multi-a");
+    const multiB = $("#cast-multi-b");
+    const multiPrompt = $("#cast-multi-prompt");
+    const multiModel = $("#cast-multi-model");
+    if (multiA) multiA.addEventListener("change", updateMultiSceneGate);
+    if (multiB) multiB.addEventListener("change", updateMultiSceneGate);
+    if (multiPrompt) multiPrompt.addEventListener("input", updateMultiSceneGate);
+    if (multiModel) multiModel.addEventListener("change", updateMultiSceneGate);
+    const multiBtn = $("#cast-multi-gen-btn");
+    if (multiBtn) multiBtn.addEventListener("click", generateMultiScene);
+    const multiDiscard = $("#cast-multi-discard");
+    if (multiDiscard) multiDiscard.addEventListener("click", () => {
+      hideMultiScenePreview();
+      const status = $("#cast-multi-gen-status");
+      if (status) status.textContent = "";
+    });
   }
 
   // ---------- v0.57.0: standalone LoRA training ----------

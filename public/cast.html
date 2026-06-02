@@ -184,6 +184,50 @@
     <section id="cast-editor-empty" class="cast-editor-empty">
       <p>pick a character on the left, or create a new one.</p>
     </section>
+
+    <!-- v0.92.0: multi-character scene preview. Pick two cast members
+         + write a scene prompt; FLUX 2 composes them into a single
+         image using each character's saved portrait as the reference.
+         This is the fast "concept art" path; the storyboard planner
+         handles actual video render via the regional IP-Adapter
+         pipeline. Always visible; lives in its own grid row spanning
+         both columns so it does not feel tied to either the cast list
+         or the per-character editor. -->
+    <section id="cast-multi-scene" class="cast-multi-scene">
+      <header class="cast-multi-scene-header">
+        <h2>multi-character scene preview</h2>
+        <p class="cast-section-hint">pick two cast members and describe a scene. FLUX 2 composes them into a single image using each character's portrait as the reference. great for concept art, marketing previews, or showing Megan what her cast looks like together before kicking off a full render.</p>
+      </header>
+      <div class="cast-multi-scene-grid">
+        <label class="cast-field">
+          <span>character A</span>
+          <select id="cast-multi-a"></select>
+        </label>
+        <label class="cast-field">
+          <span>character B</span>
+          <select id="cast-multi-b"></select>
+        </label>
+        <label class="cast-field cast-multi-scene-prompt">
+          <span>scene prompt</span>
+          <textarea id="cast-multi-prompt" rows="3" placeholder="describe what they're doing, the framing, the mood. avoid restating their appearance; the reference photos carry that."></textarea>
+        </label>
+        <label class="cast-field">
+          <span>model</span>
+          <select id="cast-multi-model"></select>
+        </label>
+      </div>
+      <div class="cast-multi-scene-actions">
+        <button id="cast-multi-gen-btn" type="button" class="cast-upload-btn" disabled>generate</button>
+        <span id="cast-multi-gen-status" class="cast-gen-status"></span>
+      </div>
+      <div id="cast-multi-preview" class="cast-multi-preview" hidden>
+        <img id="cast-multi-img" alt="multi-character scene preview" />
+        <div class="cast-multi-preview-actions">
+          <a id="cast-multi-download" class="cast-save-btn" href="" download>download</a>
+          <button id="cast-multi-discard" type="button" class="cast-secondary-btn">discard</button>
+        </div>
+      </div>
+    </section>
   </main>
 
   <script src="/topbar.js"></script>

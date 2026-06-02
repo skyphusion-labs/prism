@@ -2902,9 +2902,11 @@ textarea:focus {
   grid-template-columns: 280px 1fr;
   grid-template-areas:
     "header header"
-    "list editor";
+    "list editor"
+    "scene scene";
   gap: 24px;
 }
+#cast-multi-scene { grid-area: scene; }
 
 .cast-header {
   grid-area: header;
@@ -3306,6 +3308,59 @@ textarea:focus {
   margin-top: 6px;
 }
 
+/* v0.92.0: multi-character scene preview. Lives in its own grid row
+   spanning both columns of cast-layout. */
+.cast-multi-scene {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-soft, var(--bg));
+}
+.cast-multi-scene-header h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+.cast-multi-scene-header p {
+  margin: 0 0 16px;
+}
+.cast-multi-scene-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.cast-multi-scene-prompt {
+  grid-column: 1 / -1;
+}
+.cast-multi-scene-actions {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.cast-multi-preview {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+.cast-multi-preview img {
+  max-width: 100%;
+  max-height: 60vh;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.cast-multi-preview-actions {
+  display: flex;
+  gap: 8px;
+}
+@media (max-width: 768px) {
+  .cast-multi-scene-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .cast-ref-delete:hover { color: var(--error); border-color: var(--error); }
 
 .cast-editor-footer {
@@ -3333,7 +3388,8 @@ textarea:focus {
     grid-template-areas:
       "header"
       "list"
-      "editor";
+      "editor"
+      "scene";
   }
 }
 
