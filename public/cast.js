@@ -327,6 +327,10 @@
       cb.addEventListener("change", () => {
         if (cb.checked) state.sourceSelection.add(s.key);
         else state.sourceSelection.delete(s.key);
+        // v0.91.0: training-set gate copy reflects selected sources;
+        // refresh on every toggle.
+        const c = findCast(state.selectedId);
+        if (c && typeof updateTrainingGate === "function") updateTrainingGate(c);
       });
       label.appendChild(cb);
       const img = document.createElement("img");
@@ -707,10 +711,38 @@
     }
   }
 
+  // v0.91.0: training-set generator now accepts EITHER the saved
+  // portrait OR the selected v0.90.0 sources as reference material.
+  // Gate is enabled when either is present. selectedTrainingSources()
+  // returns the [{key, mime}] list that generateTrainingSet should
+  // attach as FLUX 2 multi-reference inputs; empty array means "no
+  // sources selected, use the saved portrait" (previous behavior).
+  function selectedTrainingSources(c) {
+    if (!c || !Array.isArray(c.source_keys)) return [];
+    return c.source_keys.filter((s) => state.sourceSelection.has(s.key)).slice(0, 4);
+  }
+
   function updateTrainingGate(c) {
-    const disabled = !c || !c.portrait_key;
+    const usingSources = selectedTrainingSources(c);
+    const hasPortrait = !!(c && c.portrait_key);
+    const hasUsableRef = hasPortrait || usingSources.length > 0;
+    const disabled = !c || !hasUsableRef;
     $("#cast-training-btn").disabled = disabled || training.busy;
-    $("#cast-training-disabled").hidden = !disabled;
+    const hint = $("#cast-training-disabled");
+    if (!hint) return;
+    hint.hidden = !disabled;
+    if (disabled) {
+      hint.textContent = "save a portrait OR upload at least one reference photo above to enable this.";
+      hint.classList.remove("cast-gen-status-ok");
+    } else if (usingSources.length > 0) {
+      hint.hidden = false;
+      hint.textContent = `will use ${usingSources.length} selected source${usingSources.length === 1 ? "" : "s"} as the reference for all 10 training shots.`;
+      hint.classList.add("cast-gen-status-ok");
+    } else if (hasPortrait) {
+      hint.hidden = false;
+      hint.textContent = "will use the saved portrait as the reference (uncheck a source above to skip it, or check sources to override).";
+      hint.classList.add("cast-gen-status-ok");
+    }
   }
 
   async function generateTrainingSet() {
@@ -718,23 +750,42 @@
     if (!id) return;
     const c = findCast(id);
     if (!c) return;
-    if (!c.portrait_key) {
-      setTrainingStatus("save a portrait first", true);
+    if (training.busy) return;
+
+    // v0.91.0: prefer the user-selected v0.90.0 sources over the saved
+    // portrait when any are checked. If neither is available, refuse.
+    const sourcesToUse = selectedTrainingSources(c);
+    const useSources = sourcesToUse.length > 0;
+    if (!useSources && !c.portrait_key) {
+      setTrainingStatus("save a portrait or pick at least one source above first", true);
       return;
     }
-    if (training.busy) return;
-    if (!window.confirm("generate 10 training images? this takes about 2-4 minutes. you can navigate away mid-run; the saved refs will appear when you come back to this character.")) return;
+    const refLabel = useSources
+      ? `${sourcesToUse.length} selected source${sourcesToUse.length === 1 ? "" : "s"}`
+      : "the saved portrait";
+    if (!window.confirm(`generate 10 training images using ${refLabel} as the reference? this takes about 2-4 minutes. you can navigate away mid-run; the saved refs will appear when you come back to this character.`)) return;
 
     training.busy = true;
     training.abort = false;
     $("#cast-training-btn").disabled = true;
-    setTrainingStatus("loading portrait...");
+    setTrainingStatus(useSources ? "loading sources..." : "loading portrait...");
 
-    let portraitDataUrl;
+    // Build the attachments list once. FLUX 2 caps inputs at 4 per
+    // call (slice already applied in selectedTrainingSources); same
+    // pattern as v0.90.0 generatePortrait.
+    const attachments = [];
     try {
-      portraitDataUrl = await fetchPortraitAsDataUrl(c.portrait_key);
+      if (useSources) {
+        for (const s of sourcesToUse) {
+          const dataUrl = await fetchPortraitAsDataUrl(s.key);
+          attachments.push({ type: "image", mime: s.mime || "image/png", filename: "source.png", data: dataUrl });
+        }
+      } else {
+        const dataUrl = await fetchPortraitAsDataUrl(c.portrait_key);
+        attachments.push({ type: "image", mime: "image/png", filename: "portrait.png", data: dataUrl });
+      }
     } catch (e) {
-      setTrainingStatus("could not load portrait: " + e.message, true);
+      setTrainingStatus(`could not load ${useSources ? "sources" : "portrait"}: ` + e.message, true);
       training.busy = false;
       $("#cast-training-btn").disabled = false;
       return;
@@ -760,7 +811,7 @@
           body: JSON.stringify({
             model: getSelectedTrainingModelId(),
             user_input: promptText,
-            attachments: [{ type: "image", mime: "image/png", filename: "portrait.png", data: portraitDataUrl }],
+            attachments,
           }),
         });
         const oa = result && result.output_artifact;

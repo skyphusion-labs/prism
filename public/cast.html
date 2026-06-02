@@ -135,8 +135,8 @@
 
         <details id="cast-training-block" class="cast-gen-block">
           <summary>generate a 10-image training set</summary>
-          <p class="cast-section-hint">uses the saved portrait as a reference plus 10 diversified pose / framing / lighting prompts. generates one image at a time so we do not rate-limit; each result auto-saves as a ref. takes about 2-5 minutes total.</p>
-          <div id="cast-training-disabled" class="cast-gen-status">save a portrait first to enable this.</div>
+          <p class="cast-section-hint">uses your reference (saved portrait by default, or the checked sources from "generate from references" above if any are selected) plus 10 diversified pose / framing / lighting prompts. generates one image at a time so we do not rate-limit; each result auto-saves as a ref. takes about 2-5 minutes total.</p>
+          <div id="cast-training-disabled" class="cast-gen-status">save a portrait OR upload at least one reference photo above to enable this.</div>
           <!-- v0.65.0: model picker. Klein-9b is the default after empirical
                verification that it identity-conditions on the reference just
                like Dev does, and the gateway has had better availability for
