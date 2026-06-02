@@ -345,6 +345,17 @@ ALTER TABLE cast_members ADD COLUMN lora_job_id TEXT;
 ALTER TABLE cast_members ADD COLUMN lora_error TEXT;
 ALTER TABLE cast_members ADD COLUMN lora_trained_at TEXT;
 
+-- v0.90.0: persisted source / reference photos used as input material
+-- for portrait + training-set generation. The user uploads (or copies
+-- from a chat artifact) one or more "this is what they look like"
+-- reference images; the cast portrait generator and the 10-image
+-- training-set generator can attach these as FLUX.2 multi-reference
+-- inputs (up to 4 per call). Stored under cast/<id>/sources/<uuid>.<ext>
+-- in env.R2_RENDERS. Distinct from ref_keys (which are the LoRA
+-- training images derived FROM a portrait); sources are the raw human
+-- material the user pulled from their phone / web / wherever.
+ALTER TABLE cast_members ADD COLUMN source_keys_json TEXT NOT NULL DEFAULT '[]';
+
 -- ---------- Storyboard projects (v0.53.0) ----------
 --
 -- One row per persisted storyboard project per user_email. Holds the

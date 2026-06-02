@@ -24,6 +24,11 @@ export interface CastMember {
   portrait_key: string | null;
   portrait_mime: string | null;
   ref_keys: CastRefImage[];
+  // v0.90.0: persisted source/reference photos (the raw human material
+  // the user uploaded; distinct from ref_keys which are the LoRA
+  // training set derived from a portrait). Used by the cast portrait
+  // generator as FLUX.2 multi-reference inputs (up to 4 per call).
+  source_keys: CastRefImage[];
   created_at: string;
   updated_at: string;
   // v0.57.0: standalone LoRA training fields.
@@ -43,6 +48,8 @@ interface CastRow {
   portrait_key: string | null;
   portrait_mime: string | null;
   ref_keys_json: string;
+  // v0.90.0
+  source_keys_json: string | null;
   created_at: string;
   updated_at: string;
   // v0.57.0
@@ -53,7 +60,9 @@ interface CastRow {
   lora_trained_at: string | null;
 }
 
-function parseRefKeys(raw: string | null): CastRefImage[] {
+// Shared parser for the two JSON-array image-key columns (ref_keys_json
+// and source_keys_json). They have the identical {key, mime}[] shape.
+function parseImageKeyList(raw: string | null): CastRefImage[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -66,6 +75,11 @@ function parseRefKeys(raw: string | null): CastRefImage[] {
   } catch {
     return [];
   }
+}
+
+// Back-compat alias for any external caller that imported parseRefKeys.
+function parseRefKeys(raw: string | null): CastRefImage[] {
+  return parseImageKeyList(raw);
 }
 
 function normalizeLoraStatus(raw: string | null): LoraStatus {
@@ -82,7 +96,8 @@ function rowToCast(row: CastRow): CastMember {
     bible: row.bible,
     portrait_key: row.portrait_key,
     portrait_mime: row.portrait_mime,
-    ref_keys: parseRefKeys(row.ref_keys_json),
+    ref_keys: parseImageKeyList(row.ref_keys_json),
+    source_keys: parseImageKeyList(row.source_keys_json),
     created_at: row.created_at,
     updated_at: row.updated_at,
     lora_key: row.lora_key,
@@ -127,7 +142,7 @@ export async function allocateCastSlug(env: Env, userEmail: string, base: string
 export async function listCastForUser(env: Env, userEmail: string): Promise<CastMember[]> {
   const result = await env.DB.prepare(
     `SELECT id, user_email, slug, name, bible, portrait_key, portrait_mime,
-            ref_keys_json, created_at, updated_at,
+            ref_keys_json, source_keys_json, created_at, updated_at,
             lora_key, lora_status, lora_job_id, lora_error, lora_trained_at
        FROM cast_members
       WHERE user_email = ?
@@ -145,7 +160,7 @@ export async function getCastById(
 ): Promise<CastMember | null> {
   const row = await env.DB.prepare(
     `SELECT id, user_email, slug, name, bible, portrait_key, portrait_mime,
-            ref_keys_json, created_at, updated_at,
+            ref_keys_json, source_keys_json, created_at, updated_at,
             lora_key, lora_status, lora_job_id, lora_error, lora_trained_at
        FROM cast_members
       WHERE id = ? AND user_email = ?
@@ -167,7 +182,7 @@ export async function createCast(
     `INSERT INTO cast_members (user_email, slug, name, bible)
      VALUES (?, ?, ?, ?)
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at,
+               ref_keys_json, source_keys_json, created_at, updated_at,
             lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(userEmail, slug, input.name, input.bible ?? null)
@@ -201,7 +216,7 @@ export async function updateCast(
     `UPDATE cast_members SET ${fields.join(", ")}
       WHERE id = ? AND user_email = ?
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at,
+               ref_keys_json, source_keys_json, created_at, updated_at,
             lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(...values)
@@ -238,7 +253,7 @@ export async function setPortrait(
         SET portrait_key = ?, portrait_mime = ?, updated_at = datetime('now')
       WHERE id = ? AND user_email = ?
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at,
+               ref_keys_json, source_keys_json, created_at, updated_at,
             lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(key, mime, id, userEmail)
@@ -256,7 +271,7 @@ export async function clearPortrait(
         SET portrait_key = NULL, portrait_mime = NULL, updated_at = datetime('now')
       WHERE id = ? AND user_email = ?
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at,
+               ref_keys_json, source_keys_json, created_at, updated_at,
             lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(id, userEmail)
@@ -278,7 +293,7 @@ export async function addRef(
         SET ref_keys_json = ?, updated_at = datetime('now')
       WHERE id = ? AND user_email = ?
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at,
+               ref_keys_json, source_keys_json, created_at, updated_at,
             lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(JSON.stringify(next), id, userEmail)
@@ -303,12 +318,63 @@ export async function removeRef(
         SET ref_keys_json = ?, updated_at = datetime('now')
       WHERE id = ? AND user_email = ?
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at,
+               ref_keys_json, source_keys_json, created_at, updated_at,
             lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(JSON.stringify(next), id, userEmail)
     .first<CastRow>();
   return { row: result ? rowToCast(result) : null, removedKey: refKey };
+}
+
+// v0.90.0: persisted source/reference photos. Mirror the addRef /
+// removeRef shape but write to source_keys_json. Used by the cast
+// portrait + training-set generators as FLUX.2 multi-reference inputs.
+
+export async function addSource(
+  env: Env,
+  id: number,
+  userEmail: string,
+  src: CastRefImage,
+): Promise<CastMember | null> {
+  const cur = await getCastById(env, id, userEmail);
+  if (!cur) return null;
+  const next = [...cur.source_keys, src];
+  const result = await env.DB.prepare(
+    `UPDATE cast_members
+        SET source_keys_json = ?, updated_at = datetime('now')
+      WHERE id = ? AND user_email = ?
+     RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
+               ref_keys_json, source_keys_json, created_at, updated_at,
+            lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
+  )
+    .bind(JSON.stringify(next), id, userEmail)
+    .first<CastRow>();
+  return result ? rowToCast(result) : null;
+}
+
+export async function removeSource(
+  env: Env,
+  id: number,
+  userEmail: string,
+  srcKey: string,
+): Promise<{ row: CastMember | null; removedKey: string | null }> {
+  const cur = await getCastById(env, id, userEmail);
+  if (!cur) return { row: null, removedKey: null };
+  const next = cur.source_keys.filter((s) => s.key !== srcKey);
+  if (next.length === cur.source_keys.length) {
+    return { row: cur, removedKey: null };
+  }
+  const result = await env.DB.prepare(
+    `UPDATE cast_members
+        SET source_keys_json = ?, updated_at = datetime('now')
+      WHERE id = ? AND user_email = ?
+     RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
+               ref_keys_json, source_keys_json, created_at, updated_at,
+            lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
+  )
+    .bind(JSON.stringify(next), id, userEmail)
+    .first<CastRow>();
+  return { row: result ? rowToCast(result) : null, removedKey: srcKey };
 }
 
 // v0.57.0: standalone LoRA training fields. setLoraJob is called when
@@ -331,7 +397,7 @@ export async function setLoraJob(
             updated_at = datetime('now')
       WHERE id = ? AND user_email = ?
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at,
+               ref_keys_json, source_keys_json, created_at, updated_at,
                lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(jobId, id, userEmail)
@@ -355,7 +421,7 @@ export async function markLoraReady(
             updated_at = datetime('now')
       WHERE id = ? AND user_email = ?
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at,
+               ref_keys_json, source_keys_json, created_at, updated_at,
                lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(loraKey, id, userEmail)
@@ -377,7 +443,7 @@ export async function markLoraFailed(
             updated_at = datetime('now')
       WHERE id = ? AND user_email = ?
      RETURNING id, user_email, slug, name, bible, portrait_key, portrait_mime,
-               ref_keys_json, created_at, updated_at,
+               ref_keys_json, source_keys_json, created_at, updated_at,
                lora_key, lora_status, lora_job_id, lora_error, lora_trained_at`
   )
     .bind(errorMessage.slice(0, 4000), id, userEmail)

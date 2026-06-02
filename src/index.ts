@@ -29,6 +29,7 @@ import {
   listCastForUser, getCastById, createCast, updateCast, deleteCast,
   setPortrait as castSetPortrait, clearPortrait as castClearPortrait,
   addRef as castAddRef, removeRef as castRemoveRef,
+  addSource as castAddSource, removeSource as castRemoveSource,
   setLoraJob, markLoraReady, markLoraFailed,
 } from "./cast-db";
 import { buildLoraTrainingBundleArgs, deriveLoraDestKey } from "./lora-bundle";
@@ -564,6 +565,22 @@ export default {
     const castRefOne = url.pathname.match(/^\/api\/cast\/(\d+)\/refs\/(.+)$/);
     if (castRefOne && request.method === "DELETE") {
       return handleCastRefRemove(request, env, castRefOne[1], decodeURIComponent(castRefOne[2]));
+    }
+    // v0.90.0: persisted source / reference photos. Same shape as the
+    // refs routes (binary or JSON {from_chat_artifact}), but writes
+    // under cast/<id>/sources/<uuid>.<ext> and the source_keys_json
+    // column. Sources are the raw human reference material the user
+    // uploads (their photo, a celebrity headshot, etc.) and are
+    // attached as FLUX.2 multi-reference inputs when the cast
+    // portrait generator runs. ref_keys remain the LoRA-training set
+    // derived from a saved portrait.
+    const castSources = url.pathname.match(/^\/api\/cast\/(\d+)\/sources$/);
+    if (castSources && request.method === "POST") {
+      return handleCastSourceAdd(request, env, castSources[1]);
+    }
+    const castSourceOne = url.pathname.match(/^\/api\/cast\/(\d+)\/sources\/(.+)$/);
+    if (castSourceOne && request.method === "DELETE") {
+      return handleCastSourceRemove(request, env, castSourceOne[1], decodeURIComponent(castSourceOne[2]));
     }
     // v0.57.0: standalone LoRA training. POST kicks off the job (cast
     // member must have a portrait + refs); GET polls and adopts
@@ -3228,6 +3245,99 @@ async function handleCastRefRemove(
   if (!result.row) return json({ error: "cast not found" }, { status: 404 });
   if (!result.removedKey) {
     return json({ error: "ref key not in this cast member's set" }, { status: 404 });
+  }
+  try { await env.R2_RENDERS.delete(result.removedKey); } catch { /* ignore */ }
+  return json({ cast: result.row });
+}
+
+// ---------- /api/cast/:id/sources (v0.90.0) ----------
+//
+// Persisted source/reference photos. Same shape as the refs routes
+// but writes under cast/<id>/sources/<uuid>.<ext> and the
+// source_keys_json column on the cast row. Sources are the raw human
+// reference material (a photo of the actor, a celebrity headshot, a
+// fashion still) that the cast portrait generator attaches as
+// FLUX.2 multi-reference inputs alongside the user's prompt. Distinct
+// from refs, which are the LoRA-training set derived from a portrait.
+
+async function handleCastSourceAdd(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
+  const cur = await getCastById(env, id, userEmail);
+  if (!cur) return json({ error: "cast not found" }, { status: 404 });
+
+  const contentType = (request.headers.get("content-type") || "").toLowerCase();
+
+  // JSON branch: {from_chat_artifact: "out/<uuid>.png"} server-side
+  // R2 copy from env.R2 (chat outputs) into env.R2_RENDERS. Same
+  // pattern as the refs JSON branch; the v0.87.0 chat send-to-cast
+  // button can target sources too.
+  if (contentType.startsWith("application/json")) {
+    let body: { from_chat_artifact?: unknown };
+    try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, { status: 400 }); }
+    const srcKey = typeof body.from_chat_artifact === "string" ? body.from_chat_artifact : "";
+    if (!srcKey) return json({ error: "from_chat_artifact required" }, { status: 400 });
+    const obj = await env.R2.get(srcKey);
+    if (!obj) return json({ error: `source artifact not found: ${srcKey}` }, { status: 404 });
+    if (obj.customMetadata?.user_email !== userEmail) {
+      return json({ error: "source artifact not owned by this user" }, { status: 403 });
+    }
+    const mime = obj.httpMetadata?.contentType || "image/png";
+    if (!CAST_IMAGE_MIME_RE.test(mime)) {
+      return json({ error: `source mime ${mime} not allowed (png/jpeg/webp only)` }, { status: 400 });
+    }
+    const bytes = new Uint8Array(await obj.arrayBuffer());
+    if (bytes.length > CAST_MAX_BYTES) {
+      return json({ error: "source image too large (16 MB max)" }, { status: 413 });
+    }
+    const key = `cast/${id}/sources/${crypto.randomUUID()}.${extFromMime(mime)}`;
+    await env.R2_RENDERS.put(key, bytes, {
+      httpMetadata: { contentType: mime },
+      customMetadata: { user_email: userEmail },
+    });
+    const row = await castAddSource(env, id, userEmail, { key, mime });
+    return json({ cast: row });
+  }
+
+  // Binary upload.
+  if (!CAST_IMAGE_MIME_RE.test(contentType)) {
+    return json(
+      { error: `content-type must be image/png, image/jpeg, or image/webp (got ${contentType || "<missing>"})` },
+      { status: 400 },
+    );
+  }
+  const buf = await request.arrayBuffer();
+  if (buf.byteLength === 0) return json({ error: "empty body" }, { status: 400 });
+  if (buf.byteLength > CAST_MAX_BYTES) {
+    return json({ error: "image too large (16 MB max)" }, { status: 413 });
+  }
+  const key = `cast/${id}/sources/${crypto.randomUUID()}.${extFromMime(contentType)}`;
+  await env.R2_RENDERS.put(key, new Uint8Array(buf), {
+    httpMetadata: { contentType },
+    customMetadata: { user_email: userEmail },
+  });
+  const row = await castAddSource(env, id, userEmail, { key, mime: contentType });
+  return json({ cast: row });
+}
+
+async function handleCastSourceRemove(
+  request: Request,
+  env: Env,
+  idStr: string,
+  srcKey: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
+  const result = await castRemoveSource(env, id, userEmail, srcKey);
+  if (!result.row) return json({ error: "cast not found" }, { status: 404 });
+  if (!result.removedKey) {
+    return json({ error: "source key not in this cast member's set" }, { status: 404 });
   }
   try { await env.R2_RENDERS.delete(result.removedKey); } catch { /* ignore */ }
   return json({ cast: result.row });

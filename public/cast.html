@@ -75,9 +75,29 @@
           <button id="cast-portrait-clear" type="button" class="cast-secondary-btn" disabled>clear</button>
         </div>
 
-        <details class="cast-gen-block">
-          <summary>generate a portrait via chat</summary>
-          <p class="cast-section-hint">pick any image-gen model, type a prompt (auto-prefilled from the bible if empty), preview the result, accept to save as the portrait.</p>
+        <!-- v0.90.0: photo-to-character generator. Promoted out of the
+             <details> shell because this is the marquee flow on this
+             page. Upload one or more reference photos (FLUX 2 Dev /
+             Klein accept up to 4 input images per call), write a
+             freeform prompt describing the character you want, the
+             model returns one image. Accept to save as the portrait.
+             Persisted sources sit on the cast row so the user can
+             iterate without re-uploading. -->
+        <section class="cast-gen-section">
+          <header class="cast-section-header">
+            <h3>generate from references</h3>
+            <p class="cast-section-hint">upload up to 4 reference photos (face / outfit / pose / prop), pick an image-gen model, write a prompt describing the character you want. preview the result, accept to save as the portrait.</p>
+          </header>
+
+          <div class="cast-source-pane">
+            <ul id="cast-sources-list" class="cast-sources-list"></ul>
+            <label class="cast-upload-btn">
+              upload reference photo
+              <input id="cast-source-file" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+            </label>
+            <p class="cast-section-hint cast-sources-hint">FLUX 2 picks up to 4. extras are ignored. uncheck to skip on the next generate without deleting.</p>
+          </div>
+
           <div class="cast-gen-grid">
             <label class="cast-field">
               <span>model</span>
@@ -99,7 +119,7 @@
               <button id="cast-portrait-gen-discard" type="button" class="cast-secondary-btn">discard</button>
             </div>
           </div>
-        </details>
+        </section>
       </section>
 
       <section class="cast-refs-pane">

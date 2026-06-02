@@ -3249,6 +3249,63 @@ textarea:focus {
   text-transform: lowercase;
 }
 
+/* v0.90.0: source/reference photo gallery for the portrait generator. */
+.cast-gen-section {
+  margin-top: 20px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-soft, var(--bg));
+}
+.cast-source-pane {
+  margin-bottom: 12px;
+}
+.cast-sources-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+}
+.cast-source-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cast-source-check {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+.cast-source-check input[type="checkbox"] {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 2;
+  margin: 0;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+.cast-source-check img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.cast-source-check input[type="checkbox"]:not(:checked) ~ img {
+  opacity: 0.4;
+  filter: grayscale(0.7);
+}
+.cast-sources-hint {
+  margin-top: 6px;
+}
+
 .cast-ref-delete:hover { color: var(--error); border-color: var(--error); }
 
 .cast-editor-footer {

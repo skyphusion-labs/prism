@@ -16,6 +16,12 @@
     cast: [],
     selectedId: null,
     dirty: false,
+    // v0.90.0: per-edit-session set of source keys the user wants
+    // attached to the NEXT portrait generation. Repopulated on every
+    // populateEditor (default: include every persisted source); the
+    // user can uncheck individual sources to skip them on one
+    // generate without removing them from the row.
+    sourceSelection: new Set(),
   };
 
   // The ref key path-segment can contain "/" (cast/<id>/refs/<uuid>.<ext>);
@@ -166,6 +172,15 @@
       refs.appendChild(li);
     }
 
+    // v0.90.0: render the persisted source/reference photos used as
+    // FLUX.2 multi-reference inputs for portrait generation. Default
+    // every source to "selected" on editor open; the per-thumbnail
+    // checkbox lets the user skip individual sources for a single
+    // generate without deleting them.
+    const sources = c.source_keys || [];
+    state.sourceSelection = new Set(sources.map((s) => s.key));
+    renderSources(sources);
+
     markDirty(false);
 
     // v0.47.0: keep generation UI in sync with the freshly-populated row.
@@ -291,6 +306,78 @@
       renderCastList();
     } catch (e) {
       window.alert("clear failed: " + e.message);
+    }
+  }
+
+  // v0.90.0: source-photo helpers. Mirror the ref upload/remove path
+  // but write to /api/cast/:id/sources and the source_keys array.
+
+  function renderSources(sources) {
+    const list = $("#cast-sources-list");
+    if (!list) return;
+    list.innerHTML = "";
+    for (const s of sources) {
+      const li = document.createElement("li");
+      li.className = "cast-source-item";
+      const label = document.createElement("label");
+      label.className = "cast-source-check";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = state.sourceSelection.has(s.key);
+      cb.addEventListener("change", () => {
+        if (cb.checked) state.sourceSelection.add(s.key);
+        else state.sourceSelection.delete(s.key);
+      });
+      label.appendChild(cb);
+      const img = document.createElement("img");
+      img.src = artifactUrl(s.key);
+      img.alt = "source";
+      img.loading = "lazy";
+      label.appendChild(img);
+      li.appendChild(label);
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "cast-ref-delete";
+      del.textContent = "remove";
+      del.dataset.sourceKey = s.key;
+      del.addEventListener("click", () => removeSource(s.key));
+      li.appendChild(del);
+      list.appendChild(li);
+    }
+  }
+
+  async function uploadSourceFile(file) {
+    const id = state.selectedId;
+    if (!id || !file) return;
+    try {
+      const data = await api("/api/cast/" + id + "/sources", {
+        method: "POST",
+        headers: { "content-type": file.type || "image/png" },
+        body: file,
+      });
+      const idx = state.cast.findIndex((c) => c.id === id);
+      if (idx >= 0) state.cast[idx] = data.cast;
+      populateEditor(data.cast);
+      renderCastList();
+    } catch (e) {
+      window.alert("source upload failed: " + e.message);
+    }
+  }
+
+  async function removeSource(key) {
+    const id = state.selectedId;
+    if (!id) return;
+    if (!window.confirm("remove this source photo?")) return;
+    try {
+      const data = await api("/api/cast/" + id + "/sources/" + encodeRefKey(key), {
+        method: "DELETE",
+      });
+      const idx = state.cast.findIndex((c) => c.id === id);
+      if (idx >= 0) state.cast[idx] = data.cast;
+      populateEditor(data.cast);
+      renderCastList();
+    } catch (e) {
+      window.alert("remove failed: " + e.message);
     }
   }
 
@@ -520,13 +607,40 @@
     }
     portraitGen.busy = true;
     $("#cast-portrait-gen-btn").disabled = true;
-    setPortraitGenStatus("generating (10-40s depending on model)...");
     hidePortraitGenPreview();
     try {
+      // v0.90.0: attach the user-selected source photos as FLUX.2
+      // multi-reference inputs. FLUX 2 accepts up to 4 input images
+      // per call (the worker enforces the cap server-side too);
+      // we take the first 4 selected sources. Sources live in R2
+      // already, so we fetch + downscale each to a 512px data URL
+      // before stuffing them into the attachments array (the chat
+      // path expects data URLs in this shape).
+      const sources = (c.source_keys || []).filter((s) => state.sourceSelection.has(s.key)).slice(0, 4);
+      const attachments = [];
+      if (sources.length > 0) {
+        setPortraitGenStatus(`preparing ${sources.length} reference${sources.length === 1 ? "" : "s"}...`);
+        for (const s of sources) {
+          const dataUrl = await fetchPortraitAsDataUrl(s.key);
+          attachments.push({
+            type: "image",
+            data: dataUrl,
+            mime: "image/png",
+            filename: "reference.png",
+          });
+        }
+      }
+      setPortraitGenStatus(sources.length > 0
+        ? `generating with ${sources.length} reference${sources.length === 1 ? "" : "s"} (10-40s)...`
+        : "generating (10-40s depending on model)...");
       const result = await api("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: modelId, user_input: prompt }),
+        body: JSON.stringify({
+          model: modelId,
+          user_input: prompt,
+          attachments: attachments.length > 0 ? attachments : undefined,
+        }),
       });
       const oa = result && result.output_artifact;
       if (!oa || oa.type !== "image" || !oa.key) {
@@ -701,6 +815,17 @@
       if (f) uploadRefFile(f);
       e.target.value = "";
     });
+    // v0.90.0: source/reference photo uploader for the portrait
+    // generator. Drops uploads directly into env.R2_RENDERS under
+    // cast/<id>/sources/.
+    const sourceFile = $("#cast-source-file");
+    if (sourceFile) {
+      sourceFile.addEventListener("change", (e) => {
+        const f = e.target.files && e.target.files[0];
+        if (f) uploadSourceFile(f);
+        e.target.value = "";
+      });
+    }
 
     // v0.47.0: portrait + training-set generation.
     $("#cast-portrait-gen-btn").addEventListener("click", generatePortrait);
