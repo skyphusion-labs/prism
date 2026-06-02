@@ -642,6 +642,72 @@ textarea:focus {
 
 .output-actions a:hover { color: var(--accent-hover); }
 
+/* v0.87.0: send-to-cast affordance on chat image artifacts. */
+.cast-send-toggle {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.2rem 0.5rem;
+  margin-left: 0.6rem;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.cast-send-toggle:hover { color: var(--accent-hover); border-color: var(--accent-hover); }
+
+.cast-send-panel {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  text-align: left;
+}
+.cast-send-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.cast-send-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted, #888);
+}
+.cast-send-target {
+  flex: 1;
+}
+.cast-send-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+.cast-send-actions button {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.25rem 0.6rem;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.cast-send-actions button[disabled] { opacity: 0.5; cursor: default; }
+.cast-send-actions button:not([disabled]):hover {
+  color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.cast-send-status {
+  min-height: 1em;
+  font-size: 0.75rem;
+  color: var(--muted, #888);
+}
+
 .loaded-attachments:empty { display: none; }
 .loaded-attachments .attachment .remove { display: none; }
 
