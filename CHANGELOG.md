@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.98.0
+
+Rolled back the v0.97.0 cast-portrait container integration. The bg-removal step moves pod-side to `vivijure-serverless 0.4.56`; portrait uploads pass through to R2 raw again.
+
+### Why
+
+The Cloudflare Container the v0.97.0 commit wired up never reached an active state. Container instances list as healthy on the dashboard but the runtime never promotes them, and the same behavior reproduces with a stdlib hello-world image on the same account, so the issue is broader than the rembg build. Container-side logs surfaced one signal (`/dev/shm` missing for numba's multiprocessing semaphores) but the hello-world test shows there is more going on; root-causing further needs CF support. In the meantime every portrait upload through v0.97.0 was returning 502, which had to stop.
+
+### What ships
+
+- `src/index.ts` `handleCastPortraitUpload`, both branches: dropped the `cleanPortrait` calls and the cleaned-bytes path; portrait bytes now go straight to R2 under `cast/<id>/portrait.<ext>` with the source mime, same as pre-v0.97.0 behavior.
+- The whole Container code surface stays in place so the path can be re-enabled when CF resolves the runtime issue: `containers/rembg/` (Dockerfile, requirements.txt, main.py), `src/containers/rembg.ts` (DO wrapper + `cleanPortrait` helper), and the `[[durable_objects.bindings]]` + `[[containers]]` blocks in `wrangler.example.toml`. The container builds and runs correctly locally; only the CF runtime is blocked.
+- `package.json`: 0.97.0 to 0.98.0.
+
+### Where the cleaning happens now
+
+`vivijure-serverless 0.4.56` adds rembg + composite-on-black to `multi_character_regional.py:_slot_portraits`. The IP-Adapter at the regional render path sees a clean subject-on-black plate regardless of what the user uploaded; the saved portrait stays as the raw upload. Same end-user behavior, different deploy target.
+
+## v0.97.0
+
+New Cloudflare Container running rembg + u2net for the cast portrait flow. Wires the cast portrait endpoints to strip backdrops and composite the subject onto solid black before writing to R2, so the vivijure-serverless regional render path's IP-Adapter sees a clean conditioning input.
+
+### Why
+
+Smokes v22 through v26 on the regional render path confirmed that the IP-Adapter at scale 0.7 projects the portrait backdrop straight into the rendered keyframe: a studio-gray portrait leaks gray into every shot, an environmental portrait causes the two regional masks to merge into one fused figure (CLIP encoder confused by busy bg overlapping subject), and only a subject-on-pure-black plate gives the right behavior (two distinct figures + scene-driven backdrop). The manual workflow used in v26 (run rembg locally, upload the result) does not generalize to users uploading raw photos, so the cleaning needs to happen automatically at portrait write time.
+
+### What ships
+
+- `containers/rembg/`: new container project. Dockerfile pinned to `python:3.12-slim`, requirements pinned to versions validated against smoke v26 (`rembg==2.0.75`, `onnxruntime==1.26.0`, FastAPI + uvicorn). `u2net.onnx` baked into the image at build time so cold-starts do not include the 176 MB GitHub-releases download. One endpoint: `POST /clean` accepts image bytes, returns PNG bytes of the subject on solid black.
+- `src/containers/rembg.ts`: `RembgContainer` Durable Object wrapper extending `Container` from `@cloudflare/containers`; `defaultPort = 8080`, `sleepAfter = "5m"`. `cleanPortrait(env, bytes)` helper hides the DO stub plumbing from the handlers and throws on non-2xx.
+- `wrangler.example.toml`: new `[[durable_objects.bindings]]` for `REMBG_CONTAINER`, `[[containers]]` block pointing at the Dockerfile, and `[[migrations]]` block registering the DO class.
+- `src/env.ts`: `REMBG_CONTAINER: DurableObjectNamespace` binding.
+- `src/index.ts`: `RembgContainer` re-exported from the worker entry (Cloudflare runtime needs the class importable from the entry to bind it). `handleCastPortraitUpload` both branches (binary upload + JSON `{from_chat_artifact}`) pipe bytes through `cleanPortrait` before the R2 write; cleaned output is always PNG so the portrait_key carries `.png` regardless of source format. `handleCastSourceAdd` is intentionally not wired — sources are FLUX 2 multi-reference inputs for the cast portrait + training-set generators (v0.90.0 / v0.91.0), never fed to the regional render path's IP-Adapter.
+- `package.json`: 0.96.0 to 0.97.0; `@cloudflare/containers` dependency added.
+
+### Note
+
+The CF Container path turned out to be blocked at runtime (see v0.98.0); this entry documents the design and the code surface that ships with the worker, but the integration is disabled by the v0.98.0 rollback.
+
 ## v0.95.0
 
 Removed Amazon Bedrock entirely (Nova family + TwelveLabs Pegasus) and the `aws4fetch` dependency it pulled in.
