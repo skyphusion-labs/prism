@@ -155,13 +155,15 @@
       <ol id="planner-scenes-list" class="planner-scenes-list"></ol>
     </section>
 
-    <!-- v0.51.0: audio bed + beat-driven shot timing. Optional; the
-         render still produces silent video either way (server-side
-         mux is a follow-up). Generate via MiniMax Music 2.6 through
-         the existing /api/chat music dispatcher, or upload a BYO
-         mp3/wav/aac/ogg/m4a via /api/storyboard/audio-upload. BPM
-         input + snap buttons mutate scene target_seconds; the YAML
-         pane refreshes automatically through the v0.49.0 hook. -->
+    <!-- v0.51.0: audio bed + beat-driven shot timing. Optional; with no
+         audio set the render stays silent. When an audioKey IS set it
+         flows to render + finalize as audio_key (v0.52.0) and the GPU
+         muxes it onto the final MP4 via export_film(with_audio=True).
+         Generate via MiniMax Music 2.6 through the existing /api/chat
+         music dispatcher, or upload a BYO mp3/wav/aac/ogg/m4a via
+         /api/storyboard/audio-upload. BPM input + snap buttons mutate
+         scene target_seconds; the YAML pane refreshes automatically
+         through the v0.49.0 hook. -->
     <section id="planner-audio" class="planner-stage" hidden>
       <header class="planner-stage-header">
         <h2 class="planner-stage-title">audio bed + beat timing</h2>
