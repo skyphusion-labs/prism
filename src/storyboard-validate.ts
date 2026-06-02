@@ -20,6 +20,52 @@ export const SLOT_IDS: readonly SlotId[] = ["A", "B", "C", "D"] as const;
 
 const SLOT_SET: ReadonlySet<string> = new Set(SLOT_IDS);
 
+// v0.80.0: content-shape guards that the GPU renderer relies on but the
+// structural validator (lines below) historically did not enforce.
+// These caps protect downstream paths from LLM Assist outputs that pass
+// the structural schema but break renderer constraints. See the audit
+// memo for the four gaps these close.
+//
+// SCENE_PROMPT_MAX_TOKENS: SDXL's CLIP-L and OpenCLIP-G text encoders
+// each cap at 77 tokens. Diffusers silently truncates above that. The
+// pod's regional path prepends 2-4 trigger tokens + ~10 style_prefix
+// tokens, leaving ~60 tokens of scene-prompt budget before truncation
+// starts dropping setting clauses. Word-to-token ratio for English in
+// the BPE tokenizers SDXL uses is ~1.3 tokens per word, so the word
+// count check uses 60 / 1.3 = ~46 words. We round to 50 with a small
+// margin and surface the offending scene + word count in the error.
+export const SCENE_PROMPT_MAX_WORDS = 50;
+// Hard cap on scenes per storyboard. The pod's max_scenes default is
+// 100; below 50 is the preflight comfort zone. A 50-scene render with
+// Wan I2V at ~30s per shot is already ~25 minutes of GPU time, beyond
+// which RunPod's per-job timeout starts mattering more than schema.
+export const STORYBOARD_MAX_SCENES = 50;
+// Length caps on the two top-level free-text strings the renderer
+// reads at manifest-build time. style_prefix is what the pod's 0.4.38
+// background_prompt() now leans on - an LLM Assist style_prefix > 256
+// chars would itself overflow CLIP 77 even before any scene-prompt
+// tokens are added.
+export const FULL_PROMPT_MAX_CHARS = 1024;
+export const STYLE_PREFIX_MAX_CHARS = 256;
+// Scene-id format the renderer expects (core.py shot manifest looks up
+// scenes by this id). LLM Assist outputs like "scene_dramatic_sunset"
+// silently break downstream tools that expect the shot_NN pattern.
+// Coerce rather than reject so the LLM doesn't have to know the format;
+// the validator renumbers in declaration order.
+const SHOT_ID_RE = /^shot_\d+$/;
+
+function countWords(prompt: string): number {
+  return prompt.trim().split(/\s+/).filter((w) => w.length > 0).length;
+}
+
+function coerceShotId(rawId: string | undefined, index: number): string {
+  const desired = `shot_${String(index + 1).padStart(2, "0")}`;
+  if (typeof rawId !== "string") return desired;
+  const trimmed = rawId.trim();
+  if (trimmed.length === 0) return desired;
+  return SHOT_ID_RE.test(trimmed) ? trimmed : desired;
+}
+
 // One entry per shot. Only `prompt` is required; the rest flow through
 // to core.build_manifest's per-scene reader unchanged.
 export interface StoryboardScene {
@@ -186,6 +232,13 @@ export function validateStoryboard(input: unknown): ValidationResult {
     errors.push(
       "scenes is required and must be a non-empty array (got empty array)",
     );
+  } else if (input.scenes.length > STORYBOARD_MAX_SCENES) {
+    // v0.80.0: hard cap on scene count. Preflight warns at 24; this
+    // is the firm ceiling. Catches LLM Assist outputs that try to
+    // produce a 100-shot epic on a draft pass.
+    errors.push(
+      `scenes count ${input.scenes.length} exceeds the hard cap of ${STORYBOARD_MAX_SCENES} (preflight warns at 24; consider splitting the storyboard or shortening the duration)`,
+    );
   } else {
     input.scenes.forEach((scene, i) => {
       if (!isPlainObject(scene)) {
@@ -205,18 +258,34 @@ export function validateStoryboard(input: unknown): ValidationResult {
         errors.push(`${label} is missing prompt (must be a non-empty string)`);
       } else {
         out.prompt = scene.prompt;
-      }
-
-      // id: optional string
-      if (scene.id !== undefined) {
-        if (typeof scene.id !== "string") {
+        // v0.80.0: token-count guard so LLM Assist outputs that
+        // overflow SDXL's CLIP 77-token limit get caught here
+        // rather than silently truncating at render time. The pod's
+        // regional path prepends triggers + style_prefix, leaving
+        // ~60 tokens of headroom, ~46 words at 1.3 tokens/word; we
+        // cap at 50 with a small margin.
+        const wc = countWords(scene.prompt);
+        if (wc > SCENE_PROMPT_MAX_WORDS) {
           errors.push(
-            `${label} id must be a string if provided (got ${describeType(scene.id)})`,
+            `${label} prompt is ${wc} words; cap is ${SCENE_PROMPT_MAX_WORDS} to fit within SDXL CLIP 77 tokens after triggers + style_prefix. Tighten the prompt or move appearance details to the cast bible.`,
           );
-        } else {
-          out.id = scene.id;
         }
       }
+
+      // id: optional; v0.80.0 always coerces to the shot_NN pattern
+      // the renderer expects. LLM Assist outputs like
+      // "scene_dramatic_sunset" become "shot_NN" in declaration
+      // order. A valid scene.id like "shot_07" survives intact.
+      // Non-string ids are tolerated (coerced to the default).
+      if (scene.id !== undefined && typeof scene.id !== "string") {
+        errors.push(
+          `${label} id must be a string if provided (got ${describeType(scene.id)})`,
+        );
+      }
+      out.id = coerceShotId(
+        typeof scene.id === "string" ? scene.id : undefined,
+        i,
+      );
 
       // character_slots: optional array of SlotId, must be subset of useCharacters
       if (scene.character_slots !== undefined) {
@@ -323,6 +392,13 @@ export function validateStoryboard(input: unknown): ValidationResult {
       errors.push(
         `full_prompt must be a string if provided (got ${describeType(input.full_prompt)})`,
       );
+    } else if (input.full_prompt.length > FULL_PROMPT_MAX_CHARS) {
+      // v0.80.0: cap free-text length so a runaway LLM Assist
+      // synopsis can't bloat the manifest. full_prompt is read at
+      // manifest-build time on the pod.
+      errors.push(
+        `full_prompt is ${input.full_prompt.length} chars; cap is ${FULL_PROMPT_MAX_CHARS}`,
+      );
     } else {
       fullPrompt = input.full_prompt;
     }
@@ -333,6 +409,14 @@ export function validateStoryboard(input: unknown): ValidationResult {
     if (typeof input.style_prefix !== "string") {
       errors.push(
         `style_prefix must be a string if provided (got ${describeType(input.style_prefix)})`,
+      );
+    } else if (input.style_prefix.length > STYLE_PREFIX_MAX_CHARS) {
+      // v0.80.0: style_prefix is what the pod's 0.4.38 background_
+      // prompt() builds the bg backplate from; an LLM Assist output
+      // over 256 chars would itself overflow CLIP 77 before any
+      // scene-prompt tokens are added.
+      errors.push(
+        `style_prefix is ${input.style_prefix.length} chars; cap is ${STYLE_PREFIX_MAX_CHARS} (the pod's bg-pass uses style_prefix verbatim and SDXL CLIP truncates at 77 tokens)`,
       );
     } else {
       stylePrefix = input.style_prefix;

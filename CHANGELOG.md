@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.80.0
+
+LLM Assist content guards. The structural validator in `src/storyboard-validate.ts` historically only checked JSON shape (required fields, slot IDs, types). The four content-shape constraints the GPU renderer depends on are now enforced too, closing the gaps an LLM Assist (`POST /api/storyboard/plan`, `POST /api/storyboard/refine`) output could slip through.
+
+### What now fails validation
+
+- **Scene prompt over 50 words.** SDXL's CLIP-L and OpenCLIP-G each cap at 77 tokens; the pod's regional path prepends ~15 tokens of triggers + style_prefix, leaving ~60 tokens of scene-prompt budget at ~1.3 tokens/word. 50 words is a small safety margin. Error names the offending scene and word count so the user (or the re-prompt loop) knows where to tighten.
+- **Scene count over 50.** Preflight warns at 24; this is the firm ceiling. Catches an LLM Assist trying to produce a 100-shot epic on a draft pass.
+- **`full_prompt` over 1024 chars.** Cap on the top-level synopsis field that the pod reads at manifest-build time.
+- **`style_prefix` over 256 chars.** The pod's 0.4.38 `background_prompt()` builds the bg backplate verbatim from `style_prefix`; a 2000-char LLM Assist style_prefix would itself overflow CLIP 77 before any scene-prompt tokens are added.
+
+### What now silently coerces
+
+- **Scene IDs always normalize to `shot_NN`.** LLM Assist outputs like `"scene_dramatic_sunset"` or `""` get renumbered in declaration order; a valid `"shot_07"` is preserved. The renderer looks up scenes by id, and downstream tools assume `shot_NN`; coercion (rather than rejection) means the LLM doesn't have to know the format.
+
+### Defense in depth
+
+The bundle assembler still re-validates defensively at bundle time, so these guards run twice (LLM Assist response path + bundle path). On the pod side, vivijure-serverless 0.4.44 ships an appositive-strip on the regional prompt as a third line of defense.
+
+### Tests
+
+464 → 473 (9 new guard tests covering all 4 caps + the coercion behavior). Type-check clean.
+
 ## v0.79.0
 
 Phase 12 of the worker-pod config pull. Four more config.yaml regions become routable from the web Worker: `loras.training` extras (4 keys the v0.68.0 LoraTrainOverrides didn't cover: `enabled`, `min_images`, `max_images`, `trigger_template`), `loras.default_scale` (1 key), `quality.*` ffmpeg encoding knobs (`assemble_crf`, `assemble_preset`), and `image_models.default_profile`. Pod side landed in vivijure-serverless 0.4.37.

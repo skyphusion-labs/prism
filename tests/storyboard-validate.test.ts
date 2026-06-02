@@ -44,8 +44,10 @@ describe("validateStoryboard", () => {
       if (result.ok) {
         expect(result.value.title).toBe("my project");
         expect(result.value.projectName).toBe("my_project");
+        // v0.80.0: scenes always carry an id (coerced to shot_NN
+        // when LLM Assist omits it or emits a non-matching string).
         expect(result.value.scenes).toEqual([
-          { prompt: "Wide shot of a hilltop." },
+          { id: "shot_01", prompt: "Wide shot of a hilltop." },
         ]);
         // Defaults
         expect(result.value.style_category).toBe("None");
@@ -539,6 +541,132 @@ describe("validateStoryboard", () => {
   describe("invariants", () => {
     it("SLOT_IDS matches characters.SLOTS = ['A', 'B', 'C', 'D']", () => {
       expect([...SLOT_IDS]).toEqual(["A", "B", "C", "D"]);
+    });
+  });
+
+  // v0.80.0: content-shape guards that protect the GPU renderer from
+  // LLM Assist outputs that pass structural validation but break
+  // downstream constraints (CLIP-77 token cap, scene count, shot_NN
+  // pattern, free-text bloat).
+  describe("v0.80.0 content guards", () => {
+    const sceneOk = (prompt: string) => ({ prompt });
+    const baseOk = {
+      title: "demo",
+      scenes: [sceneOk("Aria sits beside Marcus around a small campfire.")],
+    };
+
+    it("rejects scene prompt over 50 words (SDXL CLIP-77 budget)", () => {
+      const longPrompt = Array.from({ length: 60 }, (_, i) => `word${i}`).join(
+        " ",
+      );
+      const r = validateStoryboard({
+        ...baseOk,
+        scenes: [sceneOk(longPrompt)],
+      });
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(
+        r.errors.some((e) => /60 words/.test(e) && /cap is 50/.test(e)),
+      ).toBe(true);
+    });
+
+    it("accepts a scene prompt at exactly 50 words", () => {
+      const fiftyPrompt = Array.from({ length: 50 }, (_, i) => `word${i}`).join(
+        " ",
+      );
+      const r = validateStoryboard({
+        ...baseOk,
+        scenes: [sceneOk(fiftyPrompt)],
+      });
+      expect(r.ok).toBe(true);
+    });
+
+    it("rejects more than 50 scenes (hard cap)", () => {
+      const r = validateStoryboard({
+        ...baseOk,
+        scenes: Array.from({ length: 51 }, () => sceneOk("ok scene")),
+      });
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(
+        r.errors.some(
+          (e) => /scenes count 51/.test(e) && /hard cap of 50/.test(e),
+        ),
+      ).toBe(true);
+    });
+
+    it("accepts 50 scenes (at the cap)", () => {
+      const r = validateStoryboard({
+        ...baseOk,
+        scenes: Array.from({ length: 50 }, () => sceneOk("ok scene")),
+      });
+      expect(r.ok).toBe(true);
+    });
+
+    it("coerces a non-shot_NN scene id to shot_NN (LLM emits 'scene_a')", () => {
+      const r = validateStoryboard({
+        ...baseOk,
+        scenes: [
+          { id: "scene_a", prompt: "Aria walks in." },
+          { id: "shot_42", prompt: "Marcus appears." },
+          { id: "", prompt: "campfire." },
+        ],
+      });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      // First scene's bad id becomes shot_01; second is preserved;
+      // third (empty) becomes shot_03.
+      expect(r.value.scenes[0].id).toBe("shot_01");
+      expect(r.value.scenes[1].id).toBe("shot_42");
+      expect(r.value.scenes[2].id).toBe("shot_03");
+    });
+
+    it("coerces an undefined scene id to shot_NN in declaration order", () => {
+      const r = validateStoryboard({
+        ...baseOk,
+        scenes: [
+          { prompt: "first" },
+          { prompt: "second" },
+        ],
+      });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value.scenes[0].id).toBe("shot_01");
+      expect(r.value.scenes[1].id).toBe("shot_02");
+    });
+
+    it("rejects full_prompt over 1024 chars", () => {
+      const r = validateStoryboard({
+        ...baseOk,
+        full_prompt: "a".repeat(1025),
+      });
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(
+        r.errors.some((e) => /full_prompt is 1025 chars/.test(e)),
+      ).toBe(true);
+    });
+
+    it("accepts full_prompt at 1024 chars", () => {
+      const r = validateStoryboard({
+        ...baseOk,
+        full_prompt: "a".repeat(1024),
+      });
+      expect(r.ok).toBe(true);
+    });
+
+    it("rejects style_prefix over 256 chars (CLIP-77 budget in bg-pass)", () => {
+      const r = validateStoryboard({
+        ...baseOk,
+        style_prefix: "b".repeat(257),
+      });
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(
+        r.errors.some(
+          (e) => /style_prefix is 257 chars/.test(e) && /cap is 256/.test(e),
+        ),
+      ).toBe(true);
     });
   });
 });
