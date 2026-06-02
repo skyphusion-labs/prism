@@ -3097,40 +3097,32 @@ async function handleCastPortraitUpload(
     if (obj.customMetadata?.user_email !== userEmail) {
       return json({ error: "source artifact not owned by this user" }, { status: 403 });
     }
-    const sourceMime = obj.httpMetadata?.contentType || "image/png";
-    if (!CAST_IMAGE_MIME_RE.test(sourceMime)) {
-      return json({ error: `source mime ${sourceMime} not allowed (png/jpeg/webp only)` }, { status: 400 });
+    const mime = obj.httpMetadata?.contentType || "image/png";
+    if (!CAST_IMAGE_MIME_RE.test(mime)) {
+      return json({ error: `source mime ${mime} not allowed (png/jpeg/webp only)` }, { status: 400 });
     }
-    const sourceBytes = new Uint8Array(await obj.arrayBuffer());
-    if (sourceBytes.length > CAST_MAX_BYTES) {
+    const bytes = new Uint8Array(await obj.arrayBuffer());
+    if (bytes.length > CAST_MAX_BYTES) {
       return json({ error: "source image too large (16 MB max)" }, { status: 413 });
     }
-    // v0.94.0: every portrait write goes through the rembg container
-    // before landing in R2. The IP-Adapter at the regional render path
-    // expects a clean subject-on-black plate (see memory
-    // project-portrait-on-black-for-regional); cleaning happens here
-    // so renders never have to think about it.
-    let cleaned: Uint8Array;
-    try {
-      const { cleanPortrait } = await import("./containers/rembg");
-      cleaned = await cleanPortrait(env, sourceBytes);
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      return json({ error: `bg removal failed: ${m}` }, { status: 502 });
-    }
-    // Replace any prior portrait BEFORE writing the new one so a failed
-    // write does not leave two portraits referenced. The cleaned output
-    // is always PNG, so the stored portrait_key carries .png regardless
-    // of the source format.
+    // v0.97.0 routed every portrait write through the rembg container
+    // before R2; rolled back to the pre-v0.97.0 pass-through because
+    // the CF Container path was blocked by an unresolved runtime issue
+    // (even a stdlib hello-world container failed to bind). Background
+    // removal now runs pod-side at render time in
+    // multi_character_regional.py:_slot_portraits (vivijure-serverless
+    // 0.4.56+); the saved portrait stays as the user's raw upload.
+    // The Container code under src/containers/rembg.ts is left in
+    // place so the path can be re-enabled when CF resolves the issue.
     if (cur.portrait_key) {
       try { await env.R2_RENDERS.delete(cur.portrait_key); } catch { /* ignore */ }
     }
-    const key = `cast/${id}/portrait.png`;
-    await env.R2_RENDERS.put(key, cleaned, {
-      httpMetadata: { contentType: "image/png" },
+    const key = `cast/${id}/portrait.${extFromMime(mime)}`;
+    await env.R2_RENDERS.put(key, bytes, {
+      httpMetadata: { contentType: mime },
       customMetadata: { user_email: userEmail },
     });
-    const row = await castSetPortrait(env, id, userEmail, key, "image/png");
+    const row = await castSetPortrait(env, id, userEmail, key, mime);
     return json({ cast: row });
   }
 
@@ -3146,27 +3138,17 @@ async function handleCastPortraitUpload(
   if (buf.byteLength > CAST_MAX_BYTES) {
     return json({ error: "image too large (16 MB max)" }, { status: 413 });
   }
-  // v0.94.0: pipe the raw upload through the rembg container before
-  // the R2 write. The IP-Adapter at the regional render path expects
-  // a clean subject-on-black plate (see memory project-portrait-on-
-  // black-for-regional).
-  let cleanedBinary: Uint8Array;
-  try {
-    const { cleanPortrait } = await import("./containers/rembg");
-    cleanedBinary = await cleanPortrait(env, new Uint8Array(buf));
-  } catch (err) {
-    const m = err instanceof Error ? err.message : String(err);
-    return json({ error: `bg removal failed: ${m}` }, { status: 502 });
-  }
+  // See JSON branch comment: portrait cleaning happens pod-side at
+  // render time (vivijure-serverless 0.4.56+), not Worker-side.
   if (cur.portrait_key) {
     try { await env.R2_RENDERS.delete(cur.portrait_key); } catch { /* ignore */ }
   }
-  const key = `cast/${id}/portrait.png`;
-  await env.R2_RENDERS.put(key, cleanedBinary, {
-    httpMetadata: { contentType: "image/png" },
+  const key = `cast/${id}/portrait.${extFromMime(contentType)}`;
+  await env.R2_RENDERS.put(key, new Uint8Array(buf), {
+    httpMetadata: { contentType },
     customMetadata: { user_email: userEmail },
   });
-  const row = await castSetPortrait(env, id, userEmail, key, "image/png");
+  const row = await castSetPortrait(env, id, userEmail, key, contentType);
   return json({ cast: row });
 }
 
