@@ -1,12 +1,20 @@
 // Tests for buildPlanningSystemPrompt / buildPlanningUserMessage /
-// stripJsonFences (v0.28.0). Pure string functions, no env / fetch.
+// buildRefinementSystemPrompt / stripJsonFences. Pure string functions,
+// no env / fetch.
 
 import { describe, it, expect } from "vitest";
 import {
   buildPlanningSystemPrompt,
   buildPlanningUserMessage,
+  buildRefinementSystemPrompt,
   stripJsonFences,
 } from "../src/planner-prompt";
+import {
+  FULL_PROMPT_MAX_CHARS,
+  SCENE_PROMPT_MAX_WORDS,
+  STORYBOARD_MAX_SCENES,
+  STYLE_PREFIX_MAX_CHARS,
+} from "../src/storyboard-validate";
 
 describe("buildPlanningSystemPrompt", () => {
   const prompt = buildPlanningSystemPrompt();
@@ -82,6 +90,64 @@ describe("buildPlanningSystemPrompt", () => {
     expect(prompt.trimEnd()).toMatch(
       /Return ONLY the JSON object\. Nothing before it\. Nothing after it\.$/,
     );
+  });
+
+  // v0.84.0: prompt must declare the four caps that storyboard-validate
+  // enforces, so the LLM produces compliant output rather than tripping
+  // the validator on every other plan.
+  it("declares the scene_prompt word cap", () => {
+    expect(prompt).toContain(String(SCENE_PROMPT_MAX_WORDS));
+    expect(prompt).toMatch(/scenes\[\]\.prompt: at most/i);
+  });
+
+  it("declares the style_prefix character cap", () => {
+    expect(prompt).toContain(String(STYLE_PREFIX_MAX_CHARS));
+    expect(prompt).toMatch(/style_prefix: at most/i);
+  });
+
+  it("declares the full_prompt character cap", () => {
+    expect(prompt).toContain(String(FULL_PROMPT_MAX_CHARS));
+    expect(prompt).toMatch(/full_prompt: at most/i);
+  });
+
+  it("declares the storyboard scene-count cap", () => {
+    expect(prompt).toContain(String(STORYBOARD_MAX_SCENES));
+    expect(prompt).toMatch(/scenes array length: at most/i);
+  });
+});
+
+describe("buildRefinementSystemPrompt", () => {
+  const prompt = buildRefinementSystemPrompt();
+
+  it("returns a non-trivial string", () => {
+    expect(prompt.length).toBeGreaterThan(500);
+  });
+
+  it("preserves the keep-old-values rule", () => {
+    expect(prompt).toMatch(/KEEP THE OLD VALUE BIT-FOR-BIT/);
+  });
+
+  // v0.84.0: refinement prompt must also declare the four caps. A
+  // "add more scenes / expand the style" refinement is the natural
+  // way to drift over the caps if the LLM is not told about them.
+  it("declares the scene_prompt word cap", () => {
+    expect(prompt).toContain(String(SCENE_PROMPT_MAX_WORDS));
+    expect(prompt).toMatch(/scenes\[\]\.prompt: at most/i);
+  });
+
+  it("declares the style_prefix character cap", () => {
+    expect(prompt).toContain(String(STYLE_PREFIX_MAX_CHARS));
+    expect(prompt).toMatch(/style_prefix: at most/i);
+  });
+
+  it("declares the full_prompt character cap", () => {
+    expect(prompt).toContain(String(FULL_PROMPT_MAX_CHARS));
+    expect(prompt).toMatch(/full_prompt: at most/i);
+  });
+
+  it("declares the storyboard scene-count cap", () => {
+    expect(prompt).toContain(String(STORYBOARD_MAX_SCENES));
+    expect(prompt).toMatch(/scenes array length: at most/i);
   });
 });
 

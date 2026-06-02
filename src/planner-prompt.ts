@@ -6,6 +6,12 @@
 // (same pattern as parsers/, longrun-params.ts, output-extract.ts).
 
 import type { SlotId } from "./storyboard-validate";
+import {
+  FULL_PROMPT_MAX_CHARS,
+  SCENE_PROMPT_MAX_WORDS,
+  STORYBOARD_MAX_SCENES,
+  STYLE_PREFIX_MAX_CHARS,
+} from "./storyboard-validate";
 
 // Character bible entry the planner UI passes in. `bible` is the condensed
 // appearance description that the cast-prep stage saved (typically ~220
@@ -97,6 +103,22 @@ HARD RULES:
 6. Plan 3 to 12 scenes for a vignette / single-track music video unless
    the brief specifies otherwise.
 
+LENGTH CAPS (the renderer rejects outputs over these caps because they
+overflow SDXL's CLIP 77-token text encoder or break manifest builds):
+7. Each scenes[].prompt: at most ${SCENE_PROMPT_MAX_WORDS} words. The pod
+   prepends 2-4 LoRA trigger tokens plus the style_prefix to every scene,
+   leaving roughly ${SCENE_PROMPT_MAX_WORDS}-word headroom inside CLIP 77.
+   Move character appearance details to the cast bible (already loaded),
+   not into the scene prompt.
+8. style_prefix: at most ${STYLE_PREFIX_MAX_CHARS} characters. Compress.
+   Three or four palette / lens / lighting clauses is plenty; the model
+   reads ALL of it once per scene, so verbosity here costs every shot.
+9. full_prompt: at most ${FULL_PROMPT_MAX_CHARS} characters. This is the
+   film-level summary, not the script; one or two sentences.
+10. scenes array length: at most ${STORYBOARD_MAX_SCENES} entries. A 50-
+    shot render is already 25+ minutes of GPU time at typical clip
+    seconds; if the brief implies more, shorten clip_seconds or split.
+
 Return ONLY the JSON object. Nothing before it. Nothing after it.`;
 }
 
@@ -180,6 +202,19 @@ REFINEMENT RULES:
   scene at manifest-build time, so style words inside a scene double-apply.
 - style_category and style_preset are "None" literal strings unless the
   user explicitly names a category / preset. Never null. Never empty.
+
+LENGTH CAPS (same caps as the planner; the renderer rejects outputs
+over these because they overflow SDXL's CLIP 77-token text encoder):
+- Each scenes[].prompt: at most ${SCENE_PROMPT_MAX_WORDS} words. If the
+  user asks you to add detail to a scene, tighten the existing wording
+  rather than letting the word count drift past the cap.
+- style_prefix: at most ${STYLE_PREFIX_MAX_CHARS} characters. If the user
+  asks to expand the style, compress earlier clauses to make room.
+- full_prompt: at most ${FULL_PROMPT_MAX_CHARS} characters.
+- scenes array length: at most ${STORYBOARD_MAX_SCENES} entries. If the
+  user asks for more shots than the cap allows, add as many as fit
+  under the cap and keep the remaining requested scenes for a future
+  refinement turn; never let the array exceed the cap.
 
 Return ONLY the JSON object. No prose, no markdown, no fences.`;
 }
