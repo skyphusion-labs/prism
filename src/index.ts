@@ -398,6 +398,17 @@ export default {
     if (url.pathname === "/api/whoami" && request.method === "GET") {
       return json({ user: getUserEmail(request) });
     }
+    // v0.104.0: conversational STT (@cf/deepgram/flux) over a WebSocket. flux
+    // is websocket-only, so this is a WS upgrade endpoint, not a chat model.
+    if (url.pathname === "/api/stt/stream" && request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
+      return handleFluxStream(request, env);
+    }
+    // TEMP (v0.104.0): HTTP probe to confirm the upstream flux WS handshake
+    // works (env.AI.run({websocket:true}) returns a socket). Remove once the
+    // mic widget is verified end-to-end.
+    if (url.pathname === "/api/stt/selftest" && request.method === "GET") {
+      return fluxSelftest(env);
+    }
     if (url.pathname === "/api/chat" && request.method === "POST") {
       return handleChat(request, env, ctx);
     }
@@ -4210,6 +4221,73 @@ async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatR
     conversation_id: row.conversation_id,
     turn_index: 0,
   });
+}
+
+// ---------- Conversational STT: @cf/deepgram/flux over WebSocket ----------
+//
+// flux is websocket-only (8006 over the request/response binding). The AI
+// binding's {websocket:true} option returns a 101 Response carrying a
+// .webSocket (the upstream model socket). handleFluxStream bridges that to the
+// browser: audio frames up (binary linear16 PCM @ 16kHz), Deepgram turn +
+// transcript events down (JSON text). Pure relay for now (no persistence); CF
+// Access gates the upgrade at the edge. This call bypasses AI Gateway (no
+// cf-aig-log-id) the same way the other binding-direct paths do.
+const FLUX_STT_MODEL = "@cf/deepgram/flux";
+
+type FluxRunFn = (model: string, params: unknown, opts: { websocket: boolean }) => Promise<{ webSocket?: WebSocket | null }>;
+
+// WebSocket.close() only accepts 1000 or 3000-4999; codes like 1006/1011/1005
+// arrive on close events but cannot be re-sent. Map anything illegal to 1011
+// so forwarding a peer's close code never throws and leaks the other socket.
+function sanitizeCloseCode(code: number): number {
+  return code === 1000 || (code >= 3000 && code <= 4999) ? code : 1011;
+}
+
+async function openFluxUpstream(env: Env): Promise<WebSocket | null> {
+  const resp = await (env.AI as unknown as { run: FluxRunFn }).run(
+    FLUX_STT_MODEL,
+    { encoding: "linear16", sample_rate: "16000" },
+    { websocket: true },
+  );
+  return resp?.webSocket ?? null;
+}
+
+async function handleFluxStream(request: Request, env: Env): Promise<Response> {
+  let upstream: WebSocket | null;
+  try {
+    upstream = await openFluxUpstream(env);
+  } catch (err) {
+    return json({ error: `flux upstream open failed: ${err instanceof Error ? err.message : String(err)}` }, { status: 502 });
+  }
+  if (!upstream) return json({ error: "flux did not return a WebSocket" }, { status: 502 });
+  upstream.accept();
+
+  const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+  server.accept();
+
+  // Bridge both directions; relay raw payloads (audio up = binary, events
+  // down = JSON text). guarded sends so a half-closed peer doesn't throw.
+  server.addEventListener("message", (e: MessageEvent) => { try { upstream!.send(e.data); } catch { /* peer gone */ } });
+  upstream.addEventListener("message", (e: MessageEvent) => { try { server.send(e.data); } catch { /* peer gone */ } });
+  server.addEventListener("close", (e: CloseEvent) => { try { upstream!.close(sanitizeCloseCode(e.code), e.reason); } catch { /* */ } });
+  upstream.addEventListener("close", (e: CloseEvent) => { try { server.close(sanitizeCloseCode(e.code), e.reason); } catch { /* */ } });
+  server.addEventListener("error", () => { try { upstream!.close(1011); } catch { /* */ } });
+  upstream.addEventListener("error", () => { try { server.close(1011); } catch { /* */ } });
+
+  return new Response(null, { status: 101, webSocket: client });
+}
+
+// TEMP probe (v0.104.0): confirms the upstream flux WS handshake works over
+// plain HTTP (a WS client can't carry the CF Access cookie easily). Remove
+// once the mic widget is verified end-to-end.
+async function fluxSelftest(env: Env): Promise<Response> {
+  try {
+    const ws = await openFluxUpstream(env);
+    if (ws) { try { ws.close(1000); } catch { /* */ } }
+    return json({ ok: true, hasSocket: !!ws });
+  } catch (err) {
+    return json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 // ---------- Music generation (MiniMax via Unified Billing) ----------

@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.104.0
+
+Added conversational speech-to-text via Deepgram Flux (`@cf/deepgram/flux`) over a WebSocket. Phase 1: a standalone `/stt.html` "voice" widget; flux stays out of the model catalog (it is websocket-only, not a request/response chat/STT model).
+
+### What ships
+
+- `src/index.ts`: new `GET /api/stt/stream` WebSocket route. `handleFluxStream` opens the upstream model socket via `env.AI.run("@cf/deepgram/flux", { encoding: "linear16", sample_rate: "16000" }, { websocket: true })` (verified: the binding returns a 101 Response carrying a `.webSocket`), then bridges browser<->upstream: audio frames up (binary linear16 PCM @ 16 kHz), Deepgram turn/transcript events down (JSON). Close codes are sanitized (only 1000 / 3000-4999 are re-sendable; everything else maps to 1011). Bypasses AI Gateway (no `cf-aig-log-id`), since the gateway can't proxy the WS audio.
+  - A temporary `GET /api/stt/selftest` HTTP probe is included to confirm the upstream handshake; it will be removed once the mic path is verified end-to-end in a browser.
+- `public/stt.html` + `public/stt.js`: the widget. `getUserMedia` -> a 16 kHz `AudioContext` + `ScriptProcessor` -> Float32→Int16 PCM -> WS. Renders the live interim transcript, committed turns, and a raw-events debug panel. CF Access auth rides the same-origin WS upgrade cookie.
+- Added a "voice" nav link to the cast/planner/chat pages.
+
+### Notes
+
+Phase 1 is a pure relay with no history persistence; that (and a possible Durable Object for durable sessions) is a later phase. The Deepgram event field names (`type`, `transcript`, `end_of_turn_confidence`, etc.) are handled per the docs but should be confirmed against the raw-events panel on the first live mic test.
+
 ## v0.103.0
 
 Added LLaVA 1.5 7B (`@cf/llava-hf/llava-1.5-7b-hf`), an image-to-text (image Q&A) model.
