@@ -85,6 +85,11 @@ export interface RenderSubmitArgs {
   // (vivijure-serverless 0.4.34+).
   sceneLengthOverrides?: SceneLengthOverrides;
   movieOverrides?: MovieOverrides;
+  // v0.78.0: character_bible block + production sub-keys + top-level
+  // switches (vivijure-serverless 0.4.35+).
+  characterBibleOverrides?: CharacterBibleOverrides;
+  productionOverrides?: ProductionOverrides;
+  topLevelSwitches?: TopLevelSwitches;
 }
 
 export interface LoraTrainOverrides {
@@ -123,6 +128,54 @@ export interface QualityGateOverrides {
   // When true the render proceeds even on verdict="fail". When false
   // a hard fail blocks the render.
   allow_warn?: boolean;
+}
+
+// v0.78.0: character_bible block - the auto-condensed cast bible
+// the renderer prepends to every shot. Routes through vivijure-
+// serverless 0.4.35+'s in-place CONFIG mutation.
+export interface CharacterBibleOverrides {
+  // Master switch for the cast-bible injection. Pod default true.
+  enabled?: boolean;
+  // Cap on per-character bible length (chars). Pod default 220.
+  max_chars_per_character?: number; // int 1..2000
+  // Header string prepended to the bible. Pod default
+  // "CHARACTER BIBLE - same face, hair, outfit in every shot"
+  header?: string;                  // max 256 chars
+}
+
+// v0.78.0: production block - the top-level production knobs
+// (NOT the adetailer / multi_character sub-blocks, which have their
+// own overrides). Routes through vivijure-serverless 0.4.35+.
+export interface ProductionOverrides {
+  // Master switch for the hand-fix inpaint pass on keyframes. Pod default true.
+  hand_fix_keyframes?: boolean;
+  // Master switch for the adetailer inpaint pass on keyframes. Pod default true.
+  adetailer_keyframes?: boolean;
+  // Minimum reference images per character before render proceeds. Pod default 3.
+  min_character_refs?: number;      // int 0..32
+  // Cap on reference images per character. Pod default 12.
+  max_character_refs?: number;      // int 1..64
+  // Reference count target for character-bible quality. Pod default 8.
+  bible_reference_target?: number;  // int 0..32
+  // Shot-count floor that triggers LoRA training. Pod default 30.
+  lora_shot_threshold?: number;     // int 0..500
+}
+
+// v0.78.0: top-level boolean / string switches that affect overall
+// pipeline behavior. Routes through vivijure-serverless 0.4.35+'s
+// direct CONFIG mutation; movie_mode + production_gates + hand_fix
+// all delegate to core.CONFIG now (0.4.35 fix).
+export interface TopLevelSwitches {
+  // "clips" (per-scene independent) vs "movie" (chained narrative). Pod default "movie".
+  production_mode?: "clips" | "movie";
+  // Always apply the style reference image (when one is set). Pod default false.
+  always_use_style_reference?: boolean;
+  // Crossfade between assembled clips. Pod default true.
+  assemble_use_crossfade?: boolean;
+  // Auto-trigger the render-clips pass on bundle. Pod default true.
+  auto_render_clips?: boolean;
+  // Auto-bootstrap a start image from the first cast portrait when none provided. Pod default true.
+  auto_bootstrap_start_image?: boolean;
 }
 
 // v0.77.0: top-level scene-length scalars. Affect clip-duration
@@ -442,6 +495,10 @@ export interface RenderJobInput {
   // v0.77.0: scene-length scalars + movie block (0.4.34+).
   scene_length_overrides?: SceneLengthOverrides;
   movie_overrides?: MovieOverrides;
+  // v0.78.0: character_bible + production sub-keys + top-level switches (0.4.35+).
+  character_bible_overrides?: CharacterBibleOverrides;
+  production_overrides?: ProductionOverrides;
+  top_level_switches?: TopLevelSwitches;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -511,6 +568,10 @@ export interface FinalizeArgs {
   // v0.77.0: same scene_length + movie overrides as RenderSubmitArgs.
   sceneLengthOverrides?: SceneLengthOverrides;
   movieOverrides?: MovieOverrides;
+  // v0.78.0: same character_bible + production + switches as RenderSubmitArgs.
+  characterBibleOverrides?: CharacterBibleOverrides;
+  productionOverrides?: ProductionOverrides;
+  topLevelSwitches?: TopLevelSwitches;
 }
 
 export interface FinalizeJobInput {
@@ -538,6 +599,9 @@ export interface FinalizeJobInput {
   generation_overrides?: GenerationOverrides;
   scene_length_overrides?: SceneLengthOverrides;
   movie_overrides?: MovieOverrides;
+  character_bible_overrides?: CharacterBibleOverrides;
+  production_overrides?: ProductionOverrides;
+  top_level_switches?: TopLevelSwitches;
 }
 
 // v0.57.0: standalone LoRA training. The cast manager UI on /cast
@@ -696,6 +760,13 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   if (sl) input.scene_length_overrides = sl;
   const mv = normalizeMovieOverrides(args.movieOverrides);
   if (mv) input.movie_overrides = mv;
+  // v0.78.0: character_bible + production + switches.
+  const cb = normalizeCharacterBibleOverrides(args.characterBibleOverrides);
+  if (cb) input.character_bible_overrides = cb;
+  const pr = normalizeProductionOverrides(args.productionOverrides);
+  if (pr) input.production_overrides = pr;
+  const tls = normalizeTopLevelSwitches(args.topLevelSwitches);
+  if (tls) input.top_level_switches = tls;
   return { input };
 }
 
@@ -760,6 +831,12 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   if (slF) input.scene_length_overrides = slF;
   const mvF = normalizeMovieOverrides(args.movieOverrides);
   if (mvF) input.movie_overrides = mvF;
+  const cbF = normalizeCharacterBibleOverrides(args.characterBibleOverrides);
+  if (cbF) input.character_bible_overrides = cbF;
+  const prF = normalizeProductionOverrides(args.productionOverrides);
+  if (prF) input.production_overrides = prF;
+  const tlsF = normalizeTopLevelSwitches(args.topLevelSwitches);
+  if (tlsF) input.top_level_switches = tlsF;
   return { input };
 }
 
@@ -803,6 +880,63 @@ export function normalizeLoraTrainOverrides(
       out[k] = v;
     }
   }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.78.0: normalize character_bible overrides.
+export function normalizeCharacterBibleOverrides(
+  raw: CharacterBibleOverrides | undefined,
+): CharacterBibleOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: CharacterBibleOverrides = {};
+  if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
+  if (typeof raw.max_chars_per_character === "number" && Number.isInteger(raw.max_chars_per_character) && raw.max_chars_per_character >= 1 && raw.max_chars_per_character <= 2000) {
+    out.max_chars_per_character = raw.max_chars_per_character;
+  }
+  if (typeof raw.header === "string" && raw.header.length <= 256) {
+    out.header = raw.header;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.78.0: normalize production sub-key overrides (top-level keys
+// inside the production block; NOT the adetailer / multi_character
+// sub-blocks which have their own normalizers).
+export function normalizeProductionOverrides(
+  raw: ProductionOverrides | undefined,
+): ProductionOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: ProductionOverrides = {};
+  if (typeof raw.hand_fix_keyframes === "boolean") out.hand_fix_keyframes = raw.hand_fix_keyframes;
+  if (typeof raw.adetailer_keyframes === "boolean") out.adetailer_keyframes = raw.adetailer_keyframes;
+  if (typeof raw.min_character_refs === "number" && Number.isInteger(raw.min_character_refs) && raw.min_character_refs >= 0 && raw.min_character_refs <= 32) {
+    out.min_character_refs = raw.min_character_refs;
+  }
+  if (typeof raw.max_character_refs === "number" && Number.isInteger(raw.max_character_refs) && raw.max_character_refs >= 1 && raw.max_character_refs <= 64) {
+    out.max_character_refs = raw.max_character_refs;
+  }
+  if (typeof raw.bible_reference_target === "number" && Number.isInteger(raw.bible_reference_target) && raw.bible_reference_target >= 0 && raw.bible_reference_target <= 32) {
+    out.bible_reference_target = raw.bible_reference_target;
+  }
+  if (typeof raw.lora_shot_threshold === "number" && Number.isInteger(raw.lora_shot_threshold) && raw.lora_shot_threshold >= 0 && raw.lora_shot_threshold <= 500) {
+    out.lora_shot_threshold = raw.lora_shot_threshold;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.78.0: normalize top-level switches.
+export function normalizeTopLevelSwitches(
+  raw: TopLevelSwitches | undefined,
+): TopLevelSwitches | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: TopLevelSwitches = {};
+  if (raw.production_mode === "clips" || raw.production_mode === "movie") {
+    out.production_mode = raw.production_mode;
+  }
+  if (typeof raw.always_use_style_reference === "boolean") out.always_use_style_reference = raw.always_use_style_reference;
+  if (typeof raw.assemble_use_crossfade === "boolean") out.assemble_use_crossfade = raw.assemble_use_crossfade;
+  if (typeof raw.auto_render_clips === "boolean") out.auto_render_clips = raw.auto_render_clips;
+  if (typeof raw.auto_bootstrap_start_image === "boolean") out.auto_bootstrap_start_image = raw.auto_bootstrap_start_image;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

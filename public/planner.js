@@ -603,6 +603,60 @@ function buildCastLoraSubmit() {
   return out;
 }
 
+// v0.78.0: character_bible / production / top-level switches builders.
+function buildCharacterBibleOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const en = ($sel("#planner-cb-enabled") || {}).value;
+  if (en === "true") out.enabled = true;
+  else if (en === "false") out.enabled = false;
+  const mc = parseFloat(($sel("#planner-cb-max-chars") || {}).value || "");
+  if (Number.isInteger(mc) && mc >= 1 && mc <= 2000) out.max_chars_per_character = mc;
+  const h = (($sel("#planner-cb-header") || {}).value || "").trim();
+  if (h && h.length <= 256) out.header = h;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function buildProductionOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const hf = ($sel("#planner-pr-hand-fix") || {}).value;
+  if (hf === "true") out.hand_fix_keyframes = true;
+  else if (hf === "false") out.hand_fix_keyframes = false;
+  const ad = ($sel("#planner-pr-adetailer-kf") || {}).value;
+  if (ad === "true") out.adetailer_keyframes = true;
+  else if (ad === "false") out.adetailer_keyframes = false;
+  const mn = parseFloat(($sel("#planner-pr-min-refs") || {}).value || "");
+  if (Number.isInteger(mn) && mn >= 0 && mn <= 32) out.min_character_refs = mn;
+  const mx = parseFloat(($sel("#planner-pr-max-refs") || {}).value || "");
+  if (Number.isInteger(mx) && mx >= 1 && mx <= 64) out.max_character_refs = mx;
+  const br = parseFloat(($sel("#planner-pr-bible-target") || {}).value || "");
+  if (Number.isInteger(br) && br >= 0 && br <= 32) out.bible_reference_target = br;
+  const lt = parseFloat(($sel("#planner-pr-lora-threshold") || {}).value || "");
+  if (Number.isInteger(lt) && lt >= 0 && lt <= 500) out.lora_shot_threshold = lt;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function buildTopLevelSwitches() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const pm = ($sel("#planner-tl-production-mode") || {}).value;
+  if (pm === "movie" || pm === "clips") out.production_mode = pm;
+  const ausr = ($sel("#planner-tl-always-style-ref") || {}).value;
+  if (ausr === "true") out.always_use_style_reference = true;
+  else if (ausr === "false") out.always_use_style_reference = false;
+  const acf = ($sel("#planner-tl-assemble-crossfade") || {}).value;
+  if (acf === "true") out.assemble_use_crossfade = true;
+  else if (acf === "false") out.assemble_use_crossfade = false;
+  const arc = ($sel("#planner-tl-auto-render-clips") || {}).value;
+  if (arc === "true") out.auto_render_clips = true;
+  else if (arc === "false") out.auto_render_clips = false;
+  const ab = ($sel("#planner-tl-auto-bootstrap") || {}).value;
+  if (ab === "true") out.auto_bootstrap_start_image = true;
+  else if (ab === "false") out.auto_bootstrap_start_image = false;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // v0.77.0: scene-length scalar overrides from the advanced disclosure.
 function buildSceneLengthOverrides() {
   const $sel = (s) => $(s);
@@ -2931,6 +2985,13 @@ async function submitRender() {
   if (slOverrides) reqBody.sceneLengthOverrides = slOverrides;
   const mvOverrides = buildMovieOverrides();
   if (mvOverrides) reqBody.movieOverrides = mvOverrides;
+  // v0.78.0: character_bible + production + top-level switches.
+  const cbOverrides = buildCharacterBibleOverrides();
+  if (cbOverrides) reqBody.characterBibleOverrides = cbOverrides;
+  const prOverrides = buildProductionOverrides();
+  if (prOverrides) reqBody.productionOverrides = prOverrides;
+  const tlOverrides = buildTopLevelSwitches();
+  if (tlOverrides) reqBody.topLevelSwitches = tlOverrides;
 
   let resp = null;
   let data = null;

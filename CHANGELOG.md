@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.78.0
+
+Phase 11 of the worker-pod config pull. Three more config.yaml regions become routable from the web Worker: the `character_bible.*` block (3 keys; the auto-condensed cast bible prepended to every shot), `production.*` top-level sub-keys (6 keys; hand-fix / adetailer master switches + character-ref count gates + LoRA training threshold), and five top-level switches (`production_mode`, `always_use_style_reference`, `assemble_use_crossfade`, `auto_render_clips`, `auto_bootstrap_start_image`). Pod side landed in vivijure-serverless 0.4.35, which ALSO fixes the Phase 10 reach gap: `movie_mode`, `character_bible`, `production_gates`, and `hand_fix` all re-read `config.yaml` from disk per call, so Phase 10's `max_scenes` / movie-block overrides never propagated to them. 0.4.35 makes those modules delegate to `core.CONFIG`, fixing Phase 10 retroactively.
+
+### Backend
+
+- `src/runpod-submit.ts`: `CharacterBibleOverrides`, `ProductionOverrides`, `TopLevelSwitches` interfaces + matching normalizers. All three Args + JobInput types carry the new fields; all builders forward them.
+- `src/index.ts`: `RenderSubmitRequest` accepts the three new fields; both render and finalize handlers read them and forward through.
+
+### Frontend
+
+- `public/planner.html`: new "cast bible + production gates + top-level switches (advanced)" disclosure with all 14 controls.
+- `public/planner.js`: `buildCharacterBibleOverrides()` + `buildProductionOverrides()` + `buildTopLevelSwitches()` read + validate, attached alongside the other override builders.
+
+### Tests
+
+464/464 still passing, type-check clean.
+
 ## v0.77.0
 
 Phase 10 of the worker-pod config pull. Two more config.yaml regions become routable from the web Worker: five top-level scene-length scalars (`target_scene_seconds`, `min_scene_seconds`, `max_scene_seconds`, `max_video_seconds`, `max_scenes`) and the `movie.*` block (10 keys; the movie-mode chain + per-clip Wan defaults). Pod side landed in vivijure-serverless 0.4.34.

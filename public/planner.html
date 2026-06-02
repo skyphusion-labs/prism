@@ -1028,6 +1028,110 @@
             are set.
           </p>
         </details>
+        <!-- v0.78.0: character_bible + production sub-keys + top-level
+             switches (vivijure-serverless 0.4.35+). -->
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">cast bible + production gates + top-level switches (advanced)</summary>
+          <div class="planner-overrides-fields">
+            <label class="planner-field">
+              <span>cast bible enabled</span>
+              <select id="planner-cb-enabled">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false (skip bible injection)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>cast bible max chars/character (pod default 220)</span>
+              <input id="planner-cb-max-chars" type="number" min="1" max="2000" step="1" placeholder="220" />
+            </label>
+            <label class="planner-field">
+              <span>cast bible header (free text)</span>
+              <input id="planner-cb-header" type="text" maxlength="256" placeholder="CHARACTER BIBLE - same face, hair, outfit in every shot" />
+            </label>
+            <label class="planner-field">
+              <span>hand fix keyframes</span>
+              <select id="planner-pr-hand-fix">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>adetailer on keyframes (master switch)</span>
+              <select id="planner-pr-adetailer-kf">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>min character refs (pod default 3)</span>
+              <input id="planner-pr-min-refs" type="number" min="0" max="32" step="1" placeholder="3" />
+            </label>
+            <label class="planner-field">
+              <span>max character refs (pod default 12)</span>
+              <input id="planner-pr-max-refs" type="number" min="1" max="64" step="1" placeholder="12" />
+            </label>
+            <label class="planner-field">
+              <span>bible reference target (pod default 8)</span>
+              <input id="planner-pr-bible-target" type="number" min="0" max="32" step="1" placeholder="8" />
+            </label>
+            <label class="planner-field">
+              <span>LoRA shot threshold (pod default 30)</span>
+              <input id="planner-pr-lora-threshold" type="number" min="0" max="500" step="1" placeholder="30" />
+            </label>
+            <label class="planner-field">
+              <span>production mode</span>
+              <select id="planner-tl-production-mode">
+                <option value="">(use pod default: movie)</option>
+                <option value="movie">movie (chained narrative)</option>
+                <option value="clips">clips (independent scenes)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>always use style reference</span>
+              <select id="planner-tl-always-style-ref">
+                <option value="">(use pod default: false)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>assemble with crossfade</span>
+              <select id="planner-tl-assemble-crossfade">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false (hard cuts)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>auto-render clips</span>
+              <select id="planner-tl-auto-render-clips">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>auto-bootstrap start image</span>
+              <select id="planner-tl-auto-bootstrap">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+          </div>
+          <p class="planner-overrides-hint">
+            forwarded as <code>character_bible_overrides</code> +
+            <code>production_overrides</code> +
+            <code>top_level_switches</code>. cast bible knobs govern the
+            condensed appearance block prepended to every shot;
+            production gates control hand/face fixes + reference count
+            requirements + LoRA training threshold; top-level switches
+            flip overall pipeline behavior.
+          </p>
+        </details>
         <details class="planner-overrides-raw-details">
           <summary class="planner-overrides-summary">raw JSON overrides (wins on conflict)</summary>
           <textarea id="planner-render-overrides" rows="3" placeholder='{"wan_inference_steps": 12, "wan_num_frames": 33}' spellcheck="false"></textarea>

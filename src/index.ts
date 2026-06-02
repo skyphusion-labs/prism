@@ -1513,6 +1513,11 @@ interface RenderSubmitRequest {
   // (vivijure-serverless 0.4.34+).
   sceneLengthOverrides?: unknown;
   movieOverrides?: unknown;
+  // v0.78.0: character_bible + production sub-keys + top-level
+  // switches (vivijure-serverless 0.4.35+).
+  characterBibleOverrides?: unknown;
+  productionOverrides?: unknown;
+  topLevelSwitches?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1717,6 +1722,19 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     movieOverrides:
       body.movieOverrides && typeof body.movieOverrides === "object"
         ? (body.movieOverrides as RenderSubmitArgs["movieOverrides"])
+        : undefined,
+    // v0.78.0: character_bible + production + top-level switches passthrough.
+    characterBibleOverrides:
+      body.characterBibleOverrides && typeof body.characterBibleOverrides === "object"
+        ? (body.characterBibleOverrides as RenderSubmitArgs["characterBibleOverrides"])
+        : undefined,
+    productionOverrides:
+      body.productionOverrides && typeof body.productionOverrides === "object"
+        ? (body.productionOverrides as RenderSubmitArgs["productionOverrides"])
+        : undefined,
+    topLevelSwitches:
+      body.topLevelSwitches && typeof body.topLevelSwitches === "object"
+        ? (body.topLevelSwitches as RenderSubmitArgs["topLevelSwitches"])
         : undefined,
   };
 
@@ -2393,6 +2411,9 @@ async function handleFinalizeSubmit(
   let bodyGenerationOverrides: RenderSubmitArgs["generationOverrides"] | undefined;
   let bodySceneLengthOverrides: RenderSubmitArgs["sceneLengthOverrides"] | undefined;
   let bodyMovieOverrides: RenderSubmitArgs["movieOverrides"] | undefined;
+  let bodyCharacterBibleOverrides: RenderSubmitArgs["characterBibleOverrides"] | undefined;
+  let bodyProductionOverrides: RenderSubmitArgs["productionOverrides"] | undefined;
+  let bodyTopLevelSwitches: RenderSubmitArgs["topLevelSwitches"] | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
@@ -2414,6 +2435,9 @@ async function handleFinalizeSubmit(
         generationOverrides?: unknown;
         sceneLengthOverrides?: unknown;
         movieOverrides?: unknown;
+        characterBibleOverrides?: unknown;
+        productionOverrides?: unknown;
+        topLevelSwitches?: unknown;
       };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
@@ -2522,6 +2546,27 @@ async function handleFinalizeSubmit(
         && !Array.isArray(parsed.movieOverrides)
       ) {
         bodyMovieOverrides = parsed.movieOverrides as RenderSubmitArgs["movieOverrides"];
+      }
+      if (
+        parsed?.characterBibleOverrides
+        && typeof parsed.characterBibleOverrides === "object"
+        && !Array.isArray(parsed.characterBibleOverrides)
+      ) {
+        bodyCharacterBibleOverrides = parsed.characterBibleOverrides as RenderSubmitArgs["characterBibleOverrides"];
+      }
+      if (
+        parsed?.productionOverrides
+        && typeof parsed.productionOverrides === "object"
+        && !Array.isArray(parsed.productionOverrides)
+      ) {
+        bodyProductionOverrides = parsed.productionOverrides as RenderSubmitArgs["productionOverrides"];
+      }
+      if (
+        parsed?.topLevelSwitches
+        && typeof parsed.topLevelSwitches === "object"
+        && !Array.isArray(parsed.topLevelSwitches)
+      ) {
+        bodyTopLevelSwitches = parsed.topLevelSwitches as RenderSubmitArgs["topLevelSwitches"];
       }
       if (parsed?.castLoras !== undefined) {
         if (
@@ -2655,6 +2700,10 @@ async function handleFinalizeSubmit(
     // v0.77.0: scene_length + movie passthrough (vivijure-serverless 0.4.34+).
     sceneLengthOverrides: bodySceneLengthOverrides,
     movieOverrides: bodyMovieOverrides,
+    // v0.78.0: character_bible + production + switches passthrough (vivijure-serverless 0.4.35+).
+    characterBibleOverrides: bodyCharacterBibleOverrides,
+    productionOverrides: bodyProductionOverrides,
+    topLevelSwitches: bodyTopLevelSwitches,
   });
   if (!result.ok) {
     return json(
