@@ -168,6 +168,10 @@ const userInputField    = $("#user-input-field");
 const bottomRow         = document.querySelector(".bottom-row");
 const systemPromptField = systemPromptLabel ? systemPromptLabel.closest("label") : null;
 let voiceWidget         = null; // lazily mounted once a voice model is first selected
+// v0.110.0: focus-mode redesign refs.
+const composerEl        = document.querySelector(".composer");
+const settingsToggle    = $("#settings-toggle");
+const settingsPanel     = $("#settings-panel");
 const useDocsRow        = $("#use-docs-row");
 const useDocsCheckbox   = $("#use-docs");
 const useWebSearchRow      = $("#use-web-search-row");
@@ -326,13 +330,15 @@ function updateAffordance() {
   useWebSearchRow.hidden = true;
   fileInput.style.display = ""; // default shown; some branches set accept/visibility
 
-  // v0.108.0: default to the normal composer; the "voice" branch swaps it for
-  // the live mic panel. Restoring here covers switching away from a voice model.
+  // v0.108.0/v0.110.0: default to the normal composer; the "voice" branch swaps
+  // it for the live mic panel. Restoring here covers switching away from voice.
   if (voicePanel) voicePanel.hidden = true;
-  if (userInputField) userInputField.style.display = "";
-  if (bottomRow) bottomRow.style.display = "";
+  if (composerEl) composerEl.style.display = "";
   if (systemPromptField) systemPromptField.style.display = "";
   if (voiceWidget && voiceWidget.isRunning()) voiceWidget.stop();
+  // The attach hint now sits in the composer foot (separate from the attach
+  // button), so clear it by default; branches that allow attachments set it.
+  attachHint.textContent = "";
 
   if (m.type === "image") {
     systemPromptLabel.textContent = "negative prompt";
@@ -404,9 +410,8 @@ function updateAffordance() {
     // Conversational STT: swap the text composer for the live mic panel. The
     // session streams to the SttSession DO over /api/stt/stream and persists the
     // final transcript to history when you stop.
+    if (composerEl) composerEl.style.display = "none";
     if (systemPromptField) systemPromptField.style.display = "none";
-    if (userInputField) userInputField.style.display = "none";
-    if (bottomRow) bottomRow.style.display = "none";
     state.pendingAttachments = [];
     renderAttachments();
     if (voicePanel) voicePanel.hidden = false;
@@ -1363,6 +1368,23 @@ function toggleSidebar() {
 
 sidebarToggle.addEventListener("click", toggleSidebar);
 sidebarBackdrop.addEventListener("click", closeSidebar);
+
+// v0.110.0: settings popover (system prompt + retrieval toggles + active project).
+if (settingsToggle && settingsPanel) {
+  settingsToggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    settingsPanel.hidden = !settingsPanel.hidden;
+  });
+  // Close on outside click or Escape.
+  document.addEventListener("click", (e) => {
+    if (settingsPanel.hidden) return;
+    if (settingsPanel.contains(e.target) || settingsToggle.contains(e.target)) return;
+    settingsPanel.hidden = true;
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !settingsPanel.hidden) settingsPanel.hidden = true;
+  });
+}
 
 historyList.addEventListener("click", (e) => {
   const del = e.target.closest("[data-conv-delete]");

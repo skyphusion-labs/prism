@@ -3,34 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>skyphusion-llm-public</title>
+  <title>skyphusion</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
   <link rel="icon" href="/favicon-16.png" type="image/png" sizes="16x16">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
   <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="#0E1730">
+  <meta name="theme-color" content="#0a0e1a">
   <link rel="stylesheet" href="/styles.css">
-  <style>
-    /* v0.108.0: live "voice" (conversational STT) composer panel. */
-    #voice-panel { display: flex; flex-direction: column; gap: 0.6rem; }
-    .voice-controls { display: flex; align-items: center; gap: 0.75rem; }
-    #voice-start { font-size: 1rem; padding: 0.55rem 1.3rem; border-radius: 999px; cursor: pointer; }
-    #voice-start.is-live { background: #b3122c; color: #fff; }
-    .voice-status { font-size: 0.85rem; opacity: 0.75; }
-    .voice-hint { opacity: 0.55; }
-    #voice-live { min-height: 3.25rem; font-size: 1.2rem; line-height: 1.5; padding: 0.7rem 0.9rem;
-      border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; }
-    .stt-live-interim { opacity: 0.55; font-style: italic; }
-    #voice-turns { display: flex; flex-direction: column; gap: 0.4rem; max-height: 16rem; overflow-y: auto; }
-    .stt-turn { padding: 0.5rem 0.75rem; border-radius: 8px; background: rgba(255,255,255,0.05); }
-    .stt-meta { font-size: 0.75rem; opacity: 0.6; margin-top: 0.2rem; }
-  </style>
 </head>
 <body>
   <div class="layout">
-    <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="Toggle history">&#9776;</button>
+    <!-- backdrop for the slide-in sidebar (focus mode: sidebar is an overlay) -->
     <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
+
+    <!-- slide-in sidebar -->
     <aside class="sidebar">
       <header class="sidebar-header">
         <h1>history</h1>
@@ -38,9 +25,14 @@
       </header>
       <div id="user-badge"></div>
       <nav class="sidebar-tools" aria-label="tools">
-        <a href="/planner.html" class="sidebar-tools-link">&rarr; storyboard planner</a>
-        <a href="/cast.html" class="sidebar-tools-link">&rarr; cast</a>
-        <a href="/stt.html" class="sidebar-tools-link">&rarr; voice (conversational STT)</a>
+        <a href="/planner.html" class="sidebar-tools-link sidebar-tools-vivijure">
+          <span class="tools-name">Vivijure studio</span>
+          <span class="tools-sub">AI video pipeline</span>
+        </a>
+        <a href="/stt.html" class="sidebar-tools-link">
+          <span class="tools-name">voice</span>
+          <span class="tools-sub">conversational STT</span>
+        </a>
       </nav>
       <ul id="history-list" class="history-list"></ul>
       <section class="projects-section">
@@ -61,35 +53,53 @@
         <div id="doc-status" class="doc-status"></div>
       </section>
     </aside>
-    <main class="workspace">
-      <div class="controls">
-        <label>
-          model
+
+    <!-- main column -->
+    <div class="main">
+      <header class="topbar">
+        <button id="sidebar-toggle" class="icon-btn" type="button" aria-label="Menu">&#9776;</button>
+        <a class="brand" href="/" aria-label="skyphusion home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">skyphusion</span>
+        </a>
+        <div class="topbar-model">
           <div id="model" class="model-picker"></div>
-        </label>
+        </div>
+        <button id="settings-toggle" class="icon-btn" type="button" aria-label="Prompt &amp; options" title="prompt &amp; options">&#9881;</button>
+      </header>
+
+      <!-- settings popover: system prompt + retrieval toggles + active project -->
+      <div id="settings-panel" class="settings-panel" hidden>
         <div id="active-project-chip" class="active-project-chip" hidden>
           <span class="apc-label">project:</span>
           <span id="active-project-name" class="apc-name"></span>
           <button id="active-project-clear" type="button" class="apc-clear" title="clear active project">&#x2715;</button>
         </div>
-        <label>
+        <label class="settings-field">
           <span id="system-prompt-label">system prompt</span>
-          <textarea id="system-prompt" rows="3" placeholder="optional"></textarea>
+          <textarea id="system-prompt" rows="4" placeholder="optional"></textarea>
+        </label>
+        <label id="use-docs-row" class="use-docs-row" hidden>
+          <input id="use-docs" type="checkbox">
+          <span>use my docs</span>
+        </label>
+        <label id="use-web-search-row" class="use-docs-row" hidden>
+          <input id="use-web-search" type="checkbox">
+          <span>search the web</span>
         </label>
       </div>
-      <div class="output-area">
-        <header class="output-header">
+
+      <main class="conversation">
+        <header class="conv-head">
           <span id="conv-title">new conversation</span>
           <span id="output-meta"></span>
         </header>
         <div id="transcript" class="transcript"></div>
-      </div>
+      </main>
+
+      <!-- floating composer -->
       <div class="input-area">
-        <label id="user-input-field">
-          <span id="user-input-label">your input</span>
-          <textarea id="user-input" rows="5" placeholder="type here, enter to send, shift+enter for newline"></textarea>
-        </label>
-        <!-- v0.108.0: live conversational-STT panel; shown only for a "voice" model. -->
+        <!-- live conversational-STT panel; shown only for a "voice" model -->
         <div id="voice-panel" hidden>
           <div class="voice-controls">
             <button id="voice-start" type="button">Start listening</button>
@@ -98,26 +108,25 @@
           <div id="voice-live"><span class="voice-hint">(live transcript appears here)</span></div>
           <div id="voice-turns"></div>
         </div>
-        <div class="bottom-row">
-          <div id="attach-row" class="attach-row">
-            <input id="file-input" type="file" multiple accept="image/*,audio/*,video/*" hidden>
-            <button id="attach-btn" type="button" class="ghost">+ attach</button>
-            <span id="attach-hint" class="hint"></span>
-          </div>
-          <label id="use-docs-row" class="use-docs-row" hidden>
-            <input id="use-docs" type="checkbox">
-            <span>use my docs</span>
-          </label>
-          <label id="use-web-search-row" class="use-docs-row" hidden>
-            <input id="use-web-search" type="checkbox">
-            <span>search the web</span>
-          </label>
-          <button id="run" type="button">run</button>
-        </div>
         <div id="attachments" class="attachments"></div>
+        <div class="composer">
+          <input id="file-input" type="file" multiple accept="image/*,audio/*,video/*" hidden>
+          <div id="attach-row" class="attach-row">
+            <button id="attach-btn" type="button" class="composer-attach" title="attach">&#43;</button>
+          </div>
+          <label id="user-input-field" class="composer-field">
+            <span id="user-input-label" class="sr-only">your input</span>
+            <textarea id="user-input" rows="1" placeholder="Message&#8230;"></textarea>
+          </label>
+          <button id="run" type="button" class="composer-send" title="send">&#8593;</button>
+        </div>
+        <div class="composer-foot">
+          <span id="attach-hint" class="hint"></span>
+        </div>
       </div>
-    </main>
+    </div>
   </div>
+
   <div id="project-modal" class="modal" hidden>
     <div class="modal-backdrop" data-modal-close="project-modal"></div>
     <div class="modal-panel" role="dialog" aria-labelledby="project-modal-title" aria-modal="true">

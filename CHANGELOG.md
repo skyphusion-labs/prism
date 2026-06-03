@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.110.0
+
+Modern "focus-mode" redesign of the playground frontpage, mobile-first, with a
+bold skyphusion rebrand. The old two-pane, control-heavy layout was cluttered;
+this strips it back to a single conversation column and a floating composer.
+
+### What ships
+
+- **Focus-mode layout** (`public/index.html` + `public/styles.css`): the
+  sidebar (history / projects / documents) becomes a slide-in overlay (☰),
+  reachable at any width; the conversation is a centered reading column; the
+  composer floats at the bottom as one rounded bar with inline + (attach) and ↑
+  (send). System prompt, "use my docs", "search the web", and the active-project
+  chip move into a ⚙ settings popover instead of always-on controls.
+- **Bold rebrand**: a cosmic sky-fusion palette on a deep-space base, a gradient
+  brand mark + wordmark, a subtle aurora glow, and a gradient send button. New
+  `:root` tokens (the palette change carries across the Vivijure tool pages too,
+  for consistency).
+- **Single "Vivijure studio" menu entry** in the sidebar (no more separate
+  "storyboard" / "cast" items on the main page; that sub-nav lives inside
+  Vivijure's own pages). "voice" stays a separate playground tool link.
+- **Mobile-optimized**: safe-area insets (notch / home bar), 16px composer/input
+  fonts (no iOS zoom-on-focus), larger touch targets, a near-full-width settings
+  sheet, and hover-free affordances on touch devices.
+
+### Notes
+
+- `app.js` keeps its full element/ID contract; the only behavior changes are the
+  ⚙ popover toggle and routing the composer show/hide through `.composer`.
+- The standalone `/stt.html` already shed the Vivijure topbar in v0.109.0.
+
 ## v0.109.0
 
 - `public/stt.html`: drop the Vivijure topbar (logo + cast/storyboard-planner
