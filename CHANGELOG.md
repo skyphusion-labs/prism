@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.116.0
+
+- **Modernized the send button**: clean 40px circle with the brand gradient, a
+  crisp SVG up-arrow (replacing the off-center text glyph; `svg{display:block}`
+  removes the inline-baseline gap so it sits dead-center), and a subtle
+  lift-on-hover / press-scale.
+
 ## v0.115.0
 
 Composer fixes (from a mobile screenshot).

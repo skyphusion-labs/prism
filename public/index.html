@@ -129,7 +129,9 @@
             <span id="user-input-label" class="sr-only">your input</span>
             <textarea id="user-input" rows="1" placeholder="enter to send, shift+enter for newline"></textarea>
           </label>
-          <button id="run" type="button" class="composer-send" title="send">&#8593;</button>
+          <button id="run" type="button" class="composer-send" title="send" aria-label="send">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20V5M6 11l6-6 6 6"/></svg>
+          </button>
         </div>
         <div class="composer-foot">
           <span id="attach-hint" class="hint"></span>
