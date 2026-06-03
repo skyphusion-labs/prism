@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.119.0
+
+Feature: beat-synced storyboard planning. `/api/storyboard/plan` now accepts an
+optional `beatPlan` field (forward the `output` of `/api/audio/analyze`). When
+present, the planner is pinned to exactly `timedScenes.length` shots and each
+scene's `start` / `end` / `target_seconds` is stamped deterministically from the
+beat plan, so the cuts land on the beat. The split: the LLM owns shot count +
+content (told the exact count and per-shot pacing via a prompt block); the code
+owns the frame-accurate seconds (stamped after validation, so model numeric
+drift can't move a cut). Top-level `duration_seconds` / `clip_seconds` are set
+from the plan (clip_seconds falls back to the median shot length). Count drift
+between model and plan is reconciled (extra scenes dropped, underflow stamped as
+far as it goes) and surfaced in a non-fatal `timingWarnings` array on the
+response. New pure module `src/beat-timing.ts` (parse + prompt block + stamp),
+11 unit tests in `tests/beat-timing.test.ts`. No change to the audio container or
+the GPU pod; this is purely the planner-side bridge that was previously missing
+(the beat plan was returned to the client but never consumed by planning).
+
 ## v0.118.1
 
 Fix: voice STT broke because Deepgram Flux changed its event shape. Turn events

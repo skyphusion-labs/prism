@@ -46,6 +46,10 @@ export interface PlanStoryboardArgs {
   // PlanningModel.id from planner-catalog, e.g. "anthropic/claude-opus-4-7"
   // or "@cf/zai-org/glm-4.7-flash".
   model: string;
+  // Optional beat-synced timing block (beat-timing.buildBeatTimingBlock).
+  // When set, it is injected into the planning user message to pin the shot
+  // count + per-shot pacing to an audio bed.
+  beatBlock?: string;
 }
 
 export type PlanStoryboardResult =
@@ -84,7 +88,7 @@ export async function planStoryboard(
 
   const provider = plannerProviderFor(modelEntry);
   const systemPrompt = buildPlanningSystemPrompt();
-  const userMessage = buildPlanningUserMessage(args.brief, args.characters);
+  const userMessage = buildPlanningUserMessage(args.brief, args.characters, args.beatBlock);
 
   let result: unknown;
   let logId: string | null = null;

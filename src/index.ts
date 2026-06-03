@@ -60,6 +60,12 @@ import { parseDiscordExport, chunkDiscordMessages } from "./discord";
 import { callAnthropic, callAnthropicStream } from "./providers/anthropic";
 import { callXai, callXaiStream } from "./providers/xai";
 import { planStoryboard, refineStoryboard, type PlannerCharacter } from "./planner";
+import {
+  applyBeatTiming,
+  buildBeatTimingBlock,
+  parseBeatTimingInput,
+  type BeatTimingInput,
+} from "./beat-timing";
 import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
@@ -840,6 +846,10 @@ interface StoryboardPlanRequest {
   brief?: unknown;
   characters?: unknown;
   model?: unknown;
+  // Optional audio beat plan (forward the output of /api/audio/analyze).
+  // When present, the planner is pinned to exactly timedScenes.length shots
+  // and the per-shot timing is stamped deterministically. See beat-timing.ts.
+  beatPlan?: unknown;
 }
 
 async function handleStoryboardPlan(request: Request, env: Env): Promise<Response> {
@@ -900,10 +910,24 @@ async function handleStoryboardPlan(request: Request, env: Env): Promise<Respons
     characters.push({ slot: c.slot as SlotId, name: c.name, bible: c.bible });
   }
 
+  // Optional audio beat plan: validate at the boundary so a malformed plan
+  // returns 400 (not the model-output ok:false envelope). When present it
+  // pins the shot count (via the prompt block) and gets stamped onto the
+  // scenes after validation.
+  let beat: BeatTimingInput | undefined;
+  if (raw.beatPlan !== undefined && raw.beatPlan !== null) {
+    const parsed = parseBeatTimingInput(raw.beatPlan);
+    if (!parsed.ok) {
+      return json({ error: `beatPlan invalid: ${parsed.errors.join("; ")}` }, { status: 400 });
+    }
+    beat = parsed.value;
+  }
+
   const result = await planStoryboard(env, {
     brief: raw.brief,
     characters,
     model: raw.model,
+    beatBlock: beat ? buildBeatTimingBlock(beat) : undefined,
   });
 
   if (!result.ok) {
@@ -929,13 +953,25 @@ async function handleStoryboardPlan(request: Request, env: Env): Promise<Respons
     );
   }
 
+  // Stamp the exact beat timings onto the validated storyboard. The model
+  // owned the shot count + content; this owns the frame-accurate seconds so
+  // the cuts land on the beat regardless of what the model emitted.
+  let storyboard = result.storyboard;
+  let timingWarnings: string[] = [];
+  if (beat) {
+    const stamped = applyBeatTiming(storyboard, beat);
+    storyboard = stamped.storyboard;
+    timingWarnings = stamped.warnings;
+  }
+
   return json({
     ok: true,
-    storyboard: result.storyboard,
-    yaml: serializeStoryboardYaml(result.storyboard),
+    storyboard,
+    yaml: serializeStoryboardYaml(storyboard),
     provider: result.provider,
     model: result.model,
     logId: result.logId,
+    ...(timingWarnings.length > 0 ? { timingWarnings } : {}),
     user: userEmail,
   });
 }

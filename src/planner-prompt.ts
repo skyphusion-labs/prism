@@ -180,21 +180,29 @@ Return ONLY the JSON object. Nothing before it. Nothing after it.`;
 export function buildPlanningUserMessage(
   brief: string,
   characters: PlannerCharacter[],
+  beatBlock?: string,
 ): string {
   const sorted = [...characters].sort((a, b) => a.slot.localeCompare(b.slot));
   const castLines =
     sorted.length === 0
       ? ["(none)"]
       : sorted.map((c) => `${c.slot}) ${c.name}: ${c.bible}`);
-  return [
+  const parts = [
     "BRIEF:",
     brief.trim(),
     "",
     "CAST LOADED FOR THIS RENDER:",
     ...castLines,
     "",
-    "Plan the storyboard and return the JSON now.",
-  ].join("\n");
+  ];
+  // Beat-synced timing block (built by beat-timing.buildBeatTimingBlock when
+  // the request carried an audio beat plan). It pins the shot count, so it
+  // goes BEFORE the final instruction the model acts on.
+  if (beatBlock && beatBlock.trim().length > 0) {
+    parts.push(beatBlock.trim(), "");
+  }
+  parts.push("Plan the storyboard and return the JSON now.");
+  return parts.join("\n");
 }
 
 // ---------- Refinement chat (v0.50.0) ----------
