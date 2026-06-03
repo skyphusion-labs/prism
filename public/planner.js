@@ -2183,14 +2183,11 @@ if (typeof window !== "undefined") window.__plannerHelpers = { snapToBeats };
 
 // ---------- Beat-sync (v0.106.0) ----------
 //
-// Server-side beat analysis: POST /api/audio/analyze submits an analyze_audio
-// RunPod job (librosa beat-tracking on the GPU pod); poll for the plan, then
-// apply its per-scene beat-aligned target_seconds. Mirrors the music-gen
-// submit/poll shape. See docs/audio-beat-sync.md.
-const BEAT_POLL_MS = 2000;
-const BEAT_POLL_MAX_MS = 60000;
+// Server-side beat analysis: POST /api/audio/analyze runs librosa on the
+// AUDIO_BEAT_SYNC Cloudflare Container and returns the beat plan inline (one
+// synchronous request, no jobId/poll), then we apply its per-scene beat-aligned
+// target_seconds. See docs/audio-beat-sync-container.md.
 const PLANNER_MAX_SCENES = 50; // mirrors STORYBOARD_MAX_SCENES in src/storyboard-validate.ts
-let beatPollTimer = null;
 let lastBeatPlan = null;
 
 function setBeatStatus(text, kind) {
@@ -2204,60 +2201,26 @@ async function analyzeBeats() {
   if (!planState.audioKey) { setBeatStatus("attach or generate an audio bed first.", "error"); return; }
   const clip = Number($("#planner-beat-clip").value);
   if (!Number.isFinite(clip) || clip <= 0) { setBeatStatus("seconds per shot must be a positive number.", "error"); return; }
-  if (beatPollTimer) { clearTimeout(beatPollTimer); beatPollTimer = null; }
   $("#planner-analyze-beats").disabled = true;
   $("#planner-beat-result").hidden = true;
-  setBeatStatus("submitting analysis...", "loading");
+  setBeatStatus("analyzing (beat detection)...", "loading");
   try {
+    // Single synchronous call: the container returns the plan inline.
     const resp = await fetch("/api/audio/analyze", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ audioKey: planState.audioKey, clipSeconds: clip, mode: "beat" }),
     });
     const data = await resp.json();
-    if (!resp.ok || !data.ok || !data.jobId) {
-      setBeatStatus("submit failed: " + (data.error || "HTTP " + resp.status), "error");
-      $("#planner-analyze-beats").disabled = false;
+    if (!resp.ok || !data.ok || !data.output) {
+      setBeatStatus("analysis failed: " + (data.error || "HTTP " + resp.status), "error");
       return;
     }
-    setBeatStatus("analyzing (beat detection)...", "loading");
-    pollBeatJob(data.jobId, Date.now());
+    renderBeatPlan(data.output);
   } catch (err) {
     setBeatStatus("network error: " + err.message, "error");
+  } finally {
     $("#planner-analyze-beats").disabled = false;
-  }
-}
-
-async function pollBeatJob(jobId, startTs) {
-  try {
-    const resp = await fetch("/api/audio/analyze/" + encodeURIComponent(jobId));
-    const data = await resp.json();
-    if (data.status === "COMPLETED" && data.output) {
-      renderBeatPlan(data.output);
-      $("#planner-analyze-beats").disabled = false;
-      return;
-    }
-    const terminalFail = data.status === "FAILED" || data.status === "CANCELLED"
-      || data.status === "TIMED_OUT" || data.ok === false;
-    if (terminalFail) {
-      setBeatStatus("analysis failed: " + (data.error || data.status || "unknown"), "error");
-      $("#planner-analyze-beats").disabled = false;
-      return;
-    }
-    if (Date.now() - startTs > BEAT_POLL_MAX_MS) {
-      setBeatStatus("timed out after 60s (the job may still finish; try again).", "error");
-      $("#planner-analyze-beats").disabled = false;
-      return;
-    }
-    setBeatStatus("analyzing (" + (data.status || "queued").toLowerCase() + ")...", "loading");
-    beatPollTimer = setTimeout(() => pollBeatJob(jobId, startTs), BEAT_POLL_MS);
-  } catch (err) {
-    if (Date.now() - startTs > BEAT_POLL_MAX_MS) {
-      setBeatStatus("poll error / timeout: " + err.message, "error");
-      $("#planner-analyze-beats").disabled = false;
-      return;
-    }
-    beatPollTimer = setTimeout(() => pollBeatJob(jobId, startTs), BEAT_POLL_MS);
   }
 }
 

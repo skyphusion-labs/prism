@@ -1,40 +1,12 @@
-// Tests for the audio beat-sync pure helpers (v0.105.0). The dispatcher
-// (submitAnalyzeAudioJob) touches fetch and is not unit-tested, matching the
-// runpod-submit.test.ts pattern. See docs/audio-beat-sync.md.
+// Tests for the audio beat-sync parser. Beat analysis now runs on the
+// AUDIO_BEAT_SYNC Cloudflare Container (containers/audio-beat-sync emits the
+// snake_case plan); parseAudioBeatPlan normalizes it to the camelCase Worker
+// shape. The route handler (handleAudioAnalyze in src/index.ts) touches DO
+// fetch + R2 presign and is not unit-tested here, matching the pure-helper
+// pattern. See docs/audio-beat-sync-container.md.
 
 import { describe, it, expect } from "vitest";
-import { buildAnalyzeAudioPayload, parseAudioBeatPlan } from "../src/runpod-submit";
-
-describe("buildAnalyzeAudioPayload", () => {
-  it("defaults: only action + audio_key, beat mode implied by omission", () => {
-    const { input } = buildAnalyzeAudioPayload({ audioKey: "audio/x.mp3" });
-    expect(input).toEqual({ action: "analyze_audio", audio_key: "audio/x.mp3" });
-    expect(input.mode).toBeUndefined();
-  });
-
-  it("includes clip_seconds only when a positive number", () => {
-    expect(buildAnalyzeAudioPayload({ audioKey: "audio/x.mp3", clipSeconds: 4 }).input.clip_seconds).toBe(4);
-    expect(buildAnalyzeAudioPayload({ audioKey: "audio/x.mp3", clipSeconds: 0 }).input.clip_seconds).toBeUndefined();
-    expect(buildAnalyzeAudioPayload({ audioKey: "audio/x.mp3", clipSeconds: -2 }).input.clip_seconds).toBeUndefined();
-  });
-
-  it("sets mode=duration only when explicitly requested", () => {
-    expect(buildAnalyzeAudioPayload({ audioKey: "audio/x.mp3", mode: "duration" }).input.mode).toBe("duration");
-    expect(buildAnalyzeAudioPayload({ audioKey: "audio/x.mp3", mode: "beat" }).input.mode).toBeUndefined();
-  });
-
-  it("passes min/max scene bounds through", () => {
-    const { input } = buildAnalyzeAudioPayload({ audioKey: "audio/x.mp3", minSceneS: 2.5, maxSceneS: 12 });
-    expect(input.min_scene_s).toBe(2.5);
-    expect(input.max_scene_s).toBe(12);
-  });
-
-  it("includes force_shots only for a positive integer", () => {
-    expect(buildAnalyzeAudioPayload({ audioKey: "audio/x.mp3", forceShots: 10 }).input.force_shots).toBe(10);
-    expect(buildAnalyzeAudioPayload({ audioKey: "audio/x.mp3", forceShots: 0 }).input.force_shots).toBeUndefined();
-    expect(buildAnalyzeAudioPayload({ audioKey: "audio/x.mp3", forceShots: 3.5 }).input.force_shots).toBeUndefined();
-  });
-});
+import { parseAudioBeatPlan } from "../src/runpod-submit";
 
 describe("parseAudioBeatPlan", () => {
   it("parses a valid beat-mode response (snake -> camel)", () => {

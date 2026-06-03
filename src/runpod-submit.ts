@@ -2061,49 +2061,25 @@ export async function pollRenderJob(
   return { ok: true, view };
 }
 
-// ---------- Audio beat-sync (analyze_audio action) ----------
+// ---------- Audio beat-sync (CPU Cloudflare Container) ----------
 //
-// Pairs with the pod `analyze_audio` action shipped in vivijure-serverless
-// 0.4.59. The pod takes an R2 audio key, runs librosa beat-tracking, and
-// returns beat-aligned scene boundaries the planner writes into a storyboard
-// so each rendered clip lands on a downbeat span. See docs/audio-beat-sync.md.
+// Beat analysis runs on the AUDIO_BEAT_SYNC container (librosa), called
+// synchronously from src/index.ts handleAudioAnalyze; the GPU pod
+// `analyze_audio` action was reverted in vivijure-serverless 0.4.60. These
+// types + parseAudioBeatPlan are shared: the request shape the route validates,
+// and the snake_case plan the container emits (normalized to camelCase here).
+// See docs/audio-beat-sync-container.md.
 
-// Worker-facing request (camelCase); the route handler builds this from JSON.
+// Worker-facing request (camelCase); the route handler builds the container
+// body from this. Defaults below are applied at the call site / in the
+// container, not here.
 export interface AudioAnalyzeRequest {
   audioKey: string;                    // required; R2 key
-  clipSeconds?: number;                // default 8.0 (pod-side)
+  clipSeconds?: number;                // default 8.0
   mode?: "beat" | "duration";          // default "beat"
-  minSceneS?: number;                  // default 2.5 (pod-side, beat mode)
-  maxSceneS?: number;                  // default 12.0 (pod-side, beat mode)
+  minSceneS?: number;                  // default 2.5 (beat mode)
+  maxSceneS?: number;                  // default 12.0 (beat mode)
   forceShots?: number;                 // duration mode only; override slice count
-}
-
-// Pod request input (snake_case; mirrors the python contract).
-export interface AnalyzeAudioJobInput {
-  action: "analyze_audio";
-  audio_key: string;
-  clip_seconds?: number;
-  mode?: "beat" | "duration";
-  min_scene_s?: number;
-  max_scene_s?: number;
-  force_shots?: number;
-}
-
-export function buildAnalyzeAudioPayload(args: AudioAnalyzeRequest): { input: AnalyzeAudioJobInput } {
-  const input: AnalyzeAudioJobInput = {
-    action: "analyze_audio",
-    audio_key: args.audioKey,
-  };
-  if (typeof args.clipSeconds === "number" && args.clipSeconds > 0) {
-    input.clip_seconds = args.clipSeconds;
-  }
-  if (args.mode === "duration") input.mode = "duration"; // "beat" is the pod default
-  if (typeof args.minSceneS === "number") input.min_scene_s = args.minSceneS;
-  if (typeof args.maxSceneS === "number") input.max_scene_s = args.maxSceneS;
-  if (typeof args.forceShots === "number" && Number.isInteger(args.forceShots) && args.forceShots > 0) {
-    input.force_shots = args.forceShots;
-  }
-  return { input };
 }
 
 export interface TimedScene {
@@ -2156,59 +2132,4 @@ export function parseAudioBeatPlan(raw: unknown): AudioBeatPlan | null {
       : [],
     note: String(r.note ?? ""),
   };
-}
-
-// Submit an analyze_audio job. Mirrors submitRenderJob: same env-var checks,
-// fetch wrapper, and normalizeRunpodResponse translation; only the payload
-// builder differs. Poll the returned jobId with the generic pollRenderJob.
-export async function submitAnalyzeAudioJob(
-  env: Env,
-  args: AudioAnalyzeRequest,
-): Promise<{ ok: true; view: RunpodJobView } | { ok: false; error: string; status?: number }> {
-  if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
-    return {
-      ok: false,
-      error:
-        "RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID must be set on the Worker (npx wrangler secret put ...)",
-    };
-  }
-  const url = buildSubmitUrl(env.RUNPOD_ENDPOINT_ID);
-  const body = JSON.stringify(buildAnalyzeAudioPayload(args));
-  let resp: Response;
-  try {
-    resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${env.RUNPOD_API_KEY}`,
-      },
-      body,
-    });
-  } catch (err) {
-    const m = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: `RunPod submit network error: ${m}` };
-  }
-  let raw: unknown;
-  try {
-    raw = await resp.json();
-  } catch {
-    const text = await resp.text().catch(() => "");
-    return {
-      ok: false,
-      error: `RunPod submit returned non-JSON (status ${resp.status}): ${text.slice(0, 300)}`,
-      status: resp.status,
-    };
-  }
-  if (!resp.ok) {
-    const errStr =
-      raw && typeof raw === "object" && "error" in raw
-        ? String((raw as Record<string, unknown>).error)
-        : `HTTP ${resp.status}`;
-    return { ok: false, error: `RunPod submit failed: ${errStr}`, status: resp.status };
-  }
-  const view = normalizeRunpodResponse(raw);
-  if (!view) {
-    return { ok: false, error: "RunPod submit returned an unrecognized envelope" };
-  }
-  return { ok: true, view };
 }

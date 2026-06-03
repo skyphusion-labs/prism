@@ -69,7 +69,6 @@ import {
   deriveProjectFromBundleKey,
   isValidJobId,
   pollRenderJob,
-  submitAnalyzeAudioJob,
   submitFinalizeJob,
   submitRegenShotJob,
   submitRenderJob,
@@ -508,10 +507,13 @@ export default {
     if (url.pathname === "/api/storyboard/bundle" && request.method === "POST") {
       return handleStoryboardBundle(request, env);
     }
-    // v0.105.0: audio beat-sync. Submit + poll an analyze_audio job (pod
-    // action shipped in vivijure-serverless 0.4.59). Mirrors the render pair.
+    // v0.107.0: audio beat-sync. Single synchronous call to the CPU-only
+    // AUDIO_BEAT_SYNC Cloudflare Container (librosa). Replaces the v0.105.0
+    // submit/poll pair against the reverted GPU pod analyze_audio action
+    // (vivijure-serverless 0.4.60); beat analysis is fast enough (1-3s warm)
+    // that there is no jobId/poll dance. See docs/audio-beat-sync-container.md.
     if (url.pathname === "/api/audio/analyze" && request.method === "POST") {
-      return handleAudioAnalyzeSubmit(request, env);
+      return handleAudioAnalyze(request, env);
     }
     // TEMP (v0.107.0): presign a PUT+GET for a throwaway key so a shell round
     // trip can verify R2 SigV4 presigning works. Remove after verification.
@@ -546,10 +548,6 @@ export default {
       } catch (err) {
         return json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 502 });
       }
-    }
-    const aj = url.pathname.match(/^\/api\/audio\/analyze\/([A-Za-z0-9_-]+)$/);
-    if (aj && request.method === "GET") {
-      return handleAudioAnalyzePoll(env, aj[1]);
     }
     // v0.32.0: submit a render job to the vivijure-serverless RunPod endpoint.
     if (url.pathname === "/api/storyboard/render" && request.method === "POST") {
@@ -1602,7 +1600,12 @@ interface RenderSubmitRequest {
 
 // v0.105.0: audio beat-sync. Submit an analyze_audio job; poll mirrors the
 // render poll. See docs/audio-beat-sync.md.
-async function handleAudioAnalyzeSubmit(request: Request, env: Env): Promise<Response> {
+// Beat analysis runs on the CPU-only AUDIO_BEAT_SYNC Cloudflare Container, not
+// the GPU pod. We presign a short-lived R2 GET URL, POST it to the container's
+// /analyze (it streams the audio over the public S3 endpoint, runs librosa,
+// returns the snake_case AudioBeatPlan), and normalize inline. One round trip,
+// no jobId/poll: warm latency is 1-3s. See docs/audio-beat-sync-container.md.
+async function handleAudioAnalyze(request: Request, env: Env): Promise<Response> {
   const userEmail = getUserEmail(request);
   let body: AudioAnalyzeRequest;
   try {
@@ -1622,50 +1625,61 @@ async function handleAudioAnalyzeSubmit(request: Request, env: Env): Promise<Res
   if (body.mode !== undefined && body.mode !== "beat" && body.mode !== "duration") {
     return json({ ok: false, error: "mode must be 'beat' or 'duration'" }, { status: 400 });
   }
-  // Ensure the key lives in the GPU-readable bucket (copies out/ -> audio/ if
-  // it's a chat-bucket music-gen output); same routing as the render path.
+  // Route the key into R2_RENDERS (the bucket the presigned URL signs against);
+  // copies an out/ chat-bucket music-gen output into audio/ if needed. Same
+  // helper the render submit path uses.
   let audioKey: string;
   try {
     audioKey = await placeAudioForGpu(env, body.audioKey, userEmail);
   } catch (err) {
     return json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 400 });
   }
-  // Confirm it exists before burning a RunPod call.
+  // Confirm it exists before spinning the container.
   const head = await env.R2_RENDERS.head(audioKey);
   if (!head) {
     return json({ ok: false, error: `audio key not found: ${audioKey}` }, { status: 404 });
   }
-  const result = await submitAnalyzeAudioJob(env, { ...body, audioKey });
-  if (!result.ok) {
-    return json({ ok: false, error: result.error }, { status: result.status ?? 502 });
-  }
-  return json({ ok: true, jobId: result.view.jobId, status: result.view.status });
-}
 
-async function handleAudioAnalyzePoll(env: Env, jobId: string): Promise<Response> {
-  if (!isValidJobId(jobId)) {
-    return json({ ok: false, error: "invalid jobId" }, { status: 400 });
+  // Presign a short-lived GET URL the container fetches over the public S3
+  // endpoint. The container holds no R2 binding by design; presigning keeps the
+  // credential surface on the Worker.
+  let audioUrl: string;
+  try {
+    audioUrl = await presignR2Get(env, audioKey, 120 /* seconds */);
+  } catch (err) {
+    return json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
-  const result = await pollRenderJob(env, jobId);
-  if (!result.ok) {
-    return json({ ok: false, error: result.error }, { status: result.status ?? 502 });
+
+  const stub = env.AUDIO_BEAT_SYNC.get(env.AUDIO_BEAT_SYNC.idFromName("singleton"));
+  let containerResp: Response;
+  try {
+    containerResp = await stub.fetch("https://container/analyze", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        audioUrl,
+        audioKey,
+        clipSeconds: body.clipSeconds ?? 8.0,
+        mode: body.mode ?? "beat",
+        minSceneS: body.minSceneS ?? 2.5,
+        maxSceneS: body.maxSceneS ?? 12.0,
+        forceShots: body.forceShots,
+      }),
+    });
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    return json({ ok: false, error: `beat-sync container unreachable: ${m}` }, { status: 502 });
   }
-  const view = result.view;
-  const resp: Record<string, unknown> = {
-    ok: true,
-    jobId: view.jobId,
-    status: view.status,
-    statusRaw: view.statusRaw,
-  };
-  if (view.error) resp.error = view.error;
-  if (view.status === "COMPLETED") {
-    const plan = parseAudioBeatPlan(view.output);
-    if (!plan) {
-      return json({ ok: false, error: "could not parse audio analysis output", raw: view.output }, { status: 502 });
-    }
-    resp.output = plan;
+  if (!containerResp.ok) {
+    const text = await containerResp.text().catch(() => "");
+    return json({ ok: false, error: `container ${containerResp.status}: ${text.slice(0, 200)}` }, { status: 502 });
   }
-  return json(resp);
+  const raw = await containerResp.json<Record<string, unknown>>().catch(() => null);
+  const plan = parseAudioBeatPlan(raw);
+  if (!plan) {
+    return json({ ok: false, error: "could not parse beat-sync container output", raw }, { status: 502 });
+  }
+  return json({ ok: true, output: plan });
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
