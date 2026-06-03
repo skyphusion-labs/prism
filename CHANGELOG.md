@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.115.0
+
+Composer fixes (from a mobile screenshot).
+
+- **Center the text block** between the paperclip and send button: the composer
+  was `align-items: flex-end`, so the textarea text sat at the top while the
+  buttons sat at the bottom. Now centered, with the box height tuned per
+  breakpoint so the placeholder fills it (no gap above the paperclip).
+- **Removed the stray dashed border** around the paperclip (leftover legacy
+  `.attach-row` drag-drop styling).
+- **Placeholder** drops the "type here, " prefix -> just "enter to send,
+  shift+enter for newline".
+
 ## v0.114.0
 
 More frontpage polish.

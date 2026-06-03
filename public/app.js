@@ -472,7 +472,7 @@ function updateAffordance() {
     systemPromptLabel.textContent = "system prompt";
     systemPrompt.placeholder = "optional";
     userInputLabel.textContent = "your input";
-    userInput.placeholder = "type here, enter to send, shift+enter for newline";
+    userInput.placeholder = "enter to send, shift+enter for newline";
     attachRow.style.display = "flex";
     // v0.24.0: chat accepts any file (empty accept = no picker filter). Vision
     // models also take images/video; non-vision get audio auto-transcribed +
