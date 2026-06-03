@@ -124,7 +124,7 @@ All matched in the single `fetch` handler in `src/index.ts` (top-of-file comment
 - **Minimal runtime deps.** Only `aws4fetch` (Bedrock SigV4), `unpdf` (PDF RAG), `xlsx` (spreadsheet RAG). New runtime deps need justification.
 - **Prefer Unified Billing over BYOK** for new providers (no extra deployer key, native AI Gateway, less code). Add BYOK only when Unified Billing doesn't support the provider or its billing model doesn't fit. BYOK catalog rows use `{ provider, byok_alias }` and label `(BYOK)` in the UI.
 - **`wrangler.toml` is gitignored.** All config/binding changes go in `wrangler.example.toml` (the committed template); document new bindings as a copy-paste TOML block in the CHANGELOG entry so existing deployers can apply them by hand.
-- After touching the `Env` interface or adding a binding, run `npx wrangler types` to regenerate `worker-configuration.d.ts`, and mirror the field in `src/env.ts`.
+- After adding a binding, mirror it in the hand-authored `Env` interface (`src/env.ts`). Runtime types come from the pinned `@cloudflare/workers-types` devDep + `src/env.ts`; do not generate `worker-configuration.d.ts` (it is unreferenced here and gitignored).
 - Adding a Workers AI model: verify the model ID and response shape against `developers.cloudflare.com/workers-ai/models/`.
 
 ### Schema migrations
