@@ -75,9 +75,24 @@ image = "./containers/audio-beat-sync/Dockerfile"
 max_instances = 3
 instance_type = "standard-1"
 
+# v0.107.0: CPU rembg background-removal container (cast portraits at bundle time).
+[[durable_objects.bindings]]
+name = "IMAGE_PREP"
+class_name = "ImagePrepContainer"
+
+[[containers]]
+class_name = "ImagePrepContainer"
+image = "./containers/image-prep/Dockerfile"
+max_instances = 5
+instance_type = "standard-1"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["AudioBeatSyncContainer"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["ImagePrepContainer"]
 
 # Per-instance observability for the worker (lets you tail logs in the
 # dashboard). Workflows have their own dashboard surface; this enables it

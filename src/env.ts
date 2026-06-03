@@ -46,6 +46,11 @@ export interface Env {
   // it to the container's /analyze; class is AudioBeatSyncContainer in
   // src/containers/audio-beat-sync.ts. Replaces the reverted GPU pod action.
   AUDIO_BEAT_SYNC: DurableObjectNamespace;
+  // v0.107.0: Container DO for CPU rembg background removal on cast portraits
+  // (class ImagePrepContainer in src/containers/image-prep.ts). Worker presigns
+  // R2 GET/PUT and POSTs to /portrait/prep at bundle time; moves rembg off the
+  // GPU pod. See docs/image-prep-container.md.
+  IMAGE_PREP: DurableObjectNamespace;
   // v0.93.0: Anthropic moved off BYOK to Cloudflare Unified Billing, so there
   // is no longer an ANTHROPIC_API_KEY; it authorizes via CF_AIG_TOKEN below.
   XAI_API_KEY?: string;       // optional; preferred is to store in AI Gateway dashboard
