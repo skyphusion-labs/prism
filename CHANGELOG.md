@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.122.5
+
+CI fix (Jenkins only, no worker change): make the `skyphusion-ci` deploy stage
+able to deploy the containers-Worker. `wrangler deploy` builds the three
+Cloudflare Container images (`containers/{audio-beat-sync,image-prep,video-finish}`)
+before publishing, which needs the Docker CLI + daemon; the plain `node:22` agent
+had neither, so the v0.122.4 deploy aborted with "The Docker CLI is needed to build
+the configured images." Give the agent real Docker access:
+- New `ci/node-docker.Dockerfile` (`node:22` + Docker CLI + buildx), built/pushed
+  on mindcrime-ci as `ghcr.io/skyphusion/ci-node-docker:latest`. (Currently present
+  locally on the runner; the GitHub PAT in CI lacks `write:packages` so the GHCR
+  push is pending a token with that scope. Jenkins uses the local image regardless.)
+- Jenkinsfile agent now uses that image and bind-mounts the host Docker socket with
+  `--group-add 988` (the `docker` gid on mindcrime-ci), so wrangler's container
+  builds run against the host daemon. Still runs as the Jenkins uid (keeps the
+  v0.122.4 non-root workspace-cleanup fix).
+- Pipeline timeout raised 20 -> 60 min, since a full deploy rebuilds all three
+  container images.
+
+### Code
+- `ci/node-docker.Dockerfile` (new): CI agent image (node + Docker CLI + buildx).
+- `Jenkinsfile`: custom agent image + Docker socket mount + `--group-add 988`; timeout 20 -> 60 min.
+- `package.json`: version 0.122.4 -> 0.122.5.
+
 ## v0.122.4
 
 CI fix (Jenkins only, no worker change): the `skyphusion-ci` pipeline ran its

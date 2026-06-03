@@ -20,18 +20,25 @@
 pipeline {
   agent {
     docker {
-      image 'node:22'
-      // Run as the Jenkins uid (the docker-pipeline default), NOT root. Running as
-      // root made npm write root-owned files into the bind-mounted workspace
-      // (.npm cache/logs, node_modules); the host `jenkins` user then could not
-      // delete them on the next checkout, failing every subsequent build with
-      // "Failed to clean the workspace / Operation not permitted". HOME below
-      // points npm at a writable workspace dir, so it works fine as non-root.
+      // Custom image: node:22 + Docker CLI + buildx, built/pushed on mindcrime-ci
+      // (see ci/node-docker.Dockerfile). The Docker CLI lets the Deploy stage's
+      // `wrangler deploy` build the three Cloudflare Container images
+      // (containers/{audio-beat-sync,image-prep,video-finish}) before publishing.
+      image 'ghcr.io/skyphusion/ci-node-docker:latest'
+      // Bind-mount the host Docker socket and join the `docker` group (gid 988 on
+      // mindcrime-ci, per `id jenkins`) so wrangler's container builds reach the
+      // host daemon. Still runs as the Jenkins uid (the docker-pipeline default),
+      // NOT root: running as root made npm write root-owned files into the
+      // workspace that the host jenkins user then could not clean on the next
+      // checkout. HOME below points npm at a writable workspace dir.
+      args '-v /var/run/docker.sock:/var/run/docker.sock --group-add 988'
     }
   }
 
   options {
-    timeout(time: 20, unit: 'MINUTES')
+    // Generous: a full deploy rebuilds the three Cloudflare Container images,
+    // which can take several minutes each on a cold layer cache.
+    timeout(time: 60, unit: 'MINUTES')
     disableConcurrentBuilds()
     timestamps()                 // requires the Timestamper plugin (ships by default)
     buildDiscarder(logRotator(numToKeepStr: '30'))
