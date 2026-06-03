@@ -549,6 +549,40 @@ export default {
         return json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 502 });
       }
     }
+    // TEMP (v0.107.0): exercise the image-prep container's /portrait/prep end to
+    // end against R2 (presign GET source + PUT dest, call the container, confirm
+    // the cleaned PNG landed). Proves the live rembg path before the bundle
+    // wiring. Remove with the other temp routes. Stage a source first, e.g.
+    // `wrangler r2 object put vivijure/tmp/image-prep-test/input.png --file p.png`.
+    // ?inputKey overrides the default source key.
+    if (url.pathname === "/api/image-prep/prep-test" && request.method === "GET") {
+      try {
+        const inputKey = url.searchParams.get("inputKey") || "tmp/image-prep-test/input.png";
+        const outputKey = "tmp/image-prep-test/output.png";
+        const src = await env.R2_RENDERS.head(inputKey);
+        if (!src) {
+          return json({ ok: false, error: `no source object at ${inputKey}; upload one first` }, { status: 404 });
+        }
+        const inputUrl = await presignR2Get(env, inputKey, 300);
+        const outputUrl = await presignR2Put(env, outputKey, 300);
+        const stub = env.IMAGE_PREP.get(env.IMAGE_PREP.idFromName("singleton"));
+        const r = await stub.fetch("https://container/portrait/prep", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ inputUrl, outputUrl, outputKey, background: "alpha" }),
+        });
+        const containerBody = await r.json<Record<string, unknown>>().catch(() => null);
+        const out = await env.R2_RENDERS.head(outputKey);
+        return json({
+          ok: r.ok && !!out,
+          containerStatus: r.status,
+          containerBody,
+          outputLanded: out ? { key: outputKey, size: out.size } : null,
+        });
+      } catch (err) {
+        return json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 502 });
+      }
+    }
     // v0.32.0: submit a render job to the vivijure-serverless RunPod endpoint.
     if (url.pathname === "/api/storyboard/render" && request.method === "POST") {
       return handleRenderSubmit(request, env);
