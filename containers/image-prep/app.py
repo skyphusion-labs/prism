@@ -9,11 +9,20 @@ the Worker). See docs/image-prep-container.md.
 import asyncio
 import logging
 import os
+import threading
 from io import BytesIO
 
 from aiohttp import ClientSession, ClientTimeout, web
 from PIL import Image
-from rembg import new_session, remove
+
+# rembg is intentionally NOT imported at module load. `import rembg` pulls in
+# pymatting, which JIT-compiles ~46s of numba kernels on a cold cache (the
+# image bakes a warm NUMBA_CACHE_DIR so it's normally ~1.5s, but even that is
+# import work). Doing it before web.run_app binds :8000 risks tripping the
+# container runtime's port-ready check ("not listening on :8000"), which is
+# exactly what broke this container. We bind first, then warm rembg in a
+# background task (see _warm_on_startup); the first import lands inside the
+# lazy session path. /health never touches rembg at all.
 
 PORT = int(os.environ.get("PORT", "8000"))
 DOWNLOAD_TIMEOUT_S = 30
@@ -23,18 +32,22 @@ MAX_INPUT_BYTES = 32 * 1024 * 1024  # 32 MB upper bound on a portrait
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("image-prep")
 
-# Lazily-created ORT session. NOT at module load: creating it loads the
-# ~176 MB u2net model + initializes onnxruntime, which would delay the HTTP
-# bind past the container runtime's port-ready check ("not listening on
-# :8000"). Bind first; the first /portrait/prep pays the (warm, baked-model)
-# session init. /health never touches it.
+# Lazily-created ORT session, guarded so the background warm task and a
+# concurrent first request don't both build it.
 _SESSION = None
+_SESSION_LOCK = threading.Lock()
 
 
 def _get_session():
     global _SESSION
     if _SESSION is None:
-        _SESSION = new_session("u2net")
+        with _SESSION_LOCK:
+            if _SESSION is None:
+                from rembg import new_session  # deferred; see module note
+
+                log.info("loading rembg u2net session...")
+                _SESSION = new_session("u2net")
+                log.info("rembg u2net session ready")
     return _SESSION
 
 
@@ -90,6 +103,8 @@ async def prep(req):
 
 
 def _process(data, background):
+    from rembg import remove  # deferred; see module note
+
     cleaned = remove(data, session=_get_session())  # bytes in, PNG RGBA bytes out
     img = Image.open(BytesIO(cleaned)).convert("RGBA")
     if background == "black":
@@ -101,9 +116,23 @@ def _process(data, background):
     return buf.getvalue(), img.size[0], img.size[1]
 
 
+async def _warm_on_startup(app):
+    # Fire-and-forget warm of the rembg import + ORT session in a worker
+    # thread, scheduled AFTER aiohttp binds the port. This keeps the (normally
+    # ~1.5s, worst-case ~46s on a numba-cache miss) import off the activation
+    # critical path: the runtime sees :8000 bound immediately, and by the time
+    # the first /portrait/prep arrives the session is usually already built.
+    loop = asyncio.get_running_loop()
+    # run_in_executor returns a Future that is already scheduled on the default
+    # thread pool; we keep a reference so it isn't GC'd. (Do NOT wrap it in
+    # create_task: run_in_executor yields a Future, not a coroutine.)
+    app["warm_task"] = loop.run_in_executor(None, _get_session)
+
+
 app = web.Application()
 app.router.add_get("/health", health)
 app.router.add_post("/portrait/prep", prep)
+app.on_startup.append(_warm_on_startup)
 
 if __name__ == "__main__":
     log.info("image-prep listening on 0.0.0.0:%d", PORT)

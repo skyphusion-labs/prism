@@ -10,3 +10,7 @@ node_modules/
 #   cp wrangler.example.toml wrangler.toml  (then fill in database_id and your name)
 wrangler.toml
 wrangler.production.toml
+
+# Python bytecode (container app dirs)
+__pycache__/
+*.pyc
