@@ -1698,7 +1698,8 @@ textarea:focus {
 
 .planner-field textarea,
 .planner-field select,
-.planner-field input[type="text"] {
+.planner-field input[type="text"],
+.planner-field input[type="number"] {
   background: var(--bg-elev);
   color: var(--fg);
   border: 1px solid var(--border);

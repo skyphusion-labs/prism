@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.135.3
+
+Fix the scene editor's "target seconds" boxes rendering dark-on-dark (invisible).
+The value was always there -- a console probe showed the number inputs holding
+the right values and the storyboard fully populated -- but the box looked blank.
+Root cause: the themed `.planner-field` input rule (light text on elevated bg)
+listed `textarea`, `select`, and `input[type="text"]` but not
+`input[type="number"]`, so the lone number input in each scene row (target
+seconds) fell through to the browser default (dark text) on the dark scene-row
+background. The adjacent "act" / "start_image" text inputs were themed and
+visible, which is why only target seconds looked empty. Added
+`input[type="number"]` to the rule, symmetric with `input[type="text"]`.
+
+This is what the v0.134.3 / v0.135.2 backfill work was chasing: the data was
+correct the whole time (server populates target_seconds on every plan; the
+client backfill covers restored storyboards) -- the symptom was purely this
+missing CSS selector. The backfill is still correct and stays.
+
+### Code
+- `public/styles.css`: add `.planner-field input[type="number"]` to the themed
+  input selector (line ~1701) so number inputs get `color: var(--fg)`.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 533 pass. (CSS-only; no
+  JS/TS touched.)
+
 ## v0.135.2
 
 Fix blank "target seconds" boxes in the scene editor. The server populates
