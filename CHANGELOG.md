@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.135.6
+
+Make LoRA reuse authoritative server-side so the GPU never needlessly retrains a
+cast LoRA that is already trained. Background: a render skips training via two
+paths, the per-project `state.tar.gz` (which cannot exist on a new project's
+first render) and the cast-LoRA path (`castLoras` {slot: cast_id} ->
+`pretrained_loras` -> the pod stages the `.safetensors` and synthesizes the
+job-json so `lora_already_trained` returns true). For a new project the cast
+path is the only one that can apply, but `buildCastLoraSubmit` gated on the
+browser's CACHED `lora_status`, so a LoRA that finished training after page load
+was dropped client-side, no `castLoras` was sent, and the GPU retrained it. The
+v0.135.5 cache-refresh was a partial mitigation.
+
+Now `buildCastLoraSubmit` sends every validly-bound `slot -> cast_id` and lets
+the render / finalize route (which already re-reads each cast row fresh from D1,
+ownership-scoped, and forwards only `ready` rows with a `loras/` key) be the
+single source of truth. This removes the dependency on cache freshness and on
+whether `state.tar.gz` exists. The now-redundant v0.135.5 submit-time
+`loadCast()` refresh is removed. Submit also surfaces the server's decision
+(`pretrainedSlots` reused vs `castLoraSkipped` trained fresh) in the status line
+and console, so a reused render is visibly distinct from one that retrains.
+
+Verified: the pod path is already correct (`_stage_pretrained_loras` downloads
+the LoRA, registers it, and writes the job-json the train-skip gate checks); the
+only gap was the client not sending the bindings.
+
+### Code
+- `public/planner.js`: `buildCastLoraSubmit` sends all bound cast ids (server
+  gates readiness); removed the v0.135.5 submit-time catalog refresh in
+  `submitRender` + `finalizeRender`; surface `pretrainedSlots` / `castLoraSkipped`
+  on submit.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 533 pass. `node --check`
+  on planner.js OK. (Client-only; server resolver unchanged.)
+
 ## v0.135.5
 
 Fix the planner retraining LoRAs that are already trained and ready. Reuse works

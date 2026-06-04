@@ -1040,13 +1040,21 @@ function findCastById(id) {
 // Worker still re-validates server-side (ownership + ready check), so this
 // is purely a wire-bandwidth optimization for the common case.
 function buildCastLoraSubmit() {
+  // v0.135.6: send every validly-bound slot -> cast_id and let the render /
+  // finalize route be the single authority on readiness. The route re-loads
+  // each cast row from D1 (fresh, ownership-scoped) and forwards only rows
+  // whose lora_status is 'ready' with a loras/ key, dropping the rest into
+  // castLoraSkipped. Earlier versions gated here on the browser's CACHED
+  // lora_status, so a LoRA that finished training after the page loaded was
+  // silently dropped and the GPU retrained it from scratch (the worse case
+  // when no per-project state.tar.gz exists yet, e.g. a new project). Gating
+  // server-side removes the dependency on cache freshness entirely.
   const out = {};
-  for (const [slot, castId] of Object.entries(planState.castBindings || {})) {
-    const cast = findCastById(castId);
-    if (!cast) continue;
-    if (cast.lora_status !== "ready") continue;
-    if (typeof cast.lora_key !== "string" || !cast.lora_key.startsWith("loras/")) continue;
-    out[slot] = castId;
+  for (const [slot, raw] of Object.entries(planState.castBindings || {})) {
+    if (typeof slot !== "string" || slot.length === 0) continue;
+    const id = Number(raw);
+    if (!Number.isInteger(id) || id <= 0) continue;
+    out[slot] = id;
   }
   return out;
 }
@@ -3939,20 +3947,8 @@ async function submitRender() {
   // scoped, ready-status-gated) and the GPU (vivijure-serverless 0.4.14+)
   // stages the .safetensors into the project before Stage 1 so the
   // ready-slot pre-check short-circuits training for them.
-  // v0.135.5: the cast catalog is fetched once at page load, but a LoRA can
-  // finish training AFTER the planner is open. buildCastLoraSubmit gates on the
-  // cached lora_status, so a stale "not ready" silently drops the slot and the
-  // GPU retrains a LoRA that is actually ready. Refresh the catalog at submit
-  // time so freshly-trained LoRAs get reused. Preserve the prior catalog if the
-  // refresh fails (loadCast zeroes it on error) so a transient fetch failure
-  // never drops reuse for every slot.
-  if (Object.keys(planState.castBindings || {}).length > 0) {
-    const prevCatalog = planState.castCatalog;
-    await loadCast();
-    if (!Array.isArray(planState.castCatalog) || planState.castCatalog.length === 0) {
-      planState.castCatalog = prevCatalog;
-    }
-  }
+  // v0.135.6: no cache refresh needed here; buildCastLoraSubmit now sends all
+  // bound cast ids and the server gates readiness against fresh D1 state.
   const castLoraSubmit = buildCastLoraSubmit();
   if (Object.keys(castLoraSubmit).length > 0) reqBody.castLoras = castLoraSubmit;
   // v0.86.0: all advanced override blocks are collected by a single
@@ -4014,7 +4010,17 @@ async function submitRender() {
   $("#planner-render-result").hidden = false;
   $("#planner-render-job-id").textContent = data.jobId;
   setJobStatusBadge(data.status || "IN_QUEUE");
-  setRenderStatus("submitted; opening stream...", "loading");
+  // v0.135.6: surface the server's LoRA reuse decision so a reused render is
+  // visibly distinct from one that retrains. pretrainedSlots = slots the GPU
+  // will skip training (cast LoRA staged); castLoraSkipped = slots trained
+  // fresh, with a reason. Shown at submit (the moment it matters) + logged.
+  const reusedSlots = Array.isArray(data.pretrainedSlots) ? data.pretrainedSlots : [];
+  const skippedLoras = Array.isArray(data.castLoraSkipped) ? data.castLoraSkipped : [];
+  let loraNote = "";
+  if (reusedSlots.length) loraNote += " reusing trained LoRAs for " + reusedSlots.join(", ") + ".";
+  if (skippedLoras.length) loraNote += " training fresh: " + skippedLoras.map((s) => s.slot + " (" + s.reason + ")").join(", ") + ".";
+  if (loraNote) console.info("[render] LoRA:" + loraNote);
+  setRenderStatus("submitted; opening stream..." + loraNote, "loading");
   startStream();
   // Refresh the history list so the new render appears at the top
   // without the user needing to click "refresh" manually.
@@ -5765,15 +5771,7 @@ async function finalizeRender(row, btnEl) {
     // the Worker side.
     const finalizeBody = {};
     if (planState.audioKey) finalizeBody.audioKey = planState.audioKey;
-    // v0.135.5: refresh the cast catalog so a LoRA trained after page load is
-    // seen as ready and reused (see submitRender for the full rationale).
-    if (Object.keys(planState.castBindings || {}).length > 0) {
-      const prevCatalog = planState.castCatalog;
-      await loadCast();
-      if (!Array.isArray(planState.castCatalog) || planState.castCatalog.length === 0) {
-        planState.castCatalog = prevCatalog;
-      }
-    }
+    // v0.135.6: server gates readiness against fresh D1 state (see submitRender).
     const finalizeCastLoras = buildCastLoraSubmit();
     if (Object.keys(finalizeCastLoras).length > 0) {
       finalizeBody.castLoras = finalizeCastLoras;
