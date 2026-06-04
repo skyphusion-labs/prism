@@ -2310,26 +2310,31 @@ textarea:focus {
   min-width: 0;
 }
 
-/* The randomize button keeps its size; the seed input absorbs the slack. */
-.planner-overrides-row .planner-overrides-secondary {
-  flex: 0 0 auto;
-}
-
+/* v0.135.7: compact square icon button (the 'randomize seed' dice). Was a wide
+   text button that crowded and bled past the seed cell; now a fixed-width glyph
+   button that stretches to the seed input's height and sits flush beside it. */
 .planner-overrides-secondary {
+  flex: 0 0 auto;
+  width: 38px;
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: var(--bg-elev2);
   color: var(--fg-dim);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 6px 10px;
-  font-size: 12px;
+  border-radius: 6px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
   cursor: pointer;
-  white-space: nowrap;
-  transition: color 0.15s, border-color 0.15s;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 
 .planner-overrides-secondary:hover {
   color: var(--accent);
   border-color: var(--accent);
+  background: var(--bg-elev);
 }
 
 /* Nested raw-JSON details inside the structured panel. Slightly
@@ -2396,17 +2401,26 @@ textarea:focus {
 /* v0.123.0: Phase 2 tiering. Always-visible common row of the 3 canonical
    render knobs (seed / lora scale / consistency), sitting above the
    collapsed "advanced settings" + "expert: raw JSON" disclosures. */
+/* v0.135.7: balanced 2-column grid (the four creative knobs form a tidy 2x2:
+   art style | seed, lora scale | consistency) instead of the old auto-fit that
+   produced a lopsided 3-then-1 row. Collapses to a single column on narrow
+   viewports. align-items:start so a field whose label wraps to two lines does
+   not stretch its row-mate. */
 .planner-overrides-common {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 18px;
+  align-items: start;
   margin: 4px 0 14px;
-  padding: 14px;
+  padding: 16px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
 .planner-overrides-common .planner-field { margin: 0; }
+@media (max-width: 720px) {
+  .planner-overrides-common { grid-template-columns: 1fr; }
+}
 
 .planner-overrides-expert { margin-top: 10px; }
 .planner-overrides-expert-block { margin-bottom: 16px; }

@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.135.7
+
+Clean up the common render-controls box (art style / seed / lora scale /
+consistency). It was an auto-fit grid that landed on three columns, so the four
+fields sat 3-then-1 with consistency mode stranded alone on a second row, and
+the wide "randomize" text button was crammed into the narrow seed cell, bleeding
+into the lora-scale column. Now it is a balanced 2x2 grid (art style | seed,
+lora scale | consistency) that collapses to one column under 720px, and the
+randomize control is a compact square dice icon button (the established
+image-gen idiom, with title + aria-label "randomize seed") that stretches to the
+seed input's height and sits flush beside it. No behavior change; layout and
+affordance only.
+
+### Code
+- `public/planner.html`: randomize button is now a dice glyph with title /
+  aria-label (id + class unchanged, JS binding intact).
+- `public/styles.css`: `.planner-overrides-common` -> fixed 2-column grid with a
+  720px single-column breakpoint and align-items:start; `.planner-overrides-secondary`
+  -> compact 38px square icon button.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 533 pass. (HTML/CSS only.)
+
 ## v0.135.6
 
 Make LoRA reuse authoritative server-side so the GPU never needlessly retrains a
