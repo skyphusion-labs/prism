@@ -479,6 +479,31 @@ export function validateStoryboard(input: unknown): ValidationResult {
     return { ok: false, errors };
   }
 
+  // v0.134.3: backfill each scene's target_seconds when the model omitted the
+  // (optional) field, so the planner's scene editor shows an explicit per-shot
+  // duration instead of a blank box and the value is explicit downstream (beat
+  // snap, YAML, render) rather than relying on a silent fallback. Priority: an
+  // explicit start/end span, else the storyboard's clip_seconds (the per-shot
+  // default), else an even split of duration_seconds across the scenes. This is
+  // the same clip_seconds fallback markers.ts / preflight apply at render time,
+  // just materialized into the data. No-op when there's nothing to derive from.
+  const perShotFallback =
+    typeof clipSeconds === "number" && clipSeconds > 0
+      ? clipSeconds
+      : typeof durationSeconds === "number" &&
+          durationSeconds > 0 &&
+          validatedScenes.length > 0
+        ? Math.round((durationSeconds / validatedScenes.length) * 100) / 100
+        : undefined;
+  for (const s of validatedScenes) {
+    if (typeof s.target_seconds === "number") continue;
+    if (typeof s.start === "number" && typeof s.end === "number" && s.end > s.start) {
+      s.target_seconds = Math.round((s.end - s.start) * 100) / 100;
+    } else if (perShotFallback !== undefined) {
+      s.target_seconds = perShotFallback;
+    }
+  }
+
   const value: StoryboardValidated = {
     title,
     projectName,

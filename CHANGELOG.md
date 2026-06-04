@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.134.3
+
+Planner backfills per-scene `target_seconds`. The scene editor's "target
+seconds" box read a per-scene `target_seconds`, but that field is optional in
+the schema, so the model populated only the top-level `clip_seconds` (per-shot
+default) + `duration_seconds` and left each scene's value empty -> blank boxes,
+even though the seconds were visible in the JSON. `validateStoryboard` now
+backfills each scene's `target_seconds` when the model omits it: an explicit
+start/end span wins, else `clip_seconds`, else an even split of
+`duration_seconds` across the scenes (rounded to 0.01s). This is the same
+fallback markers.ts / preflight already applied at render time, now materialized
+into the data so the editor shows an explicit per-shot duration and beat-snap /
+YAML / render all see the same value. (Re-plan or refine an existing storyboard
+to backfill it; new plans get it automatically.)
+
+### Code
+- `src/storyboard-validate.ts`: backfill `target_seconds` from start/end span /
+  `clip_seconds` / `duration_seconds`-even-split after validation passes.
+- `package.json`: version 0.134.2 -> 0.134.3.
+
 ## v0.134.2
 
 Stop the bundle stage showing a misleading "0 B" for cast-pulled reference rows.
