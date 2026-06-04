@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.132.0
+
+Three planner fixes from live use.
+
+1. Auto-fill the brief from the "ask the model" chat. The user no longer
+   copy/pastes the model's reply into the brief; each assistant turn populates
+   `#planner-brief` automatically. Non-destructive: it only fills when the brief
+   is empty or was itself last filled by chat (a manual edit takes ownership via
+   the brief `input` listener and stops the auto-overwrite), so a hand-written
+   brief is never clobbered. Status note "reply copied into the brief" confirms.
+2. Audio step no longer renders blank. `showAudioSection()` set the section's
+   `hidden` attribute true whenever there was no storyboard, and since
+   `showStep()` only toggles the `step-hidden` class (not the attribute),
+   landing on the Audio step without a storyboard showed nothing. Now the
+   section always reveals; the functional blocks (generate / upload / BPM-snap)
+   are hidden behind a "plan or load a storyboard first" placeholder until a
+   storyboard exists, and `showStep("audio")` re-evaluates on entry.
+3. Render "time remaining" computes a real ETA. The v0.44.0 ETA scaffold
+   extrapolates from a 0-1 progress fraction, but the serverless pod streams
+   progress as log TEXT ("Scene N/3"), not structured scene_index/scene_total,
+   so the fraction was always null and the ETA stuck at "computing...". Parse
+   the latest "Scene N/M" out of the log and feed the existing extrapolation.
+
+No backend change; no em/en-dashes.
+
+### Code
+- `public/planner.js`: `briefFromChat` flag + brief auto-fill in `sendChat` and
+  ownership-clear in the brief `input` listener; `showAudioSection()` reveals +
+  placeholder-gates instead of hiding, `showStep("audio")` calls it on entry;
+  `computeProgressFraction()` falls back to parsing "Scene N/M" from `out.log`.
+- `public/planner.html`: `#planner-audio-locked` placeholder in the audio stage.
+- `package.json`: version 0.131.1 -> 0.132.0.
+
 ## v0.131.1
 
 Reposition + restyle the v0.131.0 planner chat per feedback. The "ask the model"

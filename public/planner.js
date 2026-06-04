@@ -117,6 +117,10 @@ function showStep(id) {
   document.querySelectorAll("[data-step]").forEach((el) => {
     el.classList.toggle("step-hidden", el.dataset.step !== id);
   });
+  // v0.132.0: the audio section gates its own content on storyboard state, so
+  // re-evaluate it on entry; otherwise landing on the Audio step with no
+  // storyboard left it blank (the hidden attr was never cleared).
+  if (id === "audio") showAudioSection();
   paintStepper();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -2403,6 +2407,11 @@ async function sendRefine() {
 // async music/video models only). Reuses the .planner-refine-* styling.
 
 let chatInflight = false;
+// v0.132.0: true while the brief textarea holds an auto-filled chat reply (and
+// the user hasn't manually edited it since). Lets sendChat refresh the brief on
+// later turns without clobbering a hand-written brief; the brief 'input'
+// listener clears it the moment the user types.
+let briefFromChat = false;
 
 function setChatStatus(text, kind) {
   const el = $("#planner-chat-status");
@@ -2500,7 +2509,18 @@ async function sendChat() {
   if (data && data.conversation_id) planState.chatConversationId = data.conversation_id;
   planState.chatHistory.push({ role: "assistant", content: reply || "(empty response)", ts: Date.now() });
   renderChatTurns();
-  setChatStatus("", "");
+  // v0.132.0: auto-populate the brief with the model's reply so the user does
+  // not copy/paste. Non-destructive: only fill when the brief is empty or was
+  // itself last filled by chat (briefFromChat); a hand-edited brief is left
+  // alone. Programmatic value set does not fire 'input', so the flag stays set.
+  const briefEl = $("#planner-brief");
+  if (briefEl && reply && (!briefEl.value.trim() || briefFromChat)) {
+    briefEl.value = reply;
+    briefFromChat = true;
+    setChatStatus("reply copied into the brief", "success");
+  } else {
+    setChatStatus("", "");
+  }
   persistSoon();
 
   chatInflight = false;
@@ -2554,11 +2574,24 @@ function setSnapStatus(text, kind) {
 function showAudioSection() {
   const section = $("#planner-audio");
   if (!section) return;
-  if (!planState.storyboard) {
-    section.hidden = true;
+  // v0.132.0: never leave the Audio step blank. Previously this set the
+  // section's `hidden` attribute true whenever there was no storyboard, and
+  // since showStep only toggles the step-hidden class (not the hidden attr),
+  // landing on the Audio step without a storyboard showed nothing at all.
+  // Always reveal the section (step-hidden still handles cross-step hiding);
+  // gate the functional blocks vs the "plan first" placeholder on storyboard.
+  section.hidden = false;
+  const hasSb = !!planState.storyboard;
+  const locked = $("#planner-audio-locked");
+  if (locked) locked.hidden = hasSb;
+  section.querySelectorAll(".planner-audio-block, .planner-audio-timing").forEach((b) => {
+    b.hidden = !hasSb;
+  });
+  if (!hasSb) {
+    const cur = $("#planner-audio-current");
+    if (cur) cur.hidden = true;
     return;
   }
-  section.hidden = false;
   // Hydrate inputs from current state.
   const bpmEl = $("#planner-bpm");
   if (bpmEl) bpmEl.value = String(planState.bpm || 120);
@@ -4093,6 +4126,22 @@ function computeProgressFraction(out) {
     // writing out.progress this branch becomes a fallback only.
     const completed = Math.max(0, out.scene_index - 1);
     return Math.min(1, completed / out.scene_total);
+  }
+  // v0.132.0: the serverless pod streams progress as log TEXT (out.log lines
+  // like "Scene 1/3 ..."), not structured scene_index/scene_total, so the two
+  // branches above never fired and the ETA was stuck at "computing...". Parse
+  // the latest "Scene N/M" out of the log and use the same completed-scene
+  // fraction (N-1)/M. Scan from the end for the most recent counter.
+  if (Array.isArray(out.log)) {
+    for (let i = out.log.length - 1; i >= 0; i--) {
+      const m = String(out.log[i]).match(/Scene\s+(\d+)\s*\/\s*(\d+)/i);
+      if (m) {
+        const idx = parseInt(m[1], 10);
+        const tot = parseInt(m[2], 10);
+        if (tot > 0) return Math.min(1, Math.max(0, idx - 1) / tot);
+        break;
+      }
+    }
   }
   return null;
 }
@@ -6277,7 +6326,12 @@ document.addEventListener("DOMContentLoaded", () => {
   // v0.38.0: persist on brief / model picker change so the planner's
   // long-form input survives a tab close. Cast field listeners are
   // wired in renderCast().
-  $("#planner-brief").addEventListener("input", persistSoon);
+  $("#planner-brief").addEventListener("input", () => {
+    // v0.132.0: a manual edit takes ownership of the brief, so chat replies
+    // stop auto-overwriting it (see sendChat / briefFromChat).
+    briefFromChat = false;
+    persistSoon();
+  });
   $("#planner-model").addEventListener("change", persistSoon);
   $("#planner-quality-tier").addEventListener("change", persistSoon);
   $("#planner-render-overrides").addEventListener("input", persistSoon);

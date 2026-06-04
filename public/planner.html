@@ -217,6 +217,9 @@
         <span id="planner-audio-status" class="planner-status"></span>
       </header>
       <p class="planner-stage-hint">optional. generate a track or upload your own. set BPM, then snap shot durations to musical phrases so the cuts land on the beat.</p>
+      <!-- v0.132.0: shown instead of a blank step when no storyboard exists yet
+           (the functional blocks below are hidden until one is planned/loaded). -->
+      <p id="planner-audio-locked" class="planner-stage-hint" hidden>plan or load a storyboard first; audio + beat timing attach to the storyboard's scenes. you can upload or generate a track once a plan exists.</p>
 
       <div id="planner-audio-current" class="planner-audio-current" hidden>
         <strong>audio bed:</strong>
