@@ -485,9 +485,13 @@
   // against /api/chat output) the multi-reference behavior is shared across
   // the FLUX 2 family - both Dev AND the two Klein variants accept the
   // attached portrait and produce output that locks the subject's identity
-  // (hair color, skin tone, eyes, clothing). nano-banana-pro and
-  // gpt-image-1.5 accept the attachment but IGNORE it for identity, so they
-  // are not surfaced here even though they would otherwise return an image.
+  // (hair color, skin tone, eyes, clothing). gpt-image-1.5 accepts the
+  // attachment but IGNORES it for identity, so it is not surfaced here.
+  // v0.135.11: nano-banana-pro is now offered too. The earlier "ignores
+  // identity" verdict was drawn from photoreal testing; for ANIME subjects it
+  // locks identity well (confirmed in use), and it does not over-flag on
+  // content the way FLUX 2 does (the 3030 path). FLUX Klein-9b stays the
+  // default (safe for photoreal too); pick nano-banana for anime characters.
   //
   // Pre-v0.65 this was hardcoded to flux-2-dev based on a stale catalog
   // comment claiming Dev was the only multi-reference model. That cost us
@@ -498,6 +502,7 @@
   // back to Dev or down to the faster Klein-4b.
   const TRAINING_MODELS = [
     { id: "@cf/black-forest-labs/flux-2-klein-9b", label: "FLUX 2 Klein 9B (frontier, recommended)" },
+    { id: "google/nano-banana-pro",                label: "Nano Banana Pro (Google; strong anime identity, no over-flag)" },
     { id: "@cf/black-forest-labs/flux-2-klein-4b", label: "FLUX 2 Klein 4B (faster)" },
     { id: "@cf/black-forest-labs/flux-2-dev",       label: "FLUX 2 Dev (original multi-reference)" },
   ];

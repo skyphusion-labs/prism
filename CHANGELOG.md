@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.135.11
+
+Offer Nano Banana Pro in the cast training-set model picker. The picker was
+hardcoded to the FLUX 2 family on the basis that nano-banana ignores the
+attached reference for identity, but that verdict came from photoreal testing;
+for anime subjects nano-banana-pro locks identity well (confirmed in use) and,
+unlike FLUX 2, it does not over-flag on content (the 3030 path that kept
+blocking edgier character designs). Added it as an option; FLUX Klein-9b stays
+the default so photoreal characters do not regress. gpt-image-1.5 stays excluded
+(still ignores identity). The portrait picker already exposed the full catalog;
+this is specifically the training-set picker that feeds the LoRA.
+
+### Code
+- `public/cast.js`: add `google/nano-banana-pro` to `TRAINING_MODELS`; update the
+  rationale comment.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 533 pass. `node --check`
+  on cast.js OK. (Client-only; the /api/chat image path already routes this model.)
+
 ## v0.135.10
 
 Mark the per-portrait / per-reference "remove" button (`.cast-ref-delete`) red,
