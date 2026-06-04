@@ -494,6 +494,10 @@ const bundleState = {
   // perSlotUploads[slot] = [{filename, size, mime, key, status, error}]
   perSlotUploads: {},
   bundleKey: null,
+  // v0.135.1: remember the assembled bundle's gzipped size + entry count so a
+  // page reload restores the real numbers instead of showing "0 B / 0 files".
+  sizeBytes: 0,
+  fileCount: 0,
 };
 
 const renderState = {
@@ -652,6 +656,8 @@ function collectBundleStageState() {
   return {
     perSlotUploads: { ...bundleState.perSlotUploads },
     bundleKey: bundleState.bundleKey,
+    sizeBytes: bundleState.sizeBytes,
+    fileCount: bundleState.fileCount,
   };
 }
 
@@ -892,11 +898,15 @@ function restoreBundleStagePanel(savedBundle, savedPlanResult) {
   // key + open the render stage (without yet activating it).
   if (savedBundle.bundleKey) {
     bundleState.bundleKey = savedBundle.bundleKey;
+    // v0.135.1: rehydrate the persisted size/count so the restored panel shows
+    // the real bundle stats instead of a misleading "0 B / 0 files inside".
+    bundleState.sizeBytes = savedBundle.sizeBytes || 0;
+    bundleState.fileCount = savedBundle.fileCount || 0;
     showBundleResult({
       ok: true,
       bundleKey: savedBundle.bundleKey,
-      sizeBytes: 0, // unknown after reload; UI shows "0 B"; acceptable
-      fileCount: 0,
+      sizeBytes: bundleState.sizeBytes,
+      fileCount: bundleState.fileCount,
     });
     setBundleStatus("restored from previous session", "loading");
   }
@@ -3369,6 +3379,8 @@ function showBundleStage(storyboard, characters, initialUploads) {
   planState.cast = characters;
   bundleState.perSlotUploads = initialUploads ? { ...initialUploads } : {};
   bundleState.bundleKey = null;
+  bundleState.sizeBytes = 0;
+  bundleState.fileCount = 0;
 
   const useChars =
     Array.isArray(storyboard.use_characters) && storyboard.use_characters.length > 0
@@ -3721,6 +3733,10 @@ async function bundleNow() {
 
   if (data && data.ok === true && data.bundleKey) {
     bundleState.bundleKey = data.bundleKey;
+    // v0.135.1: stash the real size/count so they survive a reload (persisted
+    // via collectBundleStageState, rehydrated in restoreBundleStagePanel).
+    bundleState.sizeBytes = data.sizeBytes || 0;
+    bundleState.fileCount = data.fileCount || 0;
     setBundleStatus("staged", "success");
     showBundleResult(data);
     showRenderStage();
@@ -3785,6 +3801,8 @@ function showBundleResult(data) {
 function resetBundleStage() {
   bundleState.perSlotUploads = {};
   bundleState.bundleKey = null;
+  bundleState.sizeBytes = 0;
+  bundleState.fileCount = 0;
   $("#planner-bundle").hidden = true;
   $("#planner-bundle-result").hidden = true;
   setBundleStatus("", "");

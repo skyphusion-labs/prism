@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.135.1
+
+Fix the "bundle staged" panel showing "0 B gzipped, 0 files inside" after a page
+reload. The bundle itself was always fine (the assembler returns real
+`sizeBytes`/`fileCount` and the freshly-staged panel showed them); the bug was
+only in the restore path, which rebuilt the panel from persisted state that
+never saved the size/count and hardcoded zeros (with a comment calling it
+"acceptable"). Confirmed the actual R2 object is healthy: 15.27 MB, 29 entries
+(storyboard + both portraits + 12 + 13 refs). Now `bundleState` tracks the
+gzipped size and entry count, persists them alongside `bundleKey`, and rehydrates
+the real numbers on reload. Purely cosmetic; no change to what the GPU pulls.
+
+### Code
+- `public/planner.js`: add `sizeBytes`/`fileCount` to `bundleState`; set them on
+  assemble success; persist in `collectBundleStageState`; rehydrate in
+  `restoreBundleStagePanel` (was hardcoded `0`); reset in `resetBundleStage` and
+  `showBundleStage`.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 533 pass. `node --check`
+  on planner.js OK. (No TS touched; behavior is client-only.)
+
 ## v0.135.0
 
 Promote the keyframe SDXL base to the common render controls. It's the single
