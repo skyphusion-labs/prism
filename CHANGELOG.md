@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.124.0
+
+Frontend (no worker change): per-option help affordance on the planner render
+step. Every render-override control (the common row + everything in "advanced
+settings") now gets a small "?" button next to its label; clicking it shows a
+popover describing the option. The prose lives in a `FIELD_HELP` registry keyed
+by control id (empty for now, to be filled in as options get documented), but
+the popover is already useful without an entry: it auto-derives the allowed
+values from a `<select>`'s options, the numeric range from a number input's
+`min` / `max` / `step`, and the pod default from the input's placeholder. So
+the affordance reserves the space now and documenting an option later is just
+adding a `FIELD_HELP` entry. Icons are injected at init (registry-driven, no
+markup churn across ~130 controls); the popover closes on outside-click /
+Escape.
+
+### Code
+- `public/planner.js`: `FIELD_HELP` registry + `attachFieldHelp()` (injects the
+  `?` into `.planner-overrides-common` / `.planner-overrides-details` fields) +
+  `buildFieldHelpContent()` (auto-derives values/range/default) + a singleton
+  popover with outside-click / Escape close; `attachFieldHelp()` called once at
+  init.
+- `public/styles.css`: `.field-help` icon, `.field-help-pop` popover,
+  `.planner-field > span.has-help` inline-flex (scoped to injected labels).
+- `package.json`: version 0.123.0 -> 0.124.0.
+
 ## v0.123.0
 
 Frontend (no worker change): planner render-step declutter, part 1 of 2 (render

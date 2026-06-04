@@ -2345,6 +2345,52 @@ textarea:focus {
   margin-bottom: 6px;
 }
 
+/* v0.124.0: per-option help affordance. A small "?" sits next to each
+   render-override label; the .has-help class is added to the label span when
+   the icon is injected so the inline-flex layout is scoped to those labels
+   only (not every .planner-field span on the page). */
+.planner-field > span.has-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.field-help {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  transition: color 0.15s, border-color 0.15s;
+}
+.field-help:hover { color: var(--accent); border-color: var(--accent); }
+.field-help-pop {
+  position: absolute;
+  z-index: 80;
+  max-width: 300px;
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  color: var(--fg);
+  line-height: 1.5;
+}
+.field-help-pop[hidden] { display: none; }
+.field-help-what { margin: 0 0 6px; }
+.field-help-row { color: var(--fg-dim); }
+.field-help-row b { color: var(--fg); font-weight: 600; }
+.field-help-empty { margin: 0; color: var(--fg-dim); font-style: italic; }
+
 .planner-overrides-hint {
   font-size: 12px;
   color: var(--fg-dim);
