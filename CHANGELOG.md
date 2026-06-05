@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.135.13
+
+Add an explicit "art style" control to training-set generation, replacing the
+v0.135.12 "match the reference image" anchor that did not work. Verified by
+generating real images on nano-banana-pro with Kaito's anime portrait attached:
+the "match the reference's art style" prompt still rendered photoreal, while an
+explicit "anime art style, anime illustration" lead rendered clean anime. The
+photographic templates ("studio lighting", "golden hour") dominate unless the
+style is stated outright; nano-banana weights the text over the reference.
+
+Added an optional per-character "art style" input on the cast page (remembered
+in localStorage, no D1 column). When set, `composeTrainingPrompt` leads each of
+the 10 prompts with `<style> art style, <style> illustration`; blank keeps the
+templates as-is (correct for photoreal characters). The portrait generator
+already has a free-text prompt field, so this closes the gap on the training set
+specifically.
+
+### Code
+- `public/cast.html`: add `#cast-training-style` input under the model picker.
+- `public/cast.js`: `composeTrainingPrompt(template, bible, style)` leads with the
+  explicit style; `getTrainingStyle` + localStorage persist/restore; pass style at
+  the gen call site.
+- `tests/cast-db.test.ts`: 3-arg mirror + style assertions (535 tests).
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 535 pass. `node --check` OK.
+
 ## v0.135.12
 
 Fix training-set generation rendering photoreal images from an anime portrait.

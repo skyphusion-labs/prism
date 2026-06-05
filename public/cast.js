@@ -189,6 +189,7 @@
     $("#cast-name").value = c.name;
     $("#cast-bible").value = c.bible || "";
     $("#cast-slug").textContent = "/" + c.slug;
+    restoreTrainingStyle(c.id); // v0.135.13: per-character training art-style
 
     const img = $("#cast-portrait-img");
     const empty = $("#cast-portrait-empty");
@@ -540,22 +541,23 @@
   // Build the prompt sent to /api/chat: pose template, then a separator,
   // then the bible (capped so the upstream prompt limit holds). Pure for
   // vitest.
-  // v0.135.12: lead with a style anchor so the training images match the
-  // attached reference's art style. The templates above are photographic
-  // ("studio lighting", "golden hour"), and nano-banana-pro weights the text
-  // prompt over the reference image, so an anime portrait was producing
-  // photoreal training refs. Anchoring to the reference makes style follow the
-  // portrait (anime stays anime, photoreal stays photoreal) across all models.
-  // FLUX already followed the reference; this just makes it consistent.
-  const TRAINING_STYLE_ANCHOR =
-    "Match the art style and visual rendering of the reference image";
-  function composeTrainingPrompt(template, bible) {
+  // v0.135.13: lead with an EXPLICIT art style when the user sets one. The
+  // templates above are photographic ("studio lighting", "golden hour"), and
+  // nano-banana-pro weights the text over the attached reference image, so an
+  // anime portrait produced photoreal training refs. A "match the reference
+  // image" instruction does NOT fix this (verified by generating both: still
+  // photoreal); stating the style outright does (verified: clean anime). When
+  // `style` is set (e.g. "anime") we lead with it; blank keeps the templates
+  // as-is, which is correct for photoreal characters.
+  function composeTrainingPrompt(template, bible, style) {
+    const safeStyle = String(style || "").trim();
+    const lead = safeStyle ? safeStyle + " art style, " + safeStyle + " illustration. " : "";
     const safeBible = String(bible || "").trim();
-    if (!safeBible) return TRAINING_STYLE_ANCHOR + ". " + template;
+    if (!safeBible) return lead + template;
     // Cap bible at ~600 chars so the joined prompt stays comfortably
     // under the typical 1500-char gateway limit even with overhead.
     const trimmed = safeBible.length > 600 ? safeBible.slice(0, 600) : safeBible;
-    return TRAINING_STYLE_ANCHOR + ". " + template + ". " + trimmed;
+    return lead + template + ". " + trimmed;
   }
 
   // Downscale an image to fit within FLUX2_REF_MAX_DIM on the long edge,
@@ -618,6 +620,27 @@
   function getSelectedTrainingModelId() {
     const sel = $("#cast-training-model");
     return (sel && sel.value) || DEFAULT_TRAINING_MODEL_ID;
+  }
+
+  // v0.135.13: per-character training art-style, remembered in localStorage
+  // (no D1 column needed). Read at gen time, restored when a character is
+  // selected, persisted on edit.
+  const TRAINING_STYLE_LS = "cast-training-style-";
+  function getTrainingStyle() {
+    const el = $("#cast-training-style");
+    return (el && el.value.trim()) || "";
+  }
+  function restoreTrainingStyle(castId) {
+    const el = $("#cast-training-style");
+    if (!el) return;
+    let v = "";
+    try { v = (castId != null && localStorage.getItem(TRAINING_STYLE_LS + castId)) || ""; } catch (_) {}
+    el.value = v;
+  }
+  function persistTrainingStyle() {
+    const el = $("#cast-training-style");
+    if (!el || state.selectedId == null) return;
+    try { localStorage.setItem(TRAINING_STYLE_LS + state.selectedId, el.value.trim()); } catch (_) {}
   }
 
   async function ensurePortraitGenModelOptions() {
@@ -871,7 +894,7 @@
       renderTrainingProgress(rows);
       setTrainingStatus("generating " + (i + 1) + "/" + TRAINING_PROMPTS.length + "...");
 
-      const promptText = composeTrainingPrompt(TRAINING_PROMPTS[i], c.bible);
+      const promptText = composeTrainingPrompt(TRAINING_PROMPTS[i], c.bible, getTrainingStyle());
       try {
         const result = await chatImageWithRetry({
           model: getSelectedTrainingModelId(),
@@ -1072,6 +1095,7 @@
 
     $("#cast-name").addEventListener("input", () => markDirty(true));
     $("#cast-bible").addEventListener("input", () => markDirty(true));
+    $("#cast-training-style").addEventListener("input", persistTrainingStyle); // v0.135.13
 
     $("#cast-portrait-file").addEventListener("change", (e) => {
       const f = e.target.files && e.target.files[0];

@@ -164,6 +164,14 @@
             <span>generator model</span>
             <select id="cast-training-model"></select>
           </label>
+          <!-- v0.135.13: explicit art-style lead. A "match the reference image"
+               instruction does not hold style on nano-banana-pro (the
+               photographic templates render photoreal); stating the style
+               explicitly does. Blank = use the templates as-is. -->
+          <label class="cast-gen-field">
+            <span>art style (optional; e.g. anime, photorealistic, watercolor)</span>
+            <input id="cast-training-style" type="text" placeholder="blank = match the templates (photographic)" />
+          </label>
           <div class="cast-gen-actions">
             <button id="cast-training-btn" type="button" class="cast-upload-btn" disabled>generate 10 training images</button>
             <span id="cast-training-status" class="cast-gen-status"></span>

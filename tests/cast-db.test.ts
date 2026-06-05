@@ -16,13 +16,17 @@ import { describe, it, expect } from "vitest";
 import { slugifyCharacter } from "../src/cast-db";
 
 // Mirror of composeTrainingPrompt in public/cast.js. Keep in sync.
-const TRAINING_STYLE_ANCHOR =
-  "Match the art style and visual rendering of the reference image";
-function composeTrainingPrompt(template: string, bible: string | null | undefined): string {
+function composeTrainingPrompt(
+  template: string,
+  bible: string | null | undefined,
+  style?: string | null,
+): string {
+  const safeStyle = String(style || "").trim();
+  const lead = safeStyle ? safeStyle + " art style, " + safeStyle + " illustration. " : "";
   const safeBible = String(bible || "").trim();
-  if (!safeBible) return TRAINING_STYLE_ANCHOR + ". " + template;
+  if (!safeBible) return lead + template;
   const trimmed = safeBible.length > 600 ? safeBible.slice(0, 600) : safeBible;
-  return TRAINING_STYLE_ANCHOR + ". " + template + ". " + trimmed;
+  return lead + template + ". " + trimmed;
 }
 
 // Mirror of reconcileCastBindings in public/planner.js (v0.48.0).
@@ -76,37 +80,46 @@ describe("slugifyCharacter", () => {
 });
 
 describe("composeTrainingPrompt", () => {
-  it("leads with the style anchor + template when bible is empty", () => {
-    const want = TRAINING_STYLE_ANCHOR + ". portrait, smiling";
-    expect(composeTrainingPrompt("portrait, smiling", "")).toBe(want);
-    expect(composeTrainingPrompt("portrait, smiling", null)).toBe(want);
-    expect(composeTrainingPrompt("portrait, smiling", undefined)).toBe(want);
+  it("returns the template unchanged when bible and style are empty", () => {
+    expect(composeTrainingPrompt("portrait, smiling", "")).toBe("portrait, smiling");
+    expect(composeTrainingPrompt("portrait, smiling", null)).toBe("portrait, smiling");
+    expect(composeTrainingPrompt("portrait, smiling", undefined)).toBe("portrait, smiling");
   });
 
   it("treats whitespace-only bible as empty", () => {
-    expect(composeTrainingPrompt("portrait, smiling", "   \n  ")).toBe(
-      TRAINING_STYLE_ANCHOR + ". portrait, smiling",
+    expect(composeTrainingPrompt("portrait, smiling", "   \n  ")).toBe("portrait, smiling");
+  });
+
+  it("appends the bible after a separator", () => {
+    expect(composeTrainingPrompt("portrait, smiling", "tall, green eyes")).toBe(
+      "portrait, smiling. tall, green eyes",
     );
   });
 
-  it("appends the bible after the style anchor and template", () => {
-    expect(composeTrainingPrompt("portrait, smiling", "tall, green eyes")).toBe(
-      TRAINING_STYLE_ANCHOR + ". portrait, smiling. tall, green eyes",
+  it("leads with an explicit art style when provided", () => {
+    expect(composeTrainingPrompt("portrait, smiling", "", "anime")).toBe(
+      "anime art style, anime illustration. portrait, smiling",
     );
+    expect(composeTrainingPrompt("portrait, smiling", "tall, green eyes", "anime")).toBe(
+      "anime art style, anime illustration. portrait, smiling. tall, green eyes",
+    );
+  });
+
+  it("ignores a whitespace-only style", () => {
+    expect(composeTrainingPrompt("portrait", "tall", "  ")).toBe("portrait. tall");
   });
 
   it("trims a long bible to 600 chars", () => {
     const long = "x".repeat(800);
     const out = composeTrainingPrompt("template", long);
-    const prefix = TRAINING_STYLE_ANCHOR + ". template. ";
-    expect(out.length).toBe(prefix.length + 600);
-    expect(out.startsWith(prefix)).toBe(true);
+    expect(out.length).toBe("template. ".length + 600);
+    expect(out.startsWith("template. ")).toBe(true);
   });
 
   it("does not trim a bible at exactly 600 chars", () => {
     const exact = "y".repeat(600);
     const out = composeTrainingPrompt("template", exact);
-    expect(out).toBe(TRAINING_STYLE_ANCHOR + ". template. " + exact);
+    expect(out).toBe("template. " + exact);
   });
 });
 
