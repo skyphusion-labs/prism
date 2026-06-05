@@ -446,6 +446,36 @@ export function normalizeKeyframes(raw: unknown): KeyframeRef[] {
 // Fetch one row by D1 PK, scoped to the caller's user_email. Returns null
 // when the row does not exist OR when it belongs to another user (we do
 // not distinguish so a guessed id cannot enumerate other users' rows).
+// v0.136.4: point a finished render at a new MP4 that has audio muxed in
+// (produced off-GPU by the video-finish container). Updates output_key plus the
+// output_json's output_key / has_audio / seconds so the History download link
+// and the audio badge reflect the muxed version. Scoped to user_email; returns
+// true iff a row owned by the caller was updated.
+export async function setRenderAudioOutput(
+  env: Env,
+  id: number,
+  userEmail: string,
+  outputKey: string,
+  seconds: number | null,
+): Promise<boolean> {
+  const now = nowSeconds();
+  const res = await env.DB.prepare(
+    `UPDATE renders SET
+       output_key = ?,
+       output_json = json_set(
+         COALESCE(output_json, '{}'),
+         '$.output_key', ?,
+         '$.has_audio', json('true'),
+         '$.seconds', ?
+       ),
+       updated_at = ?
+     WHERE id = ? AND user_email = ?`,
+  )
+    .bind(outputKey, outputKey, seconds, now, id, userEmail)
+    .run();
+  return ((res.meta as { changes?: number } | undefined)?.changes ?? 0) > 0;
+}
+
 export async function getRenderByIdForUser(
   env: Env,
   id: number,

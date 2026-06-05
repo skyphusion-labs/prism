@@ -5031,6 +5031,55 @@ function openShotPreview(row, kf) {
   box.hidden = false;
 }
 
+// v0.136.4: pick an audio file, upload it, and mux it onto a finished render's
+// MP4 entirely off the GPU (audio-upload -> the render's /add-audio endpoint,
+// which runs the video-finish ffmpeg container). On success the history reloads
+// so the row's player + download serve the version with sound.
+function addAudioToRender(r, btn) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept =
+    "audio/mpeg,audio/mp3,audio/wav,audio/aac,audio/mp4,audio/x-m4a,audio/ogg,.mp3,.wav,.aac,.m4a,.ogg";
+  input.addEventListener("change", async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const orig = btn.textContent;
+    btn.disabled = true;
+    try {
+      btn.textContent = "uploading...";
+      const up = await fetch("/api/storyboard/audio-upload", {
+        method: "POST",
+        headers: { "content-type": file.type || "audio/mpeg" },
+        body: file,
+      });
+      const upData = await up.json().catch(() => ({}));
+      if (!up.ok || !upData.key) {
+        throw new Error((upData && upData.error) || "audio upload failed");
+      }
+      btn.textContent = "muxing...";
+      const mux = await fetch(
+        "/api/storyboard/renders/" + encodeURIComponent(r.id) + "/add-audio",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ audioKey: upData.key }),
+        },
+      );
+      const muxData = await mux.json().catch(() => ({}));
+      if (!mux.ok || muxData.ok === false) {
+        throw new Error((muxData && muxData.error) || "audio mux failed");
+      }
+      btn.textContent = "audio added ✓";
+      loadHistory();
+    } catch (err) {
+      window.alert("add audio failed: " + (err && err.message ? err.message : err));
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  });
+  input.click();
+}
+
 function buildHistoryRow(r) {
   const li = document.createElement("li");
   li.className = "planner-history-item";
@@ -5171,6 +5220,19 @@ function buildHistoryRow(r) {
     dl.className = "planner-history-action";
     dl.textContent = "download";
     actions.appendChild(dl);
+  }
+
+  // v0.136.4: add audio to a finished video WITHOUT the GPU. Picks an audio
+  // file, uploads it, and muxes it onto this render's MP4 via the video-finish
+  // (ffmpeg) container. The row then points at the muxed version.
+  if (r.status === "COMPLETED" && r.output_key) {
+    const addAudio = document.createElement("button");
+    addAudio.type = "button";
+    addAudio.className = "planner-history-action";
+    addAudio.textContent = "add audio";
+    addAudio.title = "mux an audio file onto this finished video (CPU container, no GPU)";
+    addAudio.addEventListener("click", () => addAudioToRender(r, addAudio));
+    actions.appendChild(addAudio);
   }
 
   // v0.35.1: "re-render" with the same bundle. Skips plan + bundle stages.

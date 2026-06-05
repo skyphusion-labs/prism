@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.136.4
+
+Add audio to a finished render without firing up the GPU.
+
+Pick an audio file on a completed render in History and mux it onto the silent
+MP4 entirely on CPU, via the existing video-finish (ffmpeg) container. No
+re-render, no RunPod job.
+
+- `POST /api/storyboard/renders/:id/add-audio` `{ audioKey }`: muxes the audio
+  bed onto the render's existing MP4 (the render is a single clip to the
+  video-finish container), re-stamps the R2 `user_email` / `content-type`
+  metadata the artifact route needs, and points the row at the muxed MP4
+  (cache-busted key per audio bed so a new bed never serves a stale CDN copy).
+- History UI: an **"add audio"** button on completed rows uploads an audio file
+  (`/api/storyboard/audio-upload`), then calls the new endpoint; the row's
+  inline player + download then serve the version with sound.
+
+### Code
+- `src/index.ts`: `handleAddRenderAudio` + `/renders/:id/add-audio` route + a
+  small `shortHash` for the cache-busted output key.
+- `src/renders-db.ts`: `setRenderAudioOutput` (updates `output_key` +
+  `output_json` `has_audio`/`output_key`/`seconds`).
+- `public/planner.js`: `addAudioToRender` + the "add audio" History button.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 543 pass.
+
+
 ## v0.136.3
 
 Add a `region_gap_px` knob to the regional multi-character engine (pairs with

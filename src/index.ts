@@ -104,6 +104,7 @@ import {
   normalizeFolderPath,
   normalizeLockedShots,
   normalizeTags,
+  setRenderAudioOutput,
   setRenderFolder,
   setRenderLabel,
   setRenderLockedShots,
@@ -578,6 +579,13 @@ export default {
     const rg = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)\/regen-shot$/);
     if (rg && request.method === "POST") {
       return handleRegenShotSubmit(request, env, rg[1]);
+    }
+    // v0.136.4: mux an audio bed onto a finished render OFF the GPU, via the
+    // video-finish container (ffmpeg). The render is a single clip to the
+    // finisher, so this is a pure audio mux, no re-render and no RunPod job.
+    const ra = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)\/add-audio$/);
+    if (ra && request.method === "POST") {
+      return handleAddRenderAudio(request, env, ra[1]);
     }
     // v0.42.0: finalize a keyframes-only preview into a full render.
     // Submits a finalize job to RunPod (vivijure-serverless 0.4.4+),
@@ -1663,6 +1671,97 @@ async function handleVideoFinish(request: Request, env: Env): Promise<Response> 
     return json({ ok: false, error: res.error, user: userEmail }, { status: res.status });
   }
   return json({ ok: true, ...(res.result as object), user: userEmail });
+}
+
+// Tiny deterministic string hash (djb2 -> base36) for cache-busting an output
+// key: a new audio bed yields a new key (no stale CDN copy), and re-muxing the
+// SAME audio onto the SAME render reuses the key (idempotent).
+function shortHash(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36).slice(0, 8);
+}
+
+// v0.136.4: add audio to a FINISHED render without the GPU. Muxes an R2 audio
+// bed onto the render's existing (silent) MP4 via the video-finish container
+// (ffmpeg, CPU); the render is a single "clip" to the finisher, so this is a
+// pure audio mux, no re-render and no RunPod job. Points the row at the muxed
+// MP4 on success.
+async function handleAddRenderAudio(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) {
+    return json({ error: "invalid render id" }, { status: 400 });
+  }
+  let body: { audioKey?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (typeof body.audioKey !== "string" || !/^(audio|out)\/.+/.test(body.audioKey)) {
+    return json({ error: "audioKey must be an audio/ or out/ R2 key" }, { status: 400 });
+  }
+  const row = await getRenderByIdForUser(env, id, userEmail);
+  if (!row) return json({ error: "render not found" }, { status: 404 });
+  if (row.status !== "COMPLETED" || !row.output_key) {
+    return json(
+      { error: "render has no finished video to add audio to" },
+      { status: 409 },
+    );
+  }
+  // Normalize the audio into the presign bucket (copies an out/ chat-bucket
+  // music-gen output into audio/ when needed). Same helper the render submit
+  // path uses, so generated music and uploaded beds both work.
+  let audioKey: string;
+  try {
+    audioKey = await placeAudioForGpu(env, body.audioKey, userEmail);
+  } catch (err) {
+    return json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 400 },
+    );
+  }
+  const base = row.output_key.replace(/\.mp4$/i, "");
+  const outputKey = `${base}-aud-${shortHash(audioKey)}.mp4`;
+  const res = await runVideoFinish(env, {
+    clips: [{ key: row.output_key }],
+    audioKey,
+    outputKey,
+  });
+  if (!res.ok) {
+    return json({ ok: false, error: res.error, user: userEmail }, { status: res.status });
+  }
+  // The container PUT the MP4 via a presigned URL, which does NOT carry the
+  // user_email customMetadata that /api/artifact's ownership check requires.
+  // Re-stamp via the binding (mirrors the off-GPU finish path) + pin the type.
+  try {
+    const obj = await env.R2_RENDERS.get(outputKey);
+    if (obj) {
+      await env.R2_RENDERS.put(outputKey, obj.body, {
+        httpMetadata: { contentType: "video/mp4" },
+        customMetadata: { user_email: userEmail },
+      });
+    }
+  } catch (e) {
+    console.error("add-audio metadata stamp failed:", e);
+  }
+  const r = res.result as { durationSeconds?: number; hasAudio?: boolean };
+  const seconds = typeof r.durationSeconds === "number" ? r.durationSeconds : null;
+  await setRenderAudioOutput(env, id, userEmail, outputKey, seconds).catch((e) =>
+    console.error("setRenderAudioOutput failed:", e),
+  );
+  return json({
+    ok: true,
+    output_key: outputKey,
+    seconds,
+    has_audio: r.hasAudio ?? true,
+    user: userEmail,
+  });
 }
 
 // v0.105.0: audio beat-sync. Submit an analyze_audio job; poll mirrors the
