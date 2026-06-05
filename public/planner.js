@@ -5080,6 +5080,38 @@ function addAudioToRender(r, btn) {
   input.click();
 }
 
+// v0.137.0: speak narration text over a finished render. Synthesizes the text
+// with a TTS voice and muxes it onto the video off-GPU (the render's
+// /add-narration endpoint -> Workers AI TTS -> the add-audio mux). On success
+// the history reloads so the row plays/downloads the narrated version.
+function addNarrationToRender(r, btn) {
+  const text = window.prompt("Narration to speak over this video:");
+  if (text == null) return;
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "narrating...";
+  fetch("/api/storyboard/renders/" + encodeURIComponent(r.id) + "/add-narration", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text: trimmed }),
+  })
+    .then(async (resp) => {
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.ok === false) {
+        throw new Error((data && data.error) || "narration failed");
+      }
+      btn.textContent = "narration added ✓";
+      loadHistory();
+    })
+    .catch((err) => {
+      window.alert("narration failed: " + (err && err.message ? err.message : err));
+      btn.disabled = false;
+      btn.textContent = orig;
+    });
+}
+
 function buildHistoryRow(r) {
   const li = document.createElement("li");
   li.className = "planner-history-item";
@@ -5233,6 +5265,15 @@ function buildHistoryRow(r) {
     addAudio.title = "mux an audio file onto this finished video (CPU container, no GPU)";
     addAudio.addEventListener("click", () => addAudioToRender(r, addAudio));
     actions.appendChild(addAudio);
+
+    // v0.137.0: spoken narration (TTS) over the finished video, off-GPU.
+    const narrate = document.createElement("button");
+    narrate.type = "button";
+    narrate.className = "planner-history-action";
+    narrate.textContent = "narrate";
+    narrate.title = "speak narration text over this finished video (TTS, no GPU, no re-render)";
+    narrate.addEventListener("click", () => addNarrationToRender(r, narrate));
+    actions.appendChild(narrate);
   }
 
   // v0.35.1: "re-render" with the same bundle. Skips plan + bundle stages.

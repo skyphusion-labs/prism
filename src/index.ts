@@ -92,6 +92,7 @@ import {
   countOtherRowsWithOutputKey,
   deleteRenderRow,
   classifyMissingJob,
+  type RenderRow,
   getFinishState,
   getRenderByIdForUser,
   getRenderForPoll,
@@ -586,6 +587,11 @@ export default {
     const ra = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)\/add-audio$/);
     if (ra && request.method === "POST") {
       return handleAddRenderAudio(request, env, ra[1]);
+    }
+    // v0.137.0: add spoken narration (TTS) to a finished render, off-GPU.
+    const rnar = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)\/add-narration$/);
+    if (rnar && request.method === "POST") {
+      return handleAddRenderNarration(request, env, rnar[1]);
     }
     // v0.42.0: finalize a keyframes-only preview into a full render.
     // Submits a finalize job to RunPod (vivijure-serverless 0.4.4+),
@@ -1687,49 +1693,34 @@ function shortHash(s: string): string {
 // (ffmpeg, CPU); the render is a single "clip" to the finisher, so this is a
 // pure audio mux, no re-render and no RunPod job. Points the row at the muxed
 // MP4 on success.
-async function handleAddRenderAudio(
-  request: Request,
+// Shared mux core (v0.137.0): place the audio bed into the presign bucket, mux
+// it onto the render's MP4 via the video-finish container, re-stamp R2 metadata,
+// and point the row at the muxed output. Used by both add-audio (uploaded /
+// generated bed) and add-narration (TTS). `row` must be a COMPLETED render with
+// an output_key.
+async function muxAudioOntoRender(
   env: Env,
-  idStr: string,
+  id: number,
+  row: RenderRow,
+  audioKeyRaw: string,
+  userEmail: string,
 ): Promise<Response> {
-  const userEmail = getUserEmail(request);
-  const id = Number(idStr);
-  if (!Number.isInteger(id) || id <= 0) {
-    return json({ error: "invalid render id" }, { status: 400 });
-  }
-  let body: { audioKey?: unknown };
-  try {
-    body = await request.json();
-  } catch {
-    return json({ error: "Invalid JSON" }, { status: 400 });
-  }
-  if (typeof body.audioKey !== "string" || !/^(audio|out)\/.+/.test(body.audioKey)) {
-    return json({ error: "audioKey must be an audio/ or out/ R2 key" }, { status: 400 });
-  }
-  const row = await getRenderByIdForUser(env, id, userEmail);
-  if (!row) return json({ error: "render not found" }, { status: 404 });
-  if (row.status !== "COMPLETED" || !row.output_key) {
-    return json(
-      { error: "render has no finished video to add audio to" },
-      { status: 409 },
-    );
-  }
+  const srcKey = row.output_key as string;
   // Normalize the audio into the presign bucket (copies an out/ chat-bucket
-  // music-gen output into audio/ when needed). Same helper the render submit
-  // path uses, so generated music and uploaded beds both work.
+  // entry into audio/ when needed). Same helper the render submit path uses.
   let audioKey: string;
   try {
-    audioKey = await placeAudioForGpu(env, body.audioKey, userEmail);
+    audioKey = await placeAudioForGpu(env, audioKeyRaw, userEmail);
   } catch (err) {
     return json(
       { error: err instanceof Error ? err.message : String(err) },
       { status: 400 },
     );
   }
-  const base = row.output_key.replace(/\.mp4$/i, "");
+  const base = srcKey.replace(/\.mp4$/i, "");
   const outputKey = `${base}-aud-${shortHash(audioKey)}.mp4`;
   const res = await runVideoFinish(env, {
-    clips: [{ key: row.output_key }],
+    clips: [{ key: srcKey }],
     audioKey,
     outputKey,
   });
@@ -1748,7 +1739,7 @@ async function handleAddRenderAudio(
       });
     }
   } catch (e) {
-    console.error("add-audio metadata stamp failed:", e);
+    console.error("mux metadata stamp failed:", e);
   }
   const r = res.result as { durationSeconds?: number; hasAudio?: boolean };
   const seconds = typeof r.durationSeconds === "number" ? r.durationSeconds : null;
@@ -1762,6 +1753,98 @@ async function handleAddRenderAudio(
     has_audio: r.hasAudio ?? true,
     user: userEmail,
   });
+}
+
+// Validate `id` + load a COMPLETED render owned by the caller. Returns the row,
+// or a Response to return directly on any failure.
+async function loadCompletedRenderForMux(
+  env: Env,
+  idStr: string,
+  userEmail: string,
+  verb: string,
+): Promise<RenderRow | Response> {
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) {
+    return json({ error: "invalid render id" }, { status: 400 });
+  }
+  const row = await getRenderByIdForUser(env, id, userEmail);
+  if (!row) return json({ error: "render not found" }, { status: 404 });
+  if (row.status !== "COMPLETED" || !row.output_key) {
+    return json({ error: `render has no finished video to ${verb}` }, { status: 409 });
+  }
+  return row;
+}
+
+async function handleAddRenderAudio(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  let body: { audioKey?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (typeof body.audioKey !== "string" || !/^(audio|out)\/.+/.test(body.audioKey)) {
+    return json({ error: "audioKey must be an audio/ or out/ R2 key" }, { status: 400 });
+  }
+  const rowOrErr = await loadCompletedRenderForMux(env, idStr, userEmail, "add audio to");
+  if (rowOrErr instanceof Response) return rowOrErr;
+  return muxAudioOntoRender(env, Number(idStr), rowOrErr, body.audioKey, userEmail);
+}
+
+// v0.137.0: narration. The catalog's TTS voices, allowed for render narration.
+const NARRATION_VOICES = new Set([
+  "@cf/deepgram/aura-2-en",
+  "@cf/deepgram/aura-2-es",
+  "@cf/myshell-ai/melotts",
+]);
+
+// v0.137.0: add spoken narration to a finished render without the GPU. Synthesize
+// the text with a TTS voice (Workers AI), then mux it onto the video via the
+// same off-GPU path as add-audio. Text -> speech -> muxed MP4, no re-render.
+async function handleAddRenderNarration(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  let body: { text?: unknown; voice?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const text = typeof body.text === "string" ? body.text.trim().slice(0, 4000) : "";
+  if (!text) return json({ error: "text required" }, { status: 400 });
+  const voice =
+    typeof body.voice === "string" && NARRATION_VOICES.has(body.voice)
+      ? body.voice
+      : "@cf/deepgram/aura-2-en";
+  const rowOrErr = await loadCompletedRenderForMux(env, idStr, userEmail, "narrate");
+  if (rowOrErr instanceof Response) return rowOrErr;
+  // Synthesize the narration audio (Workers AI TTS) and stash it in R2.
+  let audioKey: string;
+  try {
+    const resp = await aiRun(env, voice, { text, prompt: text }, true /* returnRawResponse */);
+    if (!(resp instanceof Response)) {
+      return json({ error: "TTS returned non-Response shape" }, { status: 502 });
+    }
+    const mime = resp.headers.get("content-type") || "audio/mpeg";
+    const bytes = new Uint8Array(await resp.arrayBuffer());
+    if (bytes.byteLength === 0) {
+      return json({ error: "TTS produced no audio" }, { status: 502 });
+    }
+    audioKey = await r2Put(env, "out", mime, bytes, userEmail);
+  } catch (err) {
+    return json(
+      { error: `TTS failed: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 502 },
+    );
+  }
+  return muxAudioOntoRender(env, Number(idStr), rowOrErr, audioKey, userEmail);
 }
 
 // v0.105.0: audio beat-sync. Submit an analyze_audio job; poll mirrors the

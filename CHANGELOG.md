@@ -2,6 +2,28 @@
 
 ## v0.137.0
 
+Add spoken narration to a finished render without the GPU. A "narrate" button on
+completed renders in History takes narration text, synthesizes it with a TTS
+voice (Workers AI), and muxes it onto the video off-GPU via the same video-finish
+path as add-audio. Text -> speech -> muxed MP4, no re-render, no RunPod job.
+
+- `POST /api/storyboard/renders/:id/add-narration` `{ text, voice? }`: TTS the
+  text (voice from the catalog's three: aura-2-en/-es, melotts; default
+  aura-2-en), store it in R2, then mux onto the render's MP4.
+- Refactor: the add-audio mux core is now a shared `muxAudioOntoRender` helper +
+  `loadCompletedRenderForMux` guard, used by both add-audio and add-narration.
+- History UI: a **"narrate"** button next to "add audio" on completed rows.
+
+### Code
+- `src/index.ts`: `muxAudioOntoRender` + `loadCompletedRenderForMux` (extracted
+  from add-audio), `handleAddRenderNarration` + `/renders/:id/add-narration`
+  route, `NARRATION_VOICES`.
+- `public/planner.js`: `addNarrationToRender` + the "narrate" History button.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 545 pass.
+
+
+## v0.137.0
+
 Wire a service binding to the skyphusion-email Worker so the planner can send
 transactional mail (render-complete notices, etc.) from @skyphusion.org with no
 API token or public network hop. This lands the plumbing only; no route calls
