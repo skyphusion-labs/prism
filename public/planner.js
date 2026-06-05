@@ -5035,6 +5035,30 @@ function openShotPreview(row, kf) {
 // MP4 entirely off the GPU (audio-upload -> the render's /add-audio endpoint,
 // which runs the video-finish ffmpeg container). On success the history reloads
 // so the row's player + download serve the version with sound.
+// v0.137.2: visible inline status for the off-GPU audio/narration mux. It runs
+// on a CPU container (can take 10-30s, plus cold start), so a bare button-text
+// flip is too subtle. Shows a message line in the row's action area.
+function setMuxStatus(btn, message, kind) {
+  const actions = btn.parentNode;
+  if (!actions) return null;
+  let el = actions.querySelector(".planner-history-mux-status");
+  if (!el) {
+    el = document.createElement("span");
+    actions.appendChild(el);
+  }
+  el.className =
+    "planner-history-mux-status" + (kind ? " planner-history-mux-status-" + kind : "");
+  el.textContent = message;
+  el.hidden = false;
+  return el;
+}
+function clearMuxStatus(el) {
+  if (el) {
+    el.hidden = true;
+    el.textContent = "";
+  }
+}
+
 function addAudioToRender(r, btn) {
   const input = document.createElement("input");
   input.type = "file";
@@ -5045,8 +5069,10 @@ function addAudioToRender(r, btn) {
     if (!file) return;
     const orig = btn.textContent;
     btn.disabled = true;
+    let status = null;
     try {
       btn.textContent = "uploading...";
+      status = setMuxStatus(btn, "Uploading audio...", "working");
       const up = await fetch("/api/storyboard/audio-upload", {
         method: "POST",
         headers: { "content-type": file.type || "audio/mpeg" },
@@ -5057,6 +5083,7 @@ function addAudioToRender(r, btn) {
         throw new Error((upData && upData.error) || "audio upload failed");
       }
       btn.textContent = "muxing...";
+      setMuxStatus(btn, "Muxing audio onto the video (CPU container, ~10-30s)...", "working");
       const mux = await fetch(
         "/api/storyboard/renders/" + encodeURIComponent(r.id) + "/add-audio",
         {
@@ -5070,8 +5097,10 @@ function addAudioToRender(r, btn) {
         throw new Error((muxData && muxData.error) || "audio mux failed");
       }
       btn.textContent = "audio added ✓";
+      setMuxStatus(btn, "Audio added. Refreshing the player...", "done");
       loadHistory();
     } catch (err) {
+      clearMuxStatus(status);
       window.alert("add audio failed: " + (err && err.message ? err.message : err));
       btn.disabled = false;
       btn.textContent = orig;
@@ -5092,6 +5121,11 @@ function addNarrationToRender(r, btn) {
   const orig = btn.textContent;
   btn.disabled = true;
   btn.textContent = "narrating...";
+  const status = setMuxStatus(
+    btn,
+    "Synthesizing speech and muxing it onto the video (CPU container, ~10-30s)...",
+    "working",
+  );
   fetch("/api/storyboard/renders/" + encodeURIComponent(r.id) + "/add-narration", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -5103,9 +5137,11 @@ function addNarrationToRender(r, btn) {
         throw new Error((data && data.error) || "narration failed");
       }
       btn.textContent = "narration added ✓";
+      setMuxStatus(btn, "Narration added. Refreshing the player...", "done");
       loadHistory();
     })
     .catch((err) => {
+      clearMuxStatus(status);
       window.alert("narration failed: " + (err && err.message ? err.message : err));
       btn.disabled = false;
       btn.textContent = orig;

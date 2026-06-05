@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.137.2
+
+UX: the add-audio / narrate buttons now show a clear inline status while the
+off-GPU mux runs. The mux is a CPU-container call that can take 10-30s (plus cold
+start), and the bare "narrating..." button text was too subtle - it looked like
+nothing was happening. Now a visible status line in the row ("Synthesizing speech
+and muxing it onto the video...", pulsing) reports progress, with a check on
+completion and the alert preserved on failure.
+
+### Code
+- `public/planner.js`: `setMuxStatus`/`clearMuxStatus` helpers; wired into
+  `addAudioToRender` + `addNarrationToRender`.
+- `public/styles.css`: `.planner-history-mux-status` (+ working/done states, pulse).
+- No server change.
+
+
 ## v0.137.1
 
 Docs: document the post-render audio/narration capabilities in the README

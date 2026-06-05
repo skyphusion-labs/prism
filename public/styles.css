@@ -3249,6 +3249,32 @@ textarea:focus {
   color: var(--error);
 }
 
+/* v0.137.2: inline status for the off-GPU audio/narration mux. Sits in the
+   action row; visible enough that a 10-30s CPU-container op never looks frozen. */
+.planner-history-mux-status {
+  flex-basis: 100%;
+  margin-top: 6px;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+.planner-history-mux-status-working {
+  color: var(--accent);
+  animation: planner-mux-pulse 1.1s ease-in-out infinite;
+}
+.planner-history-mux-status-working::before {
+  content: "\2699  "; /* gear */
+}
+.planner-history-mux-status-done {
+  color: var(--accent);
+}
+.planner-history-mux-status-done::before {
+  content: "\2713  "; /* check */
+}
+@keyframes planner-mux-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 /* v0.46.0: /cast page. Persisted cast manager. Layout is a two-column
    sidebar list + editor pane, mirroring the planner's max-width 960px
    centering for visual consistency. */
