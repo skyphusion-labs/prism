@@ -210,7 +210,7 @@ Roughly 7800 LOC TypeScript in `src/index.ts` plus ~9000 LOC across the extracte
 Prerequisites:
 
 - Cloudflare account with Workers, D1, R2, AI Gateway, and Workers AI enabled
-- Node.js 18 or later
+- Node.js 20 or later (CI runs on 22; Node 18 is end-of-life)
 - Workers Paid plan if you plan to exceed the free Workers AI tier (10,000 neurons per day across all model usage), and required as of v0.11.0 for the `unpdf` bundle size
 
 ```
@@ -251,13 +251,14 @@ npm run db:migrate:remote
 npm run db:migrate:local
 ```
 
-### 3. Create the R2 bucket
+### 3. Create the R2 buckets
 
 ```
 npx wrangler r2 bucket create skyphusion-llm
+npx wrangler r2 bucket create vivijure
 ```
 
-No further config needed; the binding is already in `wrangler.example.toml` (and therefore in your `wrangler.toml` after bootstrap).
+Both bindings are already in `wrangler.example.toml` (and therefore in your `wrangler.toml` after bootstrap): `R2` (`skyphusion-llm`) holds the chat-side artifacts, and `R2_RENDERS` (`vivijure`) is where the vivijure-serverless GPU worker writes render output that this Worker reads back through `/api/artifact`. If you do not want the split, point both at one bucket: set `R2_RENDERS`'s `bucket_name` to `skyphusion-llm` in your `wrangler.toml` and skip creating `vivijure`.
 
 Recommended: add an object-lifecycle rule that expires the `tmp/` prefix, where ZIP import (v0.26.0) stages archives and extracted files. The import workflow deletes these on the normal path; this rule sweeps any objects leaked by a workflow that errors before cleanup. 1 day is the finest R2 granularity and is plenty (live staged objects last seconds to minutes):
 
@@ -284,6 +285,8 @@ npm run deploy
 ```
 
 You will get a `*.workers.dev` URL.
+
+> Note: `wrangler.example.toml` declares a `[[services]]` binding named `EMAIL` that targets a separate `skyphusion-email` Worker ([its own repo](https://github.com/SkyPhusion/skyphusion-email)). Wrangler will not deploy a service binding whose target Worker is not in your account, so this first deploy fails until you either deploy `skyphusion-email` first or comment out the `[[services]]` block in your `wrangler.toml`. The Worker treats `env.EMAIL` as optional at runtime (transactional mail just no-ops without it), so commenting it out is safe.
 
 ### 6. Cloudflare Access
 
