@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.138.0
+
+Document the render contract API and make API-submitted renders show in History.
+
+The submit endpoint (`POST /api/storyboard/render`) already accepts the full
+contract and tracks every render it submits, so advanced users can drive the
+pipeline directly by curl instead of the UI. Two gaps closed:
+
+1. **Contract API docs.** `docs/render-api.md`: auth (Cloudflare Access JWT or a
+   headless service token), the full field table, curl examples (keyframes-only,
+   full multi-character with pose + a muxed track reusing a ready cast), polling,
+   and the adopt endpoint. The contract a script builds against.
+
+2. **API renders are now visible in History.** Renders submitted outside the UI
+   have no active project (`project_id` NULL), so the planner's active-project
+   filter hid them whenever a project was selected. `listRendersForUser` now
+   unions loose rows (`project_id = ? OR project_id IS NULL`) with the active
+   project's, so they always show. The loose set is small (API renders) and does
+   not crowd the project's own rows under LIMIT.
+
+3. **Adopt endpoint.** `POST /api/storyboard/renders/adopt { jobId, project?,
+   bundleKey?, qualityTier?, mode? }` inserts a SUBMITTED row, scoped to the
+   caller, for a job fired straight at the RunPod endpoint (bypassing the
+   Worker). The existing poll/resolve flow then fills it in. For backfilling
+   directly-submitted jobs into a user's History.
+
+### Code
+- `src/renders-db.ts`: `listRendersForUser` project filter -> union with
+  `project_id IS NULL`.
+- `src/index.ts`: `handleAdoptRender` + the `/api/storyboard/renders/adopt` POST
+  route (static, before the `/renders/<id>` regex).
+- `docs/render-api.md`: new.
+- D1-query paths follow the repo convention (query/handler code is verified live,
+  not unit-tested; only pure helpers are). `tsc --noEmit` clean. Requires deploy.
+
+
 ## v0.137.6
 
 Two planner fixes/features.

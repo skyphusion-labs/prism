@@ -564,6 +564,14 @@ export default {
     if (url.pathname === "/api/storyboard/renders/tags" && request.method === "GET") {
       return handleRenderTagsList(request, env);
     }
+    // v0.138.0: adopt an existing RunPod job into THIS user's History. For
+    // renders submitted to RunPod outside the Worker (a raw contract fired
+    // straight at the endpoint, a backfill). Inserts a SUBMITTED row keyed by
+    // jobId + user_email; the normal poll/resolve flow then fills it in. Static
+    // path, matched before the /renders/<id> regex.
+    if (url.pathname === "/api/storyboard/renders/adopt" && request.method === "POST") {
+      return handleAdoptRender(request, env);
+    }
     // v0.35.4: delete one render row from history. Optional ?artifact=true
     // also removes the silent MP4 from R2 when no other row references it.
     // v0.36.0: PATCH on the same path updates the row's label (only).
@@ -1929,6 +1937,74 @@ async function handleAudioAnalyze(request: Request, env: Env): Promise<Response>
     return json({ ok: false, error: "could not parse beat-sync container output", raw }, { status: 502 });
   }
   return json({ ok: true, output: plan });
+}
+
+// v0.138.0: adopt an existing RunPod job into this user's render History. Use
+// when a render was submitted to the RunPod endpoint OUTSIDE the Worker (a raw
+// contract fired straight at the GPU, or a backfill of older jobs) and you want
+// it tracked + visible in the control-plane History. Inserts a SUBMITTED row
+// scoped to the caller's user_email; the existing render-poll route
+// (GET /api/storyboard/render/<jobId>) then resolves status, output_key,
+// duration, and keyframes. The row is project-less (project_id NULL) so it
+// surfaces via the unfiled union in listRendersForUser; file it later if wanted.
+async function handleAdoptRender(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  let body: {
+    jobId?: unknown;
+    project?: unknown;
+    bundleKey?: unknown;
+    qualityTier?: unknown;
+    mode?: unknown;
+  };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (typeof body.jobId !== "string" || body.jobId.trim().length === 0) {
+    return json({ error: "jobId is required (non-empty string)" }, { status: 400 });
+  }
+  const jobId = body.jobId.trim();
+  if (
+    body.qualityTier !== undefined &&
+    body.qualityTier !== "draft" &&
+    body.qualityTier !== "standard" &&
+    body.qualityTier !== "final"
+  ) {
+    return json(
+      { error: "qualityTier must be 'draft' | 'standard' | 'final' if provided" },
+      { status: 400 },
+    );
+  }
+  if (body.mode !== undefined && body.mode !== "full" && body.mode !== "keyframes-only") {
+    return json(
+      { error: "mode must be 'full' | 'keyframes-only' if provided" },
+      { status: 400 },
+    );
+  }
+  const bundleKey = typeof body.bundleKey === "string" ? body.bundleKey : "";
+  const project =
+    typeof body.project === "string" && body.project.trim().length > 0
+      ? body.project.trim()
+      : bundleKey
+        ? deriveProjectFromBundleKey(bundleKey)
+        : jobId;
+  try {
+    await insertRender(env, {
+      userEmail,
+      jobId,
+      project,
+      bundleKey,
+      qualityTier: typeof body.qualityTier === "string" ? body.qualityTier : "standard",
+      status: "SUBMITTED",
+      mode: (body.mode as "full" | "keyframes-only" | undefined) ?? "full",
+      projectId: null,
+    });
+  } catch (err) {
+    console.error("adopt render insert failed:", err);
+    return json({ error: "could not adopt render" }, { status: 500 });
+  }
+  return json({ ok: true, jobId, project, adopted: true });
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {

@@ -569,8 +569,15 @@ export async function listRendersForUser(
     FROM renders`;
   const stmt = projectId !== null && projectId > 0
     ? env.DB.prepare(
+        // v0.138.0: include project-less rows (project_id IS NULL) alongside the
+        // active project. Renders submitted outside the UI (the contract API, a
+        // headless curl, or an adopted RunPod job) have no project_id, so a strict
+        // `project_id = ?` hid them whenever any project was selected. Unioning
+        // the loose rows keeps them discoverable without the user having to clear
+        // their active project first. In practice the loose set is small (API
+        // renders), so it does not crowd out the project's own rows under LIMIT.
         `${baseSelect}
-         WHERE user_email = ? AND project_id = ?
+         WHERE user_email = ? AND (project_id = ? OR project_id IS NULL)
          ORDER BY submitted_at DESC
          LIMIT ?`
       ).bind(userEmail, projectId, cap)
