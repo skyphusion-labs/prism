@@ -1955,6 +1955,9 @@ async function handleAdoptRender(request: Request, env: Env): Promise<Response> 
     bundleKey?: unknown;
     qualityTier?: unknown;
     mode?: unknown;
+    outputKey?: unknown;
+    seconds?: unknown;
+    hasAudio?: unknown;
   };
   try {
     body = await request.json();
@@ -1965,6 +1968,21 @@ async function handleAdoptRender(request: Request, env: Env): Promise<Response> 
     return json({ error: "jobId is required (non-empty string)" }, { status: 400 });
   }
   const jobId = body.jobId.trim();
+  // v0.138.0: an explicit outputKey backfills a render that already finished and
+  // whose MP4 sits in R2, but whose RunPod job has aged out of the status cache
+  // (so the poll can never recover it). When given, the row is marked COMPLETED
+  // pointing straight at the R2 key; otherwise it stays SUBMITTED and resolves
+  // live via the poll (use that for a still-running job).
+  const outputKey =
+    typeof body.outputKey === "string" && body.outputKey.trim().length > 0
+      ? body.outputKey.trim()
+      : null;
+  if (body.seconds !== undefined && (typeof body.seconds !== "number" || !Number.isFinite(body.seconds))) {
+    return json({ error: "seconds must be a finite number if provided" }, { status: 400 });
+  }
+  if (body.hasAudio !== undefined && typeof body.hasAudio !== "boolean") {
+    return json({ error: "hasAudio must be a boolean if provided" }, { status: 400 });
+  }
   if (
     body.qualityTier !== undefined &&
     body.qualityTier !== "draft" &&
@@ -1989,22 +2007,45 @@ async function handleAdoptRender(request: Request, env: Env): Promise<Response> 
       : bundleKey
         ? deriveProjectFromBundleKey(bundleKey)
         : jobId;
+  const outJson = (): string => {
+    const out: Record<string, unknown> = { output_key: outputKey };
+    if (typeof body.seconds === "number") out.seconds = body.seconds;
+    if (typeof body.hasAudio === "boolean") out.has_audio = body.hasAudio;
+    return JSON.stringify(out);
+  };
   try {
+    // Idempotent: re-adopting the same jobId updates the existing row (e.g. to
+    // attach a now-known outputKey) instead of inserting a duplicate.
+    const existing = await env.DB.prepare(
+      "SELECT id FROM renders WHERE job_id = ? AND user_email = ? LIMIT 1",
+    )
+      .bind(jobId, userEmail)
+      .first<{ id: number }>();
+    if (existing) {
+      if (outputKey) await markFinishDone(env, jobId, outputKey, outJson());
+      return json({ ok: true, jobId, project, adopted: true, completed: !!outputKey, deduped: true });
+    }
     await insertRender(env, {
       userEmail,
       jobId,
       project,
       bundleKey,
       qualityTier: typeof body.qualityTier === "string" ? body.qualityTier : "standard",
-      status: "SUBMITTED",
+      status: outputKey ? "COMPLETED" : "SUBMITTED",
       mode: (body.mode as "full" | "keyframes-only" | undefined) ?? "full",
       projectId: null,
     });
+    // Backfill of an already-finished render: point the row straight at the R2
+    // output and mark it COMPLETED, so it shows as playable without the (now
+    // expired) RunPod job.
+    if (outputKey) {
+      await markFinishDone(env, jobId, outputKey, outJson());
+    }
   } catch (err) {
     console.error("adopt render insert failed:", err);
     return json({ error: "could not adopt render" }, { status: 500 });
   }
-  return json({ ok: true, jobId, project, adopted: true });
+  return json({ ok: true, jobId, project, adopted: true, completed: !!outputKey });
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {

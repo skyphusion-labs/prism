@@ -116,6 +116,29 @@ status, output_key, duration, and keyframes from RunPod. The adopted row is
 project-less, so it shows in History under your active project (via the loose-row
 union) or when no project is selected. `jobId` is the only required field.
 
+Adopt is **idempotent**: re-adopting the same `jobId` updates the existing row
+instead of inserting a duplicate.
+
+### Backfilling a finished render (job already aged out of RunPod)
+
+RunPod ages completed jobs out of its status cache after a while, so the
+poll-based resolve above only works while the job is recent. If the render
+already finished and its MP4 is sitting in R2, pass the **`outputKey`** directly
+and the row is marked COMPLETED pointing straight at it (no RunPod round-trip):
+
+```bash
+curl -X POST https://skyphusion.org/api/storyboard/renders/adopt \
+  -H "cf-access-token: $TOKEN" -H "content-type: application/json" \
+  -d '{ "jobId": "<runpod-job-id>", "project": "my_project",
+        "outputKey": "renders/my_project/full-<hash>.mp4",
+        "seconds": 42.4, "hasAudio": true, "mode": "full" }'
+```
+
+`outputKey` + optional `seconds` / `hasAudio` populate the row so it plays in
+History immediately. (The MP4 must be stamped with your `user_email` for the
+artifact route to serve it; renders submitted through this API are stamped
+automatically.)
+
 ## History note
 
 Renders submitted by the contract API (or adopted) have no active project, so
