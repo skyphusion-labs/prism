@@ -19,15 +19,23 @@ figures toward center), `pose_gap_frac` (0..0.15, inter-column gap),
 `pose_negative` (string, trimmed + capped at 400 chars, appended to the negative
 only on the pose path). All absent -> the pod uses its original geometry.
 
+Also closes the last `multi_character` contract gap found in a full pod<->Worker
+sync audit: `openpose_controlnet_repo` (the pod accepted it but the Worker could
+not send it). Now forwarded too, so every key the pod whitelists is reachable
+from the Worker and nothing the Worker sends is dropped. Category-level audit:
+all 24 pod override categories are Worker-reachable; no silent drops either way.
+
 Pairs with vivijure-serverless 0.4.89 (the pod side that reads these keys; its
 defaults reproduce the original geometry byte-for-byte).
 
 ### Code
-- `src/runpod-submit.ts`: `MultiCharacterOverrides` gains the five keys;
-  `normalizeMultiCharacterOverrides` validates each (bounded floats via a local
-  `poseFrac` helper; `pose_negative` trim + 400-char cap).
-- `tests/runpod-submit.test.ts`: +3 tests (pass-through in range, drop out of
-  range, pose_negative trim/cap/empty). 68 pass; `tsc --noEmit` clean.
+- `src/runpod-submit.ts`: `MultiCharacterOverrides` gains the five geometry keys
+  + `openpose_controlnet_repo`; `normalizeMultiCharacterOverrides` validates each
+  (bounded floats via a local `poseFrac` helper; `pose_negative` trim + 400-char
+  cap; repo trim + 200-char cap).
+- `tests/runpod-submit.test.ts`: +4 tests (geometry pass-through in range, drop
+  out of range, pose_negative trim/cap/empty, openpose_controlnet_repo trim).
+  69 pass; `tsc --noEmit` clean.
 - No D1 / Env change. Requires a Worker deploy to forward the new keys.
 
 

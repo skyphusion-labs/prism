@@ -611,6 +611,12 @@ export interface MultiCharacterOverrides {
   // Extra negative-prompt terms appended ONLY on the pose path, to suppress the
   // gap hallucination (e.g. "floating cloth, disembodied cape, third figure").
   pose_negative?: string;
+  // Override the OpenPose ControlNet repo. The pod default
+  // (xinsir/controlnet-openpose-sdxl-1.0) is the one primed on the volume, so
+  // this rarely changes -- but the pod accepts it, so we keep the contract
+  // symmetric. A repo not primed on the volume makes the pod fall back to the
+  // masks-only pipe (graceful), so it is safe to forward.
+  openpose_controlnet_repo?: string;
   // "layer" overlays the panels with a feathered alpha mask;
   // "side_by_side" tiles them horizontally.
   layout?: "layer" | "side_by_side";
@@ -1743,6 +1749,10 @@ export function normalizeMultiCharacterOverrides(
   if (fh !== undefined) out.pose_fig_height_frac = fh;
   if (typeof raw.pose_negative === "string" && raw.pose_negative.trim()) {
     out.pose_negative = raw.pose_negative.trim().slice(0, 400);
+  }
+  // Symmetric with the pod whitelist: a HF repo id (org/name), trimmed + capped.
+  if (typeof raw.openpose_controlnet_repo === "string" && raw.openpose_controlnet_repo.trim()) {
+    out.openpose_controlnet_repo = raw.openpose_controlnet_repo.trim().slice(0, 200);
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

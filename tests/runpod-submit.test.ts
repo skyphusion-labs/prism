@@ -517,6 +517,13 @@ describe("normalizeMultiCharacterOverrides (v0.85.0: Phase R fields)", () => {
     expect(out?.pose_negative?.length).toBe(400);
   });
 
+  it("forwards openpose_controlnet_repo trimmed (contract symmetry)", () => {
+    expect(
+      normalizeMultiCharacterOverrides({ openpose_controlnet_repo: "  xinsir/controlnet-openpose-sdxl-1.0  " }),
+    ).toEqual({ openpose_controlnet_repo: "xinsir/controlnet-openpose-sdxl-1.0" });
+    expect(normalizeMultiCharacterOverrides({ openpose_controlnet_repo: "  " })).toBeUndefined();
+  });
+
   it("drops lora_scale_per_slot below 0", () => {
     const out = normalizeMultiCharacterOverrides({ lora_scale_per_slot: -0.1 });
     expect(out).toBeUndefined();
