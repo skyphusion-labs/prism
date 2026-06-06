@@ -10,7 +10,7 @@
 # Build + publish on mindcrime-ci (where Docker lives):
 #   docker build -f ci/node-docker.Dockerfile -t ghcr.io/skyphusion/ci-node-docker:latest .
 #   docker push ghcr.io/skyphusion/ci-node-docker:latest   # optional; Jenkins uses the local image if present
-FROM node:22
+FROM node:26
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
