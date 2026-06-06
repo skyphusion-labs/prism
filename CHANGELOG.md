@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.140.0
+
+Rename the product to **Vivijure** (control-plane brand sweep).
+
+Part of the cross-repo project rename; the GPU worker repo is now
+`vivijure-serverless`. This sweeps the visible "Vivijure" brand and the
+`vivijure-serverless` contract references to Vivijure across the planner + cast
+UI, the render-done email template, code comments, and docs. It also flips the
+`R2_RENDERS` bucket name from `vivijure` to `vivijure` (the bucket was migrated;
+objects copied server-side with `user_email` + content-type metadata preserved).
+
+No behavior change: binding NAMES (`R2_RENDERS`, `R2`), R2 key prefixes, and the
+job contract are unchanged; only the `bucket_name` value and human-facing strings
+move. The chat bucket (`R2` = `skyphusion-llm`) is untouched, and historical
+CHANGELOG entries + applied migrations are intentionally left as-is.
+
+### Code
+- 26 files: UI (`planner.html`, `cast.html`, `index.html`, `stt.html`,
+  `topbar.js`, `styles.css`), `render-email.ts`, `index.ts`, `runpod-submit.ts`,
+  `env.ts`, `bundle-assembler.ts`, `audio-routing.ts`, `lora-resolver.ts`,
+  `planner-yaml.ts`, `storyboard-validate.ts`, `containers/*`, `schema.sql`
+  (comment), `wrangler.example.toml` (`R2_RENDERS` bucket), `README`, `CLAUDE.md`,
+  `.github/*` templates, tests.
+- No `Env` interface change (binding names unchanged), so no `wrangler types` regen.
+- `tsc --noEmit`: clean. `vitest`: 562 passed (32 files).
+
 ## v0.139.0
 
 User Preferences (first instance) + opt-in render-done email notifications.
