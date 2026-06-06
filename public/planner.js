@@ -201,6 +201,12 @@ const FIELD_HELP = {
   "planner-mc-engine": { what: "Multi-character render engine. regional does a single SDXL pass with per-region IP-Adapter masks (the default); composite_legacy is the older per-slot panels plus grabcut plus tile path, kept as an escape hatch." },
   "planner-mc-lora-scale": { what: "Per-slot LoRA scale in the regional engine. 0.3 is the confirmed setting that keeps identities from bleeding into each other." },
   "planner-mc-ip-scale": { what: "Per-slot IP-Adapter scale in the regional engine. 0.7 is the confirmed identity-routing setting." },
+  "planner-mc-pose": { what: "OpenPose ControlNet pose conditioning. On, for shots with 2+ cast slots, draws one body per pose skeleton so the characters are placed APART (the masks alone only route identity, so two subjects drift shoulder-to-shoulder). Needs the openpose controlnet primed on the volume; off by default." },
+  "planner-mc-cn-scale": { what: "How firmly the bodies follow the pose skeleton (0 to 2). 0.55 places them reliably without overriding the prompt's action; higher is stricter and stiffer." },
+  "planner-mc-pose-inset": { what: "Pulls the two pose figures toward frame center (0 to 0.25). 0.12 puts them at roughly 30 and 70 percent, which closes the empty center band that the model used to fill with a hallucinated stray cape. Lower spreads them wider." },
+  "planner-mc-pose-gap": { what: "Gap fraction between the pose columns (0 to 0.15). Smaller brings the figures closer together." },
+  "planner-mc-pose-figw": { what: "How wide each figure is drawn within its column (0.3 to 1). Wider fills more of the center, also helping suppress the stray-cape artifact." },
+  "planner-mc-pose-neg": { what: "Extra negative-prompt terms applied only on the pose path, to suppress hallucinations in the gap between figures (floating cloth, a third figure, stray fabric). Leave the default unless you see a specific artifact." },
 
   // --- video & motion (Wan) ---
   "planner-keyframe-sdxl-size": { what: "Resolution bucket the per-shot keyframe still is generated at, as WxH. 1216x832 is the multi-subject coherence setting; the still is then cover-cropped up to the output size." },
@@ -1638,6 +1644,27 @@ function buildMultiCharacterOverrides() {
   if (loraScale !== undefined && loraScale >= 0 && loraScale <= 2) out.lora_scale_per_slot = loraScale;
   const ipScale = readNum("#planner-mc-ip-scale");
   if (ipScale !== undefined && ipScale >= 0 && ipScale <= 2) out.ip_adapter_scale_per_slot = ipScale;
+  // v0.137.5: OpenPose ControlNet pose conditioning + its contract-driven
+  // geometry (vivijure-serverless 0.4.87 / 0.4.89). Only ship the geometry
+  // when pose is actually ON, so single-character and non-pose renders keep a
+  // minimal body. The pre-filled values are the confirmed ghost-cape fix; the
+  // pod ignores them unless pose_conditioning is true. Image stays immutable.
+  const pose = readStr("#planner-mc-pose");
+  if (pose === "true") {
+    out.pose_conditioning = true;
+    const cnScale = readNum("#planner-mc-cn-scale");
+    if (cnScale !== undefined && cnScale >= 0 && cnScale <= 2) out.controlnet_conditioning_scale = cnScale;
+    const inset = readNum("#planner-mc-pose-inset");
+    if (inset !== undefined && inset >= 0 && inset <= 0.25) out.pose_inset_frac = inset;
+    const gap = readNum("#planner-mc-pose-gap");
+    if (gap !== undefined && gap >= 0 && gap <= 0.15) out.pose_gap_frac = gap;
+    const figw = readNum("#planner-mc-pose-figw");
+    if (figw !== undefined && figw >= 0.3 && figw <= 1) out.pose_fig_width_frac = figw;
+    const poseNeg = readStr("#planner-mc-pose-neg");
+    if (poseNeg) out.pose_negative = poseNeg.slice(0, 400);
+  } else if (pose === "false") {
+    out.pose_conditioning = false;
+  }
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

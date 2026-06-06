@@ -582,6 +582,44 @@
                 <span>regional IP-Adapter scale per slot (v15 win: 0.7)</span>
                 <input id="planner-mc-ip-scale" type="number" min="0" max="2" step="0.05" value="0.7" />
               </label>
+              <!-- v0.137.5: OpenPose ControlNet pose conditioning (vivijure-
+                   serverless 0.4.87 feature; 0.4.89 made the geometry contract-
+                   driven). For 2+ cast slots, conditions the keyframe on a per-
+                   slot pose skeleton so the bodies are DRAWN apart, not just
+                   their identities routed. The geometry inputs are the confirmed
+                   ghost-cape fix (pull the figures toward center so the empty
+                   band between them isn't hallucinated into a stray cape); pre-
+                   filled with the known-good values, all carried on the contract
+                   so the image stays immutable. Pose is off by default (opt-in;
+                   needs the openpose controlnet primed on the volume). -->
+              <label class="planner-field">
+                <span>pose conditioning (2+ slots: draw bodies apart)</span>
+                <select id="planner-mc-pose">
+                  <option value="" selected>off (use pod default)</option>
+                  <option value="true">on (OpenPose ControlNet body placement)</option>
+                  <option value="false">off (explicit)</option>
+                </select>
+              </label>
+              <label class="planner-field">
+                <span>pose: ControlNet scale (firmness; default 0.55)</span>
+                <input id="planner-mc-cn-scale" type="number" min="0" max="2" step="0.05" placeholder="0.55" />
+              </label>
+              <label class="planner-field">
+                <span>pose: figure inset toward center (ghost-cape fix: 0.12)</span>
+                <input id="planner-mc-pose-inset" type="number" min="0" max="0.25" step="0.01" value="0.12" />
+              </label>
+              <label class="planner-field">
+                <span>pose: inter-figure gap fraction (0.035)</span>
+                <input id="planner-mc-pose-gap" type="number" min="0" max="0.15" step="0.005" value="0.035" />
+              </label>
+              <label class="planner-field">
+                <span>pose: figure width fraction (0.95)</span>
+                <input id="planner-mc-pose-figw" type="number" min="0.3" max="1" step="0.05" value="0.95" />
+              </label>
+              <label class="planner-field">
+                <span>pose: extra negative (gap hallucination guard)</span>
+                <input id="planner-mc-pose-neg" type="text" value="floating cloth, disembodied cape, extra cape, third figure, stray fabric" />
+              </label>
             </div>
             <p class="planner-overrides-hint">
               forwarded as <code>multi_character_overrides</code>. controls how
@@ -589,9 +627,12 @@
               regional engine (default) does a single SDXL pass with per-region
               IP-Adapter masks; lora=0.3 and ip=0.7 are the v15-confirmed
               identity-routing settings. composite_legacy is the pre-Phase-R
-              panel + grabcut + tile path, kept as an escape hatch. leave a
-              field blank to use the pod's compiled default for that key
-              instead.
+              panel + grabcut + tile path, kept as an escape hatch. turn on
+              <strong>pose conditioning</strong> for shots with 2+ slots to draw
+              the characters apart (one body per pose skeleton); the pose
+              geometry fields below it are pre-filled with the confirmed
+              ghost-cape fix. leave a field blank to use the pod's compiled
+              default for that key instead.
             </p>
           </details>
         </details>

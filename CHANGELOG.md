@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.137.5
+
+Expose multi-character pose conditioning + its geometry in the planner UI. The
+contract keys existed (v0.137.4) but only an API submit could set them; now the
+planner's multi-character override panel has the controls, so a UI render can
+draw two characters apart and apply the ghost-cape fix.
+
+New controls under multi-character overrides: a pose-conditioning on/off select
+plus ControlNet scale, figure inset / gap / width, and an extra-negative field.
+The geometry inputs are pre-filled with the confirmed ghost-cape values
+(inset 0.12, gap 0.035, width 0.95, the stray-cloth negative); they only ship
+when pose is turned on, so non-pose renders keep a minimal submit body. Pose is
+off by default (opt-in; needs the openpose controlnet primed on the volume).
+
+### Code
+- `public/planner.html`: 6 inputs (`#planner-mc-pose`, `-cn-scale`,
+  `-pose-inset`, `-pose-gap`, `-pose-figw`, `-pose-neg`) in the multi-character
+  panel + a pose note in the overrides hint.
+- `public/planner.js`: `buildMultiCharacterOverrides` reads them (gated on pose
+  on; bounds-checked, negative capped at 400) into `multiCharacterOverrides`,
+  which is already forwarded to the Worker normalizer; +6 FIELD_HELP entries.
+- No Worker/src change (the normalizer already validates these keys, v0.137.4).
+  `node --check` clean; `tsc --noEmit` clean; 69 runpod-submit tests pass.
+
+
 ## v0.137.4
 
 Make the multi-character pose-template geometry fully contract-driven, so the
