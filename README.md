@@ -85,6 +85,12 @@ hands the GPU-heavy training and rendering off to a separate RunPod serverless b
 **New here? Start with the [end-to-end walkthrough](docs/vivijure-walkthrough.md)** --
 cast, plan, beat-sync, bundle, render, animate, and score a music video step by step.
 
+Made with the studio: *Neon Rain Standoff*, a cyberpunk short whose shots were split
+per-shot across the GPU (Wan 2.2 i2v) and cloud i2v backends in one **hybrid** render,
+then beat-synced to a generated score.
+
+![Stills from a hybrid render (Neon Rain Standoff): two anime cyberpunk characters across four shots](docs/images/neon-rain-standoff.jpg)
+
 ### Routing
 
 How this control plane, its three Cloudflare Containers, R2, and the GPU backend fit
