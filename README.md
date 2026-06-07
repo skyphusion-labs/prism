@@ -76,10 +76,14 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 ## Vivijure studio (AI music-video pipeline)
 
 Beyond the chat playground, the same Worker hosts **Vivijure studio**, the control
-plane for an AI music-video pipeline. (Reachable from the top-bar account menu, or
-directly at [`/planner.html`](public/planner.html) and [`/cast.html`](public/cast.html).)
-It plans and preps a project here, then hands the GPU-heavy training and rendering
-off to a separate RunPod serverless backend.
+plane for an AI music-video pipeline. (Reachable at its own branded entry point
+**`vivijure.skyphusion.org`**, from the top-bar account menu, or directly at
+[`/planner.html`](public/planner.html) and [`/cast.html`](public/cast.html); all
+behind the same Cloudflare Access login.) It plans and preps a project here, then
+hands the GPU-heavy training and rendering off to a separate RunPod serverless backend.
+
+**New here? Start with the [end-to-end walkthrough](docs/vivijure-walkthrough.md)** --
+cast, plan, beat-sync, bundle, render, animate, and score a music video step by step.
 
 ### Routing
 

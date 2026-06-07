@@ -171,3 +171,16 @@ Renders submitted by the contract API (or adopted) have no active project, so
 they used to hide whenever a project was selected in the planner. As of v0.138.0
 the History list unions these loose rows with the active project's, so API
 renders are always visible without clearing your project first.
+
+## See also
+
+This doc covers the GPU **render submit** contract only. For the rest of the
+pipeline:
+
+- [Vivijure walkthrough](./vivijure-walkthrough.md) -- the full cast -> plan ->
+  beat-sync -> bundle -> render -> animate -> score flow.
+- Animating a completed keyframes-only preview: `POST .../animate-cloud`,
+  `POST .../animate-hybrid`, `POST /api/storyboard/render-from-keyframes` -- see
+  [`i2v-backend-selector.md`](./i2v-backend-selector.md) and
+  [`i2v-hybrid-backend.md`](./i2v-hybrid-backend.md).
+- Scoring a finished render: `POST .../add-audio`, `POST .../add-narration`.
