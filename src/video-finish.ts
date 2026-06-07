@@ -25,6 +25,11 @@ export interface VideoFinishInput {
   preset?: string;
   crossfade?: number;
   trimJoinFrames?: number;
+  // v0.155.0: add audio to a single already-finished MP4 without re-encoding or
+  // re-scaling the video (stream-copy). Used by add-audio / add-narration so a
+  // 1280x720 hybrid/cloud render keeps its resolution instead of being upscaled
+  // to the container's 1080p normalize default.
+  remuxAudioOnly?: boolean;
 }
 
 const MAX_CLIPS = 80;
@@ -94,6 +99,15 @@ export function parseVideoFinishInput(
       return { ok: false, errors: ["preset must be a string"] };
     }
     out.preset = o.preset;
+  }
+  if (o.remuxAudioOnly !== undefined) {
+    if (typeof o.remuxAudioOnly !== "boolean") {
+      return { ok: false, errors: ["remuxAudioOnly must be a boolean"] };
+    }
+    if (o.remuxAudioOnly && clips.length !== 1) {
+      return { ok: false, errors: ["remuxAudioOnly requires exactly one clip"] };
+    }
+    out.remuxAudioOnly = o.remuxAudioOnly;
   }
   return { ok: true, value: out };
 }
@@ -199,6 +213,7 @@ export async function runVideoFinish(
     ...(input.preset !== undefined ? { preset: input.preset } : {}),
     ...(input.crossfade !== undefined ? { crossfade: input.crossfade } : {}),
     ...(input.trimJoinFrames !== undefined ? { trimJoinFrames: input.trimJoinFrames } : {}),
+    ...(input.remuxAudioOnly ? { remuxAudioOnly: true } : {}),
   };
 
   const resp = await callVideoFinish(env, payload, opts);

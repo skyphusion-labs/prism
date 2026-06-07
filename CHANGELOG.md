@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.155.0
+
+Audio mux no longer re-encodes (or upscales) a finished render. Scoring a hybrid
+film keeps its native 1280x720.
+
+`add-audio` / `add-narration` mux a music bed (or TTS) onto an already-assembled
+render via the `video-finish` container. The container is built to normalize and
+concat raw per-shot clips, so it always ran `_normalize` (an explicit
+`scale=...,pad=...` filter plus a `libx264` re-encode) on its inputs. The mux path
+fed it a single finished MP4 with no `width`/`height`, so it fell back to the
+container default (1920x1080) and a lossy re-encode. For a 1080p GPU render that
+happened to match; for a 1280x720 hybrid or cloud render it upscaled the picture
+into a 1080p frame and re-encoded it. Hybrid scoring is the headline case
+(`docs/hybrid-verification-checklist.md` scores the silent `hybrid_full.mp4` with
+`add-audio`).
+
+This adds an audio-only remux path: when the caller is adding a bed to one finished
+clip, the container stream-copies the video (`-c:v copy`, no scale/pad/re-encode) and
+only adds the audio track, so the output keeps the source's exact resolution, fps,
+and quality. Audio length handling is unchanged (pin to the video duration with `-t`,
+pad a short bed with `apad`, cut a long one). The full normalize/concat path is
+untouched for real multi-clip assembly.
+
+### Code
+
+- `containers/video-finish/app.py` - new `_remux_audio_only(work, video_path, audio_path)`
+  (stream-copy video + mux bed, faststart); `finish` accepts `remuxAudioOnly` (requires
+  exactly one clip) and branches to it instead of `_assemble`.
+- `src/video-finish.ts` - `VideoFinishInput.remuxAudioOnly?: boolean`; `parseVideoFinishInput`
+  validates it (boolean, single clip); `runVideoFinish` threads it into the container payload.
+- `src/index.ts` - `muxAudioOntoRender` (the shared add-audio / add-narration helper) sets
+  `remuxAudioOnly: true`.
+- `tests/video-finish.test.ts` - 3 cases (accept single-clip remux, reject multi-clip, reject
+  non-boolean).
+- `package.json` - 0.154.0 -> 0.155.0.
+
+typecheck clean; vitest 594/594 (3 new); `python3 -m py_compile containers/video-finish/app.py` clean.
+Container + Workflow paths do not run under `wrangler dev`, so this needs a deploy +
+one live `add-audio` on a 720p render to confirm the output stays 1280x720.
+
 ## v0.154.0
 
 Phase 4 hybrid slice-3 polish: dual-lane progress, beat-sync trim on both lanes,

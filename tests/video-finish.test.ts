@@ -48,6 +48,29 @@ describe("parseVideoFinishInput", () => {
     expect(parseVideoFinishInput({ clips: ["a.mp4"], outputKey: "o", crf: "18" }).ok).toBe(false);
     expect(parseVideoFinishInput({ clips: ["a.mp4"], outputKey: "o", preset: 5 }).ok).toBe(false);
   });
+
+  it("accepts remuxAudioOnly with a single clip and carries it through", () => {
+    const r = parseVideoFinishInput({
+      clips: ["render.mp4"],
+      outputKey: "o",
+      audioKey: "audio/bed.mp3",
+      remuxAudioOnly: true,
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.remuxAudioOnly).toBe(true);
+  });
+
+  it("rejects remuxAudioOnly with more than one clip", () => {
+    expect(
+      parseVideoFinishInput({ clips: ["a.mp4", "b.mp4"], outputKey: "o", remuxAudioOnly: true }).ok,
+    ).toBe(false);
+  });
+
+  it("rejects a non-boolean remuxAudioOnly", () => {
+    expect(
+      parseVideoFinishInput({ clips: ["a.mp4"], outputKey: "o", remuxAudioOnly: "yes" }).ok,
+    ).toBe(false);
+  });
 });
 
 describe("finishInputFromPodOutput", () => {

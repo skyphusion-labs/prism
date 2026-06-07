@@ -1811,10 +1811,14 @@ async function muxAudioOntoRender(
   }
   const base = srcKey.replace(/\.mp4$/i, "");
   const outputKey = `${base}-aud-${shortHash(audioKey)}.mp4`;
+  // v0.155.0: stream-copy the finished video and only add the bed. srcKey is an
+  // already-assembled render MP4 (1080p GPU or 720p hybrid/cloud); without this
+  // the container re-normalized it to its 1080p default, upscaling 720p output.
   const res = await runVideoFinish(env, {
     clips: [{ key: srcKey }],
     audioKey,
     outputKey,
+    remuxAudioOnly: true,
   });
   if (!res.ok) {
     return json({ ok: false, error: res.error, user: userEmail }, { status: res.status });

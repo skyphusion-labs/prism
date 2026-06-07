@@ -61,12 +61,22 @@ async def finish(req):
     output_url = body.get("outputUrl")
     output_key = body.get("outputKey", "")
     audio_url = body.get("audioUrl")
+    # v0.155.0: audio-only remux. The caller (add-audio / add-narration) feeds a
+    # single ALREADY-FINISHED render MP4 + a bed and just wants the audio track
+    # added. Stream-copy the video (no scale/pad/re-encode), so the output keeps
+    # the source's native resolution and quality. Without this the clip went
+    # through _normalize, which forced the container's default 1920x1080 and a
+    # lossy libx264 pass, upscaling a 1280x720 hybrid/cloud render.
+    remux_audio_only = bool(body.get("remuxAudioOnly", False))
     if not isinstance(clips, list) or not clips:
         return web.json_response({"ok": False, "error": "clips must be a non-empty array"}, status=400)
     if len(clips) > MAX_CLIPS:
         return web.json_response({"ok": False, "error": f"too many clips (>{MAX_CLIPS})"}, status=400)
     if not output_url:
         return web.json_response({"ok": False, "error": "outputUrl required"}, status=400)
+    if remux_audio_only and len(clips) != 1:
+        return web.json_response(
+            {"ok": False, "error": "remuxAudioOnly requires exactly one clip"}, status=400)
     try:
         width = int(body.get("width", 1920))
         height = int(body.get("height", 1080))
@@ -108,10 +118,15 @@ async def finish(req):
 
         loop = asyncio.get_running_loop()
         try:
-            out_path, secs, has_audio = await loop.run_in_executor(
-                None, _assemble, work, srcs, audio_path,
-                width, height, fps, crf, preset, crossfade, trim_join_frames,
-            )
+            if remux_audio_only:
+                out_path, secs, has_audio = await loop.run_in_executor(
+                    None, _remux_audio_only, work, srcs[0][0], audio_path,
+                )
+            else:
+                out_path, secs, has_audio = await loop.run_in_executor(
+                    None, _assemble, work, srcs, audio_path,
+                    width, height, fps, crf, preset, crossfade, trim_join_frames,
+                )
         except subprocess.CalledProcessError as e:
             log.exception("ffmpeg failed")
             return web.json_response({"ok": False, "error": f"ffmpeg failed: {e}"}, status=500)
@@ -194,6 +209,36 @@ def _concat_crossfade(norms, out, crossfade, *, crf, preset):
         ])
         current = step
     _run(["ffmpeg", "-y", "-i", current, "-c", "copy", out])
+
+
+def _remux_audio_only(work, video_path, audio_path):
+    # v0.155.0: add (or replace) the audio track on a single finished MP4 without
+    # touching the video. Stream-copy `-c:v copy` keeps the source resolution,
+    # fps, and quality exactly (a 1280x720 hybrid render stays 720p; no upscale,
+    # no re-encode). Mirrors _assemble's audio-length handling: pin the output to
+    # the VIDEO duration with `-t`, padding a short bed with silence (`apad`) and
+    # cutting a long one. Explicit `-map` selects video from the clip and audio
+    # from the bed (any pre-existing audio on the clip is dropped).
+    out = os.path.join(work, "final.mp4")
+    has_audio = bool(audio_path) and os.path.isfile(audio_path)
+    if not has_audio:
+        # No bed: passthrough copy with faststart (still resolution-preserving).
+        _run(["ffmpeg", "-y", "-i", video_path, "-c", "copy", "-movflags", "+faststart", out])
+        return out, _probe_duration(out), False
+    vdur = _probe_duration(video_path)
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path, "-i", audio_path,
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        "-af", "apad",
+    ]
+    if vdur and vdur > 0:
+        cmd += ["-t", f"{vdur:.3f}"]
+    else:
+        cmd += ["-shortest"]
+    cmd += ["-movflags", "+faststart", out]
+    _run(cmd)
+    return out, _probe_duration(out), True
 
 
 def _assemble(work, srcs, audio_path, width, height, fps, crf, preset, crossfade, trim_join_frames):
