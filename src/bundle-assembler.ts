@@ -18,6 +18,11 @@
 //   start_image.png                           optional top-level film start;
 //                                              auto-bootstrapped by the GPU worker
 //                                              if absent
+//   clips/<id>_keyframe.png                    optional per-scene start frame
+//                                              (Phase 4b reverse bridge); the pod
+//                                              reads it as scene <id>'s i2v start
+//                                              image (core.py scene.start_image
+//                                              fallback)
 //
 // Returns the R2 key at bundles/<projectName>.tar.gz on success.
 
@@ -54,6 +59,14 @@ export interface AssembleBundleArgs {
   storyboard: StoryboardValidated;
   characterRefs: Partial<Record<SlotId, CharacterRef>>;
   startImage?: TrainingImage;
+  // v0.148.0 (Phase 4b, the reverse bridge): per-scene start images keyed by
+  // scene id ("shot_NN"). Each is written into the bundle at
+  // clips/<id>_keyframe.png, which the GPU pod's i2v path reads as that scene's
+  // motion start frame (vivijure-src/core.py: scene.start_image, falling back to
+  // <project_dir>/clips/<id>_keyframe.png). This injects externally-authored
+  // keyframes into the pod's Wan motion with no pod-side change. Keys must match
+  // a scene id present in the storyboard.
+  sceneStartImages?: Record<string, TrainingImage>;
 }
 
 export type AssembleBundleResult =
@@ -398,6 +411,38 @@ export async function assembleBundle(
       name: "start_image.png",
       content: startResolved.bytes,
     });
+  }
+
+  // v0.148.0 (Phase 4b, the reverse bridge): per-scene start images at
+  // clips/<id>_keyframe.png. The pod (vivijure-src/core.py) reads each scene's
+  // start frame from scene.start_image, falling back to this path, so an
+  // externally-authored keyframe here drives that scene's Wan i2v motion with no
+  // pod change. Bytes are written raw (no background removal; these are full
+  // frames, not portraits); the pod loads by content, not extension. Keys are
+  // validated against the storyboard's scene ids so a typo cannot silently ship
+  // a keyframe no scene will ever read.
+  if (args.sceneStartImages) {
+    const sceneIds = new Set(
+      storyboard.scenes.map(
+        (s, i) => s.id || `shot_${String(i + 1).padStart(2, "0")}`,
+      ),
+    );
+    for (const [sceneId, img] of Object.entries(args.sceneStartImages)) {
+      if (!sceneIds.has(sceneId)) {
+        return {
+          ok: false,
+          errors: [`sceneStartImages: "${sceneId}" is not a scene id in the storyboard`],
+        };
+      }
+      const resolved = await resolveImage(env, img, `sceneStartImages["${sceneId}"]`);
+      if ("error" in resolved) {
+        return { ok: false, errors: [resolved.error] };
+      }
+      files.push({
+        name: `clips/${sceneId}_keyframe.png`,
+        content: resolved.bytes,
+      });
+    }
   }
 
   // Emit tar, gzip, upload.

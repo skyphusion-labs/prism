@@ -1546,6 +1546,8 @@ interface StoryboardBundleRequest {
   storyboard?: unknown;
   characterRefs?: unknown;
   startImage?: unknown;
+  // v0.148.0 (Phase 4b): { sceneId -> TrainingImage } per-scene start frames.
+  sceneStartImages?: unknown;
 }
 
 async function handleStoryboardBundle(request: Request, env: Env): Promise<Response> {
@@ -1582,6 +1584,9 @@ async function handleStoryboardBundle(request: Request, env: Env): Promise<Respo
       characterRefs:
         body.characterRefs as Parameters<typeof assembleBundle>[1]["characterRefs"],
       startImage: body.startImage as TrainingImage | undefined,
+      sceneStartImages: body.sceneStartImages as
+        | Record<string, TrainingImage>
+        | undefined,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

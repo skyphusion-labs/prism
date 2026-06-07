@@ -130,10 +130,16 @@ surfaces each model's duration + resolution constraints and a rough cost hint.
 - Per-scene override across backends (GPU vs cloud per shot): `scenes[].motion_backend`
   / `motion_model`, so a film can send the standoff to Wan and the atmosphere shots to
   Seedance. (Hybrid; not yet built.)
-- The reverse bridge: a per-scene `start_image` in the bundle assembler so
-  externally-authored keyframes can drive the *pod's* Wan motion (today there is no
-  injection point: the bundle carries only a top-level `start_image` and there is no
-  API to write `projects/<name>/state.tar.gz`). This closes the loop the other way.
+- **The reverse bridge (control-plane half SHIPPED v0.148.0).** `assembleBundle`
+  accepts `sceneStartImages: { sceneId -> TrainingImage }` and writes each to
+  `clips/<id>_keyframe.png` in the bundle; `POST /api/storyboard/bundle` forwards it.
+  Verified against the pod (vivijure-src/core.py): the render path reads each scene's
+  start frame from `scene.start_image`, falling back to
+  `<project_dir>/clips/<id>_keyframe.png`, so this injects externally-authored
+  keyframes into the pod's Wan motion with **no pod change**. Remaining: the planner UI
+  to attach a keyframe per scene at the bundle step, and end-to-end validation once the
+  pod's full Wan i2v render path is proven on the volume-free worker (keyframes-only is
+  proven). Closes the loop the other way (cloud-authored keyframes -> baked-pod Wan).
 
 ## Open questions / tradeoffs
 

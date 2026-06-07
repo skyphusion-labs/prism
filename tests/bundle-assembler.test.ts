@@ -481,6 +481,33 @@ describe("assembleBundle", () => {
     expect(listTarNames(tar)).not.toContain("start_image.png");
   });
 
+  // v0.148.0 (Phase 4b reverse bridge): per-scene start frames land at
+  // clips/<id>_keyframe.png, where the pod's i2v path reads them.
+  it("writes a per-scene start image to clips/<id>_keyframe.png", async () => {
+    const { env, bundles } = makeStubEnv();
+    const result = await assembleBundle(env, {
+      storyboard: minimalSb(["A"]), // one id-less scene -> resolves to shot_01
+      characterRefs: { A: ref("Kira", "x", 8) },
+      sceneStartImages: { shot_01: { dataUrl: pngDataUrl() } },
+    });
+    expect(result.ok).toBe(true);
+    const tar = new Uint8Array(gunzipSync(bundles.get("bundles/cherry.tar.gz")!.bytes));
+    expect(listTarNames(tar)).toContain("clips/shot_01_keyframe.png");
+  });
+
+  it("rejects a sceneStartImages key that is not a scene id", async () => {
+    const { env } = makeStubEnv();
+    const result = await assembleBundle(env, {
+      storyboard: minimalSb(["A"]),
+      characterRefs: { A: ref("Kira", "x", 8) },
+      sceneStartImages: { shot_99: { dataUrl: pngDataUrl() } },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => /shot_99.*not a scene id/.test(e))).toBe(true);
+    }
+  });
+
   it("uses projectName (slugified title) in the bundle key", async () => {
     const { env, bundles } = makeStubEnv();
     const sb = minimalSb(["A"]);

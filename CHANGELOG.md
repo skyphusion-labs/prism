@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.148.0
+
+Phase 4b (control-plane half): the reverse bridge -- per-scene start images in the
+bundle, so externally-authored keyframes drive the pod's Wan i2v motion.
+
+The cloud lane could already animate authored keyframes; the GPU lane could not (the
+bundle carried only a top-level `start_image`, so the pod's Wan path had no per-scene
+injection point). The pod's render path already reads each scene's start frame from
+`scene.start_image`, falling back to `<project_dir>/clips/<id>_keyframe.png`
+(verified in vivijure-src/core.py, not assumed), so the bridge is purely a bundle
+addition with **no pod change**.
+
+- `assembleBundle` accepts `sceneStartImages: { sceneId -> TrainingImage }` and writes
+  each to `clips/<sceneId>_keyframe.png` in the bundle. Keys are validated against the
+  storyboard's scene ids (a typo errors rather than shipping an unread keyframe).
+  Bytes go in raw (no background removal -- these are full frames, not portraits).
+- `POST /api/storyboard/bundle` accepts `sceneStartImages` and threads it through.
+
+This is the backend half. The planner UI for attaching a keyframe per scene at the
+bundle step is the next step. End-to-end validation also waits on the pod's FULL Wan
+i2v render path being proven on the new volume-free worker (keyframes-only is proven;
+full render is the remaining unproven path on that side).
+
+No schema change.
+
+### Code
+- `src/bundle-assembler.ts` - `sceneStartImages` -> `clips/<id>_keyframe.png`, scene-id
+  validated; layout comment updated.
+- `src/index.ts` - `/api/storyboard/bundle` accepts + forwards `sceneStartImages`.
+- `tests/bundle-assembler.test.ts` - per-scene keyframe written; unknown id rejected.
+- `docs/i2v-backend-selector.md` - Phase 4b control-plane half marked shipped.
+- `package.json` - 0.147.0 -> 0.148.0.
+- typecheck clean; vitest green (2 new).
+
 ## v0.147.0
 
 Phase 4a: per-shot cloud-model mixing for the cloud animation backend.
