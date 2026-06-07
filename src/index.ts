@@ -8179,7 +8179,7 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
           const resolvedImage = imageKey
             ? await r2KeyToDataUri(this.env, imageKey, userEmail)
             : imageUrl;
-          const params = buildGenParams(kind, { prompt, lyrics, imageUrl: resolvedImage });
+          const params = buildGenParams(kind, { modelId, prompt, lyrics, imageUrl: resolvedImage });
 
           const result = await aiRun(this.env, modelId, params) as LongRunResult;
 

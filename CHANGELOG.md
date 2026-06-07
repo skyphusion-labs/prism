@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.143.0
+
+Image-to-video on the premium video models (keyframe animation), not just hh1-i2v.
+
+Until now only `alibaba/hh1-i2v` was flagged `image-input`, so animating a keyframe
+(image-to-video) was limited to the one weakest model. This wires the strong cloud
+i2v models too: `bytedance/seedance-2.0` (+fast), `minimax/hailuo-2.3` (+fast), and
+`runwayml/gen-4.5`. Each provider's image-to-video input schema differs (different
+image field, duration type, resolution vs ratio) and `additionalProperties:false`
+makes a stray field fatal, so `buildGenParams` now dispatches a verified per-model
+shape instead of one hardcoded hh1 shape:
+
+- Seedance: `image`, integer duration, `resolution:720p` + `aspect_ratio`, audio off.
+- Hailuo: `first_frame_image`, `resolution:768P`.
+- Runway: `image_input`, `ratio:1280:720` (no separate resolution).
+- hh1-i2v: unchanged (also the safe default when no `modelId` is passed, so existing
+  callers and the prior param shape are byte-identical).
+
+Prompt-required models get a default motion prompt when the caller passes none.
+`google/veo-*` is intentionally deferred: its `image_input` wants raw base64 rather
+than a URL/data-URI, which needs a conversion step in the workflow.
+
+This is Phase 1 of a pluggable cloud-vs-GPU motion backend for Vivijure renders; see
+`docs/i2v-backend-selector.md` for the full rollout plan.
+
+Schemas verified against the Cloudflare model pages (2026-06-07). Video gen runs
+through Cloudflare Workflows, which do not run under `wrangler dev`, so the new
+shapes need a one-call smoke test per model after deploy (checklist in the PR).
+
+### Code
+- `src/longrun-params.ts` - per-model `imageToVideoParams` dispatch; `modelId` added
+  to `GenParamOpts`.
+- `src/models.ts` - `image-input` capability on seedance-2.0(+fast),
+  hailuo-2.3(+fast), gen-4.5.
+- `src/index.ts` - pass `modelId` into `buildGenParams` at the workflow call site.
+- `tests/longrun-params.test.ts` - per-model i2v shape tests (10 pass).
+- `docs/i2v-backend-selector.md` - new design + rollout doc.
+- `package.json` - 0.142.0 -> 0.143.0.
+
+typecheck: clean. tests: `tests/longrun-params.test.ts` 10/10 pass.
+
 ## v0.142.0
 
 Artifact cache: ETag revalidation instead of a blind 1-hour cache.

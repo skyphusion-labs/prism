@@ -180,12 +180,12 @@ export const MODELS: ModelEntry[] = [
   { id: "google/veo-3.1-fast",                          label: "Veo 3.1 Fast (Google)",          group: "Video Gen", type: "video", capabilities: [], provider: "google" },
   { id: "google/veo-3",                                 label: "Veo 3 (Google)",                 group: "Video Gen", type: "video", capabilities: [], provider: "google" },
   { id: "google/veo-3-fast",                            label: "Veo 3 Fast (Google)",            group: "Video Gen", type: "video", capabilities: [], provider: "google" },
-  { id: "bytedance/seedance-2.0",                       label: "Seedance 2.0 (ByteDance)",       group: "Video Gen", type: "video", capabilities: [], provider: "bytedance" },
-  { id: "bytedance/seedance-2.0-fast",                  label: "Seedance 2.0 Fast (ByteDance)",  group: "Video Gen", type: "video", capabilities: [], provider: "bytedance" },
-  { id: "minimax/hailuo-2.3",                           label: "Hailuo 2.3 (MiniMax)",           group: "Video Gen", type: "video", capabilities: [], provider: "minimax" },
-  { id: "minimax/hailuo-2.3-fast",                      label: "Hailuo 2.3 Fast (MiniMax)",      group: "Video Gen", type: "video", capabilities: [], provider: "minimax" },
+  { id: "bytedance/seedance-2.0",                       label: "Seedance 2.0 (ByteDance)",       group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "bytedance" },
+  { id: "bytedance/seedance-2.0-fast",                  label: "Seedance 2.0 Fast (ByteDance)",  group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "bytedance" },
+  { id: "minimax/hailuo-2.3",                           label: "Hailuo 2.3 (MiniMax)",           group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "minimax" },
+  { id: "minimax/hailuo-2.3-fast",                      label: "Hailuo 2.3 Fast (MiniMax)",      group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "minimax" },
   { id: "xai/grok-imagine-video",                       label: "Grok Imagine Video (xAI)",                   group: "Video Gen", type: "video", capabilities: [], provider: "xai",      byok_alias: "grok-imagine-video" },
-  { id: "runwayml/gen-4.5",                             label: "Gen-4.5 (RunwayML)",             group: "Video Gen", type: "video", capabilities: [], provider: "runwayml" },
+  { id: "runwayml/gen-4.5",                             label: "Gen-4.5 (RunwayML)",             group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "runwayml" },
   { id: "alibaba/hh1-t2v",                              label: "HappyHorse 1.0 T2V (Alibaba)", group: "Video Gen", type: "video", capabilities: [], provider: "alibaba" },
   // Image-to-video (v0.21.5): requires a source image. Flagged "image-input";
   // runVideo requires body.image_url, and buildGenParams sends the i2v shape.
