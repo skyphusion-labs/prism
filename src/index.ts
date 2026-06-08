@@ -1699,62 +1699,6 @@ interface RenderSubmitRequest {
   // 'ready' and lora_key is set. Anything else is dropped and surfaced
   // back in the response so the UI can warn the caller.
   castLoras?: unknown;
-  // v0.68.0: LoRA training hyperparam overrides routed to vivijure-
-  // serverless 0.4.19+'s lora_train.run_training_subprocess. Recognized
-  // keys: steps (int), learning_rate (float), rank (int), resolution
-  // (int), timeout_seconds (int). normalizeLoraTrainOverrides on the
-  // submit builder drops any non-positive / non-finite values so a UI
-  // typo doesn't reach the pod.
-  loraTrainOverrides?: unknown;
-  // v0.69.0: multi_character composite overrides routed to vivijure-
-  // serverless 0.4.23+'s multi_character.set_overrides. Recognized
-  // keys: mode ("auto"|"always"|"off"), auto_when_multi_slot (bool),
-  // max_slots (1-4), feather_px (0-256), layout ("layer"|"side_by_
-  // side"). The builder's normalizer drops anything that doesn't
-  // satisfy the per-key union/range.
-  multiCharacterOverrides?: unknown;
-  // v0.70.0: lora_quality_gate overrides routed to vivijure-serverless
-  // 0.4.25+. Recognized keys: enabled (bool), min_file_bytes (int),
-  // probe_count (1-16), min_ssim (0..1), pass_ssim (0..1),
-  // default_trigger (string), probe_lora_scale (0..2), base_seed
-  // (int), allow_warn (bool).
-  qualityGateOverrides?: unknown;
-  // v0.72.0: consistency + video_consistency overrides routed to
-  // vivijure-serverless 0.4.28+.
-  consistencyOverrides?: unknown;
-  videoConsistencyOverrides?: unknown;
-  // v0.73.0: continuity / image_prompting / character_generation
-  // routed to vivijure-serverless 0.4.29+.
-  continuityOverrides?: unknown;
-  imagePromptingOverrides?: unknown;
-  characterGenerationOverrides?: unknown;
-  // v0.74.0: face_lock + instantid sub-block (vivijure-serverless 0.4.30+).
-  faceLockOverrides?: unknown;
-  // v0.75.0: production.adetailer sub-block + wan_diffusion block
-  // (vivijure-serverless 0.4.31+).
-  adetailerOverrides?: unknown;
-  wanDiffusionOverrides?: unknown;
-  // v0.76.0: local_diffusion block + generation block
-  // (vivijure-serverless 0.4.32+).
-  localDiffusionOverrides?: unknown;
-  generationOverrides?: unknown;
-  // v0.77.0: scene-length scalars + movie block
-  // (vivijure-serverless 0.4.34+).
-  sceneLengthOverrides?: unknown;
-  movieOverrides?: unknown;
-  // v0.78.0: character_bible + production sub-keys + top-level
-  // switches (vivijure-serverless 0.4.35+).
-  characterBibleOverrides?: unknown;
-  productionOverrides?: unknown;
-  topLevelSwitches?: unknown;
-  // v0.79.0: lora_train_extras + loras + quality + image_models
-  // (vivijure-serverless 0.4.37+).
-  loraTrainExtras?: unknown;
-  lorasOverrides?: unknown;
-  qualityOverrides?: unknown;
-  imageModelsOverrides?: unknown;
-  // v0.82.0 (Phase 13): prompt_templates (vivijure-serverless 0.4.49+).
-  promptTemplatesOverrides?: unknown;
 }
 
 // v0.120.0: video finishing on the CPU-only VIDEO_FINISH Cloudflare Container.
@@ -2298,113 +2242,6 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     audioKey: gpuAudioKey,
     // v0.58.0: pretrained-LoRA passthrough (resolved above).
     pretrainedLoras,
-    // v0.68.0: optional LoRA training hyperparam overrides. Reshape +
-    // type-coerce happens inside normalizeLoraTrainOverrides on the
-    // builder; a malformed body field just gets stripped on the wire.
-    loraTrainOverrides:
-      body.loraTrainOverrides && typeof body.loraTrainOverrides === "object"
-        ? (body.loraTrainOverrides as RenderSubmitArgs["loraTrainOverrides"])
-        : undefined,
-    // v0.69.0: optional multi_character composite overrides. Same
-    // shape-passthrough as loraTrainOverrides above.
-    multiCharacterOverrides:
-      body.multiCharacterOverrides && typeof body.multiCharacterOverrides === "object"
-        ? (body.multiCharacterOverrides as RenderSubmitArgs["multiCharacterOverrides"])
-        : undefined,
-    // v0.70.0: optional lora_quality_gate overrides.
-    qualityGateOverrides:
-      body.qualityGateOverrides && typeof body.qualityGateOverrides === "object"
-        ? (body.qualityGateOverrides as RenderSubmitArgs["qualityGateOverrides"])
-        : undefined,
-    // v0.72.0: optional consistency + video_consistency overrides.
-    consistencyOverrides:
-      body.consistencyOverrides && typeof body.consistencyOverrides === "object"
-        ? (body.consistencyOverrides as RenderSubmitArgs["consistencyOverrides"])
-        : undefined,
-    videoConsistencyOverrides:
-      body.videoConsistencyOverrides && typeof body.videoConsistencyOverrides === "object"
-        ? (body.videoConsistencyOverrides as RenderSubmitArgs["videoConsistencyOverrides"])
-        : undefined,
-    // v0.73.0: optional continuity / image_prompting / character_generation.
-    continuityOverrides:
-      body.continuityOverrides && typeof body.continuityOverrides === "object"
-        ? (body.continuityOverrides as RenderSubmitArgs["continuityOverrides"])
-        : undefined,
-    imagePromptingOverrides:
-      body.imagePromptingOverrides && typeof body.imagePromptingOverrides === "object"
-        ? (body.imagePromptingOverrides as RenderSubmitArgs["imagePromptingOverrides"])
-        : undefined,
-    characterGenerationOverrides:
-      body.characterGenerationOverrides && typeof body.characterGenerationOverrides === "object"
-        ? (body.characterGenerationOverrides as RenderSubmitArgs["characterGenerationOverrides"])
-        : undefined,
-    // v0.74.0: face_lock + instantid passthrough.
-    faceLockOverrides:
-      body.faceLockOverrides && typeof body.faceLockOverrides === "object"
-        ? (body.faceLockOverrides as RenderSubmitArgs["faceLockOverrides"])
-        : undefined,
-    // v0.75.0: adetailer + wan_diffusion passthrough.
-    adetailerOverrides:
-      body.adetailerOverrides && typeof body.adetailerOverrides === "object"
-        ? (body.adetailerOverrides as RenderSubmitArgs["adetailerOverrides"])
-        : undefined,
-    wanDiffusionOverrides:
-      body.wanDiffusionOverrides && typeof body.wanDiffusionOverrides === "object"
-        ? (body.wanDiffusionOverrides as RenderSubmitArgs["wanDiffusionOverrides"])
-        : undefined,
-    // v0.76.0: local_diffusion + generation passthrough.
-    localDiffusionOverrides:
-      body.localDiffusionOverrides && typeof body.localDiffusionOverrides === "object"
-        ? (body.localDiffusionOverrides as RenderSubmitArgs["localDiffusionOverrides"])
-        : undefined,
-    generationOverrides:
-      body.generationOverrides && typeof body.generationOverrides === "object"
-        ? (body.generationOverrides as RenderSubmitArgs["generationOverrides"])
-        : undefined,
-    // v0.77.0: scene_length + movie passthrough.
-    sceneLengthOverrides:
-      body.sceneLengthOverrides && typeof body.sceneLengthOverrides === "object"
-        ? (body.sceneLengthOverrides as RenderSubmitArgs["sceneLengthOverrides"])
-        : undefined,
-    movieOverrides:
-      body.movieOverrides && typeof body.movieOverrides === "object"
-        ? (body.movieOverrides as RenderSubmitArgs["movieOverrides"])
-        : undefined,
-    // v0.78.0: character_bible + production + top-level switches passthrough.
-    characterBibleOverrides:
-      body.characterBibleOverrides && typeof body.characterBibleOverrides === "object"
-        ? (body.characterBibleOverrides as RenderSubmitArgs["characterBibleOverrides"])
-        : undefined,
-    productionOverrides:
-      body.productionOverrides && typeof body.productionOverrides === "object"
-        ? (body.productionOverrides as RenderSubmitArgs["productionOverrides"])
-        : undefined,
-    topLevelSwitches:
-      body.topLevelSwitches && typeof body.topLevelSwitches === "object"
-        ? (body.topLevelSwitches as RenderSubmitArgs["topLevelSwitches"])
-        : undefined,
-    // v0.79.0: lora train extras + loras + quality + image_models passthrough.
-    loraTrainExtras:
-      body.loraTrainExtras && typeof body.loraTrainExtras === "object"
-        ? (body.loraTrainExtras as RenderSubmitArgs["loraTrainExtras"])
-        : undefined,
-    lorasOverrides:
-      body.lorasOverrides && typeof body.lorasOverrides === "object"
-        ? (body.lorasOverrides as RenderSubmitArgs["lorasOverrides"])
-        : undefined,
-    qualityOverrides:
-      body.qualityOverrides && typeof body.qualityOverrides === "object"
-        ? (body.qualityOverrides as RenderSubmitArgs["qualityOverrides"])
-        : undefined,
-    imageModelsOverrides:
-      body.imageModelsOverrides && typeof body.imageModelsOverrides === "object"
-        ? (body.imageModelsOverrides as RenderSubmitArgs["imageModelsOverrides"])
-        : undefined,
-    // v0.82.0 (Phase 13): prompt_templates passthrough.
-    promptTemplatesOverrides:
-      body.promptTemplatesOverrides && typeof body.promptTemplatesOverrides === "object"
-        ? (body.promptTemplatesOverrides as RenderSubmitArgs["promptTemplatesOverrides"])
-        : undefined,
   };
 
   const result = await submitRenderJob(env, args);
@@ -3861,223 +3698,15 @@ async function handleFinalizeSubmit(
   // as the render-submit route; read out of the same body slot.
   let bodyAudioKey: string | null = null;
   let bodyCastLoras: CastLoraBindings | undefined;
-  let bodyLoraTrainOverrides: RenderSubmitArgs["loraTrainOverrides"] | undefined;
-  let bodyMultiCharacterOverrides: RenderSubmitArgs["multiCharacterOverrides"] | undefined;
-  let bodyQualityGateOverrides: RenderSubmitArgs["qualityGateOverrides"] | undefined;
-  let bodyConsistencyOverrides: RenderSubmitArgs["consistencyOverrides"] | undefined;
-  let bodyVideoConsistencyOverrides: RenderSubmitArgs["videoConsistencyOverrides"] | undefined;
-  let bodyContinuityOverrides: RenderSubmitArgs["continuityOverrides"] | undefined;
-  let bodyImagePromptingOverrides: RenderSubmitArgs["imagePromptingOverrides"] | undefined;
-  let bodyCharacterGenerationOverrides: RenderSubmitArgs["characterGenerationOverrides"] | undefined;
-  let bodyFaceLockOverrides: RenderSubmitArgs["faceLockOverrides"] | undefined;
-  let bodyAdetailerOverrides: RenderSubmitArgs["adetailerOverrides"] | undefined;
-  let bodyWanDiffusionOverrides: RenderSubmitArgs["wanDiffusionOverrides"] | undefined;
-  let bodyLocalDiffusionOverrides: RenderSubmitArgs["localDiffusionOverrides"] | undefined;
-  let bodyGenerationOverrides: RenderSubmitArgs["generationOverrides"] | undefined;
-  let bodySceneLengthOverrides: RenderSubmitArgs["sceneLengthOverrides"] | undefined;
-  let bodyMovieOverrides: RenderSubmitArgs["movieOverrides"] | undefined;
-  let bodyCharacterBibleOverrides: RenderSubmitArgs["characterBibleOverrides"] | undefined;
-  let bodyProductionOverrides: RenderSubmitArgs["productionOverrides"] | undefined;
-  let bodyTopLevelSwitches: RenderSubmitArgs["topLevelSwitches"] | undefined;
-  let bodyLoraTrainExtras: RenderSubmitArgs["loraTrainExtras"] | undefined;
-  let bodyPromptTemplatesOverrides: RenderSubmitArgs["promptTemplatesOverrides"] | undefined;
-  let bodyLorasOverrides: RenderSubmitArgs["lorasOverrides"] | undefined;
-  let bodyQualityOverrides: RenderSubmitArgs["qualityOverrides"] | undefined;
-  let bodyImageModelsOverrides: RenderSubmitArgs["imageModelsOverrides"] | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
       const parsed = (await request.json()) as {
         audioKey?: unknown;
         castLoras?: unknown;
-        loraTrainOverrides?: unknown;
-        multiCharacterOverrides?: unknown;
-        qualityGateOverrides?: unknown;
-        consistencyOverrides?: unknown;
-        videoConsistencyOverrides?: unknown;
-        continuityOverrides?: unknown;
-        imagePromptingOverrides?: unknown;
-        characterGenerationOverrides?: unknown;
-        faceLockOverrides?: unknown;
-        adetailerOverrides?: unknown;
-        wanDiffusionOverrides?: unknown;
-        localDiffusionOverrides?: unknown;
-        generationOverrides?: unknown;
-        sceneLengthOverrides?: unknown;
-        movieOverrides?: unknown;
-        characterBibleOverrides?: unknown;
-        productionOverrides?: unknown;
-        topLevelSwitches?: unknown;
-        loraTrainExtras?: unknown;
-        lorasOverrides?: unknown;
-        qualityOverrides?: unknown;
-        imageModelsOverrides?: unknown;
-        promptTemplatesOverrides?: unknown;
       };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
-      }
-      if (
-        parsed?.loraTrainOverrides
-        && typeof parsed.loraTrainOverrides === "object"
-        && !Array.isArray(parsed.loraTrainOverrides)
-      ) {
-        bodyLoraTrainOverrides = parsed.loraTrainOverrides as RenderSubmitArgs["loraTrainOverrides"];
-      }
-      if (
-        parsed?.multiCharacterOverrides
-        && typeof parsed.multiCharacterOverrides === "object"
-        && !Array.isArray(parsed.multiCharacterOverrides)
-      ) {
-        bodyMultiCharacterOverrides = parsed.multiCharacterOverrides as RenderSubmitArgs["multiCharacterOverrides"];
-      }
-      if (
-        parsed?.qualityGateOverrides
-        && typeof parsed.qualityGateOverrides === "object"
-        && !Array.isArray(parsed.qualityGateOverrides)
-      ) {
-        bodyQualityGateOverrides = parsed.qualityGateOverrides as RenderSubmitArgs["qualityGateOverrides"];
-      }
-      if (
-        parsed?.consistencyOverrides
-        && typeof parsed.consistencyOverrides === "object"
-        && !Array.isArray(parsed.consistencyOverrides)
-      ) {
-        bodyConsistencyOverrides = parsed.consistencyOverrides as RenderSubmitArgs["consistencyOverrides"];
-      }
-      if (
-        parsed?.videoConsistencyOverrides
-        && typeof parsed.videoConsistencyOverrides === "object"
-        && !Array.isArray(parsed.videoConsistencyOverrides)
-      ) {
-        bodyVideoConsistencyOverrides = parsed.videoConsistencyOverrides as RenderSubmitArgs["videoConsistencyOverrides"];
-      }
-      if (
-        parsed?.continuityOverrides
-        && typeof parsed.continuityOverrides === "object"
-        && !Array.isArray(parsed.continuityOverrides)
-      ) {
-        bodyContinuityOverrides = parsed.continuityOverrides as RenderSubmitArgs["continuityOverrides"];
-      }
-      if (
-        parsed?.imagePromptingOverrides
-        && typeof parsed.imagePromptingOverrides === "object"
-        && !Array.isArray(parsed.imagePromptingOverrides)
-      ) {
-        bodyImagePromptingOverrides = parsed.imagePromptingOverrides as RenderSubmitArgs["imagePromptingOverrides"];
-      }
-      if (
-        parsed?.characterGenerationOverrides
-        && typeof parsed.characterGenerationOverrides === "object"
-        && !Array.isArray(parsed.characterGenerationOverrides)
-      ) {
-        bodyCharacterGenerationOverrides = parsed.characterGenerationOverrides as RenderSubmitArgs["characterGenerationOverrides"];
-      }
-      if (
-        parsed?.faceLockOverrides
-        && typeof parsed.faceLockOverrides === "object"
-        && !Array.isArray(parsed.faceLockOverrides)
-      ) {
-        bodyFaceLockOverrides = parsed.faceLockOverrides as RenderSubmitArgs["faceLockOverrides"];
-      }
-      if (
-        parsed?.adetailerOverrides
-        && typeof parsed.adetailerOverrides === "object"
-        && !Array.isArray(parsed.adetailerOverrides)
-      ) {
-        bodyAdetailerOverrides = parsed.adetailerOverrides as RenderSubmitArgs["adetailerOverrides"];
-      }
-      if (
-        parsed?.wanDiffusionOverrides
-        && typeof parsed.wanDiffusionOverrides === "object"
-        && !Array.isArray(parsed.wanDiffusionOverrides)
-      ) {
-        bodyWanDiffusionOverrides = parsed.wanDiffusionOverrides as RenderSubmitArgs["wanDiffusionOverrides"];
-      }
-      if (
-        parsed?.localDiffusionOverrides
-        && typeof parsed.localDiffusionOverrides === "object"
-        && !Array.isArray(parsed.localDiffusionOverrides)
-      ) {
-        bodyLocalDiffusionOverrides = parsed.localDiffusionOverrides as RenderSubmitArgs["localDiffusionOverrides"];
-      }
-      if (
-        parsed?.generationOverrides
-        && typeof parsed.generationOverrides === "object"
-        && !Array.isArray(parsed.generationOverrides)
-      ) {
-        bodyGenerationOverrides = parsed.generationOverrides as RenderSubmitArgs["generationOverrides"];
-      }
-      if (
-        parsed?.sceneLengthOverrides
-        && typeof parsed.sceneLengthOverrides === "object"
-        && !Array.isArray(parsed.sceneLengthOverrides)
-      ) {
-        bodySceneLengthOverrides = parsed.sceneLengthOverrides as RenderSubmitArgs["sceneLengthOverrides"];
-      }
-      if (
-        parsed?.movieOverrides
-        && typeof parsed.movieOverrides === "object"
-        && !Array.isArray(parsed.movieOverrides)
-      ) {
-        bodyMovieOverrides = parsed.movieOverrides as RenderSubmitArgs["movieOverrides"];
-      }
-      if (
-        parsed?.characterBibleOverrides
-        && typeof parsed.characterBibleOverrides === "object"
-        && !Array.isArray(parsed.characterBibleOverrides)
-      ) {
-        bodyCharacterBibleOverrides = parsed.characterBibleOverrides as RenderSubmitArgs["characterBibleOverrides"];
-      }
-      if (
-        parsed?.productionOverrides
-        && typeof parsed.productionOverrides === "object"
-        && !Array.isArray(parsed.productionOverrides)
-      ) {
-        bodyProductionOverrides = parsed.productionOverrides as RenderSubmitArgs["productionOverrides"];
-      }
-      if (
-        parsed?.topLevelSwitches
-        && typeof parsed.topLevelSwitches === "object"
-        && !Array.isArray(parsed.topLevelSwitches)
-      ) {
-        bodyTopLevelSwitches = parsed.topLevelSwitches as RenderSubmitArgs["topLevelSwitches"];
-      }
-      if (
-        parsed?.loraTrainExtras
-        && typeof parsed.loraTrainExtras === "object"
-        && !Array.isArray(parsed.loraTrainExtras)
-      ) {
-        bodyLoraTrainExtras = parsed.loraTrainExtras as RenderSubmitArgs["loraTrainExtras"];
-      }
-      if (
-        parsed?.lorasOverrides
-        && typeof parsed.lorasOverrides === "object"
-        && !Array.isArray(parsed.lorasOverrides)
-      ) {
-        bodyLorasOverrides = parsed.lorasOverrides as RenderSubmitArgs["lorasOverrides"];
-      }
-      if (
-        parsed?.qualityOverrides
-        && typeof parsed.qualityOverrides === "object"
-        && !Array.isArray(parsed.qualityOverrides)
-      ) {
-        bodyQualityOverrides = parsed.qualityOverrides as RenderSubmitArgs["qualityOverrides"];
-      }
-      if (
-        parsed?.imageModelsOverrides
-        && typeof parsed.imageModelsOverrides === "object"
-        && !Array.isArray(parsed.imageModelsOverrides)
-      ) {
-        bodyImageModelsOverrides = parsed.imageModelsOverrides as RenderSubmitArgs["imageModelsOverrides"];
-      }
-      // v0.82.0 (Phase 13).
-      if (
-        parsed?.promptTemplatesOverrides
-        && typeof parsed.promptTemplatesOverrides === "object"
-        && !Array.isArray(parsed.promptTemplatesOverrides)
-      ) {
-        bodyPromptTemplatesOverrides = parsed.promptTemplatesOverrides as RenderSubmitArgs["promptTemplatesOverrides"];
       }
       if (parsed?.castLoras !== undefined) {
         if (
@@ -4185,45 +3814,6 @@ async function handleFinalizeSubmit(
       : undefined,
     audioKey: gpuAudioKey,
     pretrainedLoras,
-    // v0.68.0: forward the body's LoRA training overrides through to the
-    // GPU (vivijure-serverless 0.4.19+).
-    loraTrainOverrides: bodyLoraTrainOverrides,
-    // v0.69.0: same for multi_character overrides (vivijure-serverless
-    // 0.4.23+).
-    multiCharacterOverrides: bodyMultiCharacterOverrides,
-    // v0.70.0: same for quality_gate overrides (vivijure-serverless
-    // 0.4.25+).
-    qualityGateOverrides: bodyQualityGateOverrides,
-    // v0.72.0: same for consistency + video_consistency overrides
-    // (vivijure-serverless 0.4.28+).
-    consistencyOverrides: bodyConsistencyOverrides,
-    videoConsistencyOverrides: bodyVideoConsistencyOverrides,
-    // v0.73.0: same for continuity / image_prompting / character_generation
-    // (vivijure-serverless 0.4.29+).
-    continuityOverrides: bodyContinuityOverrides,
-    imagePromptingOverrides: bodyImagePromptingOverrides,
-    characterGenerationOverrides: bodyCharacterGenerationOverrides,
-    // v0.74.0: face_lock + instantid passthrough (vivijure-serverless 0.4.30+).
-    faceLockOverrides: bodyFaceLockOverrides,
-    // v0.75.0: adetailer + wan_diffusion passthrough (vivijure-serverless 0.4.31+).
-    adetailerOverrides: bodyAdetailerOverrides,
-    wanDiffusionOverrides: bodyWanDiffusionOverrides,
-    // v0.76.0: local_diffusion + generation passthrough (vivijure-serverless 0.4.32+).
-    localDiffusionOverrides: bodyLocalDiffusionOverrides,
-    generationOverrides: bodyGenerationOverrides,
-    // v0.77.0: scene_length + movie passthrough (vivijure-serverless 0.4.34+).
-    sceneLengthOverrides: bodySceneLengthOverrides,
-    movieOverrides: bodyMovieOverrides,
-    // v0.78.0: character_bible + production + switches passthrough (vivijure-serverless 0.4.35+).
-    characterBibleOverrides: bodyCharacterBibleOverrides,
-    productionOverrides: bodyProductionOverrides,
-    topLevelSwitches: bodyTopLevelSwitches,
-    // v0.79.0: lora train extras + loras + quality + image_models passthrough (vivijure-serverless 0.4.37+).
-    loraTrainExtras: bodyLoraTrainExtras,
-    lorasOverrides: bodyLorasOverrides,
-    qualityOverrides: bodyQualityOverrides,
-    imageModelsOverrides: bodyImageModelsOverrides,
-    promptTemplatesOverrides: bodyPromptTemplatesOverrides,
   });
   if (!result.ok) {
     return json(
@@ -4792,32 +4382,22 @@ async function handleCastTrainLora(
   if (!Number.isInteger(id) || id <= 0) {
     return json({ error: "invalid id" }, { status: 400 });
   }
-  // v0.68.0 + v0.70.0: optional body fields forwarded to the GPU side.
-  // loraTrainOverrides → run_training_subprocess hyperparams.
-  // qualityGateOverrides → lora_quality_gate.set_overrides (gate
-  // evaluation runs after standalone training too).
-  let bodyLoraTrainOverrides: import("./runpod-submit").LoraTrainOverrides | undefined;
-  let bodyQualityGateOverrides: import("./runpod-submit").QualityGateOverrides | undefined;
+  // Optional namespaced render_overrides forwarded to the GPU side; training
+  // hyperparams ride render_overrides.lora (rank / max_steps / learning_rate /
+  // ...), parsed by config.py RenderConfig.from_request on the pod.
+  let bodyRenderOverrides: Record<string, unknown> | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
       const parsed = (await request.json()) as {
-        loraTrainOverrides?: unknown;
-        qualityGateOverrides?: unknown;
+        renderOverrides?: unknown;
       };
       if (
-        parsed?.loraTrainOverrides
-        && typeof parsed.loraTrainOverrides === "object"
-        && !Array.isArray(parsed.loraTrainOverrides)
+        parsed?.renderOverrides
+        && typeof parsed.renderOverrides === "object"
+        && !Array.isArray(parsed.renderOverrides)
       ) {
-        bodyLoraTrainOverrides = parsed.loraTrainOverrides as import("./runpod-submit").LoraTrainOverrides;
-      }
-      if (
-        parsed?.qualityGateOverrides
-        && typeof parsed.qualityGateOverrides === "object"
-        && !Array.isArray(parsed.qualityGateOverrides)
-      ) {
-        bodyQualityGateOverrides = parsed.qualityGateOverrides as import("./runpod-submit").QualityGateOverrides;
+        bodyRenderOverrides = parsed.renderOverrides as Record<string, unknown>;
       }
     }
   } catch { /* empty body is fine */ }
@@ -4871,10 +4451,9 @@ async function handleCastTrainLora(
     bundleKey: bundleResult.bundleKey,
     userEmail,
     loraDestKey,
-    // v0.68.0: training hyperparam overrides from the request body.
-    loraTrainOverrides: bodyLoraTrainOverrides,
-    // v0.70.0: quality-gate overrides for the post-training evaluation.
-    qualityGateOverrides: bodyQualityGateOverrides,
+    // Training hyperparams ride render_overrides.lora (config.py
+    // RenderConfig.from_request parses it on the pod).
+    renderOverrides: bodyRenderOverrides,
   });
   if (!submit.ok) {
     return json({ error: submit.error }, { status: 502 });

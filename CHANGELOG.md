@@ -1,5 +1,57 @@
 # Changelog
 
+## v0.157.0
+
+Redesign the render-submit contract to the namespaced `render_overrides`
+`{ keyframe, i2v, lora }` shape the clean-room `vivijure-backend` actually reads,
+and drop everything not in that spec.
+
+The control plane had accumulated ~24 flat `*Overrides` blocks
+(`multiCharacterOverrides`, `wanDiffusionOverrides`, `loraTrainOverrides`,
+`qualityGateOverrides`, `consistencyOverrides`, `adetailerOverrides`, ...) built
+against the old `vivijure-serverless` pod, which read them via per-module
+`set_overrides`. The clean-room backend that actually runs now reads ONE thing --
+`render_overrides.{keyframe,i2v,lora}` parsed by `config.py
+RenderConfig.from_request` -- and ignores unknown sections. So every one of those
+blocks was being serialized onto the wire and then silently dropped on the pod
+(the contract-completeness audit, `~/vivijure-audit-F-contract.md`). Advanced
+knobs set by a caller did nothing; renders ran at the `qualityTier` baseline
+regardless.
+
+This collapses the surface to the real contract:
+
+- `renderOverrides` is now the namespaced `{ keyframe, i2v, lora }` object plus the
+  routing flags the backend reads off the raw dict (`keyframes_only`,
+  `finish_offloaded`). `normalizeRenderOverrides` keeps only those known sections
+  (objects) and flags (booleans) and drops the rest; the pod re-clamps every value.
+- All 23 out-of-spec `*Overrides` interfaces + their normalizers are deleted from
+  `runpod-submit.ts`; the render-submit, finalize, and train-lora request bodies +
+  arg assembly in `index.ts` no longer parse or forward them. Standalone LoRA
+  training hyperparams now ride `render_overrides.lora`.
+- `docs/render-api.md` documents the namespaced contract (it previously claimed
+  "each block routes to the matching pod config block", which was true for
+  vivijure-serverless but not the clean-room backend).
+
+No planner-UI change: `app.js` / `planner.js` never assembled these blocks (they
+were a curl-contract-API surface), so nothing user-facing in the planner regresses.
+
+### Code
+
+- `src/runpod-submit.ts` - delete 23 `*Overrides` interfaces + 23 normalizers; add
+  `normalizeRenderOverrides`; rewrite `buildSubmitPayload` / `buildFinalizePayload` /
+  `buildTrainLoraPayload` to emit `render_overrides.{keyframe,i2v,lora}`; trim
+  `RenderSubmitArgs` / `RenderJobInput` / `FinalizeArgs` / `FinalizeJobInput` /
+  `TrainLoraArgs` / `TrainLoraJobInput` to the in-spec fields (net -1537 lines).
+- `src/index.ts` - drop the 23 override fields from the render-submit body type +
+  arg assembly; strip the finalize handler's body-override plumbing (it keeps
+  `renderOverrides: row.render_overrides`); switch the train-lora handler to
+  `renderOverrides` (net -445 lines).
+- `docs/render-api.md` - rewrite the override section to the namespaced contract.
+- `tests/runpod-submit.test.ts` - replace the deleted-normalizer suites with a
+  `normalizeRenderOverrides` suite; update the builder tests for namespaced filtering.
+- `package.json` - 0.156.3 -> 0.157.0.
+- typecheck clean; 583 tests pass (36 files).
+
 ## v0.156.3
 
 Restore the `standard` quality tier (v0.156.1 removed it in error). The removal was on the

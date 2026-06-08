@@ -12,8 +12,7 @@ import {
   buildCancelUrl,
   deriveProjectFromBundleKey,
   isValidJobId,
-  normalizeMultiCharacterOverrides,
-  normalizeQualityGateOverrides,
+  normalizeRenderOverrides,
   normalizeRunpodResponse,
 } from "../src/runpod-submit";
 
@@ -87,14 +86,22 @@ describe("buildSubmitPayload", () => {
     expect("render_overrides" in out2.input).toBe(false);
   });
 
-  it("passes render_overrides through verbatim when non-empty", () => {
+  it("passes the namespaced {keyframe,i2v,lora} sections through, dropping flat keys", () => {
     const out = buildSubmitPayload({
       bundleKey: "bundles/cherry.tar.gz",
-      renderOverrides: { wan_inference_steps: 12, seed: 424242 },
+      renderOverrides: {
+        keyframe: { steps: 30, guidance_scale: 6.5 },
+        i2v: { steps: 40, negative_prompt: "blurry" },
+        lora: { rank: 32 },
+        // flat top-level keys the clean-room backend never reads -> dropped
+        wan_inference_steps: 12,
+        seed: 424242,
+      },
     });
     expect(out.input.render_overrides).toEqual({
-      wan_inference_steps: 12,
-      seed: 424242,
+      keyframe: { steps: 30, guidance_scale: 6.5 },
+      i2v: { steps: 40, negative_prompt: "blurry" },
+      lora: { rank: 32 },
     });
   });
 
@@ -136,20 +143,23 @@ describe("buildSubmitPayload", () => {
     const out = buildSubmitPayload({
       bundleKey: "bundles/cherry.tar.gz",
       keyframesOnly: true,
-      renderOverrides: { keyframes_only: false, seed: 42 },
+      renderOverrides: { keyframes_only: false, keyframe: { steps: 8 } },
     });
-    expect(out.input.render_overrides).toEqual({ keyframes_only: false, seed: 42 });
+    expect(out.input.render_overrides).toEqual({
+      keyframe: { steps: 8 },
+      keyframes_only: false,
+    });
   });
 
-  it("merges keyframesOnly:true alongside other overrides (v0.40.0)", () => {
+  it("merges keyframesOnly:true alongside the namespaced sections (v0.40.0)", () => {
     const out = buildSubmitPayload({
       bundleKey: "bundles/cherry.tar.gz",
       keyframesOnly: true,
-      renderOverrides: { seed: 42, wan_inference_steps: 12 },
+      renderOverrides: { keyframe: { steps: 8 }, i2v: { steps: 20 } },
     });
     expect(out.input.render_overrides).toEqual({
-      seed: 42,
-      wan_inference_steps: 12,
+      keyframe: { steps: 8 },
+      i2v: { steps: 20 },
       keyframes_only: true,
     });
   });
@@ -224,22 +234,6 @@ describe("buildRegenShotPayload (v0.41.0)", () => {
   });
 });
 
-describe("normalizeQualityGateOverrides (v0.128.0: defaults the gate OFF)", () => {
-  it("defaults enabled:false when nothing is passed", () => {
-    expect(normalizeQualityGateOverrides(undefined)).toEqual({ enabled: false });
-    expect(normalizeQualityGateOverrides({})).toEqual({ enabled: false });
-  });
-  it("honors an explicit opt-in (enabled:true)", () => {
-    expect(normalizeQualityGateOverrides({ enabled: true })).toEqual({ enabled: true });
-  });
-  it("keeps validated fields and still defaults enabled:false", () => {
-    expect(normalizeQualityGateOverrides({ probe_count: 4 })).toEqual({
-      enabled: false,
-      probe_count: 4,
-    });
-  });
-});
-
 describe("buildFinalizePayload (v0.42.0)", () => {
   it("wraps the canonical finalize input shape with quality_tier defaulting to 'final'", () => {
     const out = buildFinalizePayload({
@@ -252,8 +246,6 @@ describe("buildFinalizePayload (v0.42.0)", () => {
         project: "cherry",
         bundle_key: "bundles/cherry.tar.gz",
         quality_tier: "final",
-        // v0.128.0: the LoRA quality gate now defaults OFF (no GPU probe renders).
-        quality_gate_overrides: { enabled: false },
       },
     });
   });
@@ -268,16 +260,13 @@ describe("buildFinalizePayload (v0.42.0)", () => {
     ).toBe("draft");
   });
 
-  it("passes render_overrides through when non-empty", () => {
+  it("passes the namespaced sections through, dropping flat keys", () => {
     const out = buildFinalizePayload({
       project: "cherry",
       bundleKey: "bundles/cherry.tar.gz",
-      renderOverrides: { wan_inference_steps: 12, seed: 424242 },
+      renderOverrides: { i2v: { steps: 40 }, wan_inference_steps: 12, seed: 424242 },
     });
-    expect(out.input.render_overrides).toEqual({
-      wan_inference_steps: 12,
-      seed: 424242,
-    });
+    expect(out.input.render_overrides).toEqual({ i2v: { steps: 40 } });
   });
 
   it("omits render_overrides when undefined or empty", () => {
@@ -401,252 +390,53 @@ describe("isValidJobId", () => {
   });
 });
 
-describe("normalizeMultiCharacterOverrides (v0.85.0: Phase R fields)", () => {
-  // The pre-v0.85.0 normalizer only whitelisted mode, auto_when_multi_slot,
-  // max_slots, feather_px, layout. Phase R added engine, lora_scale_per_
-  // slot, ip_adapter_scale_per_slot on the pod side back in 0.4.42 but
-  // the Worker normalizer was never updated, so every Worker request that
-  // tried to tune Phase R was silently sending an empty payload and the
-  // pod fell through to its built-in defaults. Caught when pod 0.4.52
-  // refused to default and surfaced the missing fields. These tests pin
-  // the contract so the same gap cannot reopen.
-  it("passes engine='regional' through", () => {
-    const out = normalizeMultiCharacterOverrides({ engine: "regional" });
-    expect(out).toEqual({ engine: "regional" });
-  });
-
-  it("passes engine='composite_legacy' through", () => {
-    const out = normalizeMultiCharacterOverrides({ engine: "composite_legacy" });
-    expect(out).toEqual({ engine: "composite_legacy" });
-  });
-
-  it("drops an unrecognized engine string", () => {
-    const out = normalizeMultiCharacterOverrides({
-      engine: "experimental" as unknown as "regional",
-    });
-    expect(out).toBeUndefined();
-  });
-
-  it("passes lora_scale_per_slot at the smoke v15 baseline", () => {
-    const out = normalizeMultiCharacterOverrides({ lora_scale_per_slot: 0.3 });
-    expect(out).toEqual({ lora_scale_per_slot: 0.3 });
-  });
-
-  it("passes ip_adapter_scale_per_slot at the smoke v15 baseline", () => {
-    const out = normalizeMultiCharacterOverrides({ ip_adapter_scale_per_slot: 0.7 });
-    expect(out).toEqual({ ip_adapter_scale_per_slot: 0.7 });
-  });
-
-  it("accepts the regional bundle the smoke v20 script sends", () => {
-    const out = normalizeMultiCharacterOverrides({
-      engine: "regional",
-      lora_scale_per_slot: 0.3,
-      ip_adapter_scale_per_slot: 0.7,
+describe("normalizeRenderOverrides", () => {
+  it("keeps the {keyframe,i2v,lora} sections (objects) and drops everything else", () => {
+    const out = normalizeRenderOverrides({
+      keyframe: { steps: 30, multi_char: { regional: true } },
+      i2v: { steps: 40 },
+      lora: { rank: 32 },
+      // out-of-spec sections the clean-room backend never reads
+      multi_character_overrides: { engine: "regional" },
+      wan_diffusion_overrides: { num_frames: 97 },
+      // flat top-level keys
+      seed: 7,
     });
     expect(out).toEqual({
-      engine: "regional",
-      lora_scale_per_slot: 0.3,
-      ip_adapter_scale_per_slot: 0.7,
+      keyframe: { steps: 30, multi_char: { regional: true } },
+      i2v: { steps: 40 },
+      lora: { rank: 32 },
     });
   });
 
-  // v0.136.3: regional center gap (vivijure-serverless 0.4.86+).
-  it("passes region_gap_px and rounds it", () => {
-    expect(normalizeMultiCharacterOverrides({ region_gap_px: 180 })).toEqual({
-      region_gap_px: 180,
+  it("keeps the routing flags (keyframes_only / finish_offloaded) when boolean", () => {
+    expect(normalizeRenderOverrides({ keyframes_only: true, finish_offloaded: false })).toEqual({
+      keyframes_only: true,
+      finish_offloaded: false,
     });
-    expect(normalizeMultiCharacterOverrides({ region_gap_px: 159.6 })).toEqual({
-      region_gap_px: 160,
+    // non-boolean flags are dropped
+    expect(normalizeRenderOverrides({ keyframes_only: "yes" })).toBeUndefined();
+  });
+
+  it("drops a section that is not a plain object", () => {
+    expect(normalizeRenderOverrides({ keyframe: "nope", i2v: [1, 2], lora: null })).toBeUndefined();
+  });
+
+  it("returns undefined for empty / non-object / array input", () => {
+    expect(normalizeRenderOverrides(undefined)).toBeUndefined();
+    expect(normalizeRenderOverrides({})).toBeUndefined();
+    expect(normalizeRenderOverrides("x")).toBeUndefined();
+    expect(normalizeRenderOverrides([{ keyframe: {} }])).toBeUndefined();
+  });
+
+  it("folds opts.keyframesOnly into keyframes_only unless the caller already pinned it", () => {
+    expect(normalizeRenderOverrides({ keyframe: { steps: 8 } }, { keyframesOnly: true })).toEqual({
+      keyframe: { steps: 8 },
+      keyframes_only: true,
     });
-  });
-
-  it("drops region_gap_px out of range", () => {
-    expect(normalizeMultiCharacterOverrides({ region_gap_px: -1 })).toBeUndefined();
-    expect(normalizeMultiCharacterOverrides({ region_gap_px: 601 })).toBeUndefined();
-  });
-
-  // v0.136.6: OpenPose ControlNet pose conditioning (vivijure-serverless 0.4.87+).
-  it("passes pose_conditioning + controlnet_conditioning_scale", () => {
-    expect(
-      normalizeMultiCharacterOverrides({
-        pose_conditioning: true,
-        controlnet_conditioning_scale: 0.55,
-      }),
-    ).toEqual({ pose_conditioning: true, controlnet_conditioning_scale: 0.55 });
-  });
-
-  it("drops a non-boolean pose_conditioning and out-of-range cn scale", () => {
-    expect(
-      normalizeMultiCharacterOverrides({ pose_conditioning: "yes" as unknown as boolean }),
-    ).toBeUndefined();
-    expect(
-      normalizeMultiCharacterOverrides({ controlnet_conditioning_scale: 2.1 }),
-    ).toBeUndefined();
-  });
-
-  it("passes pose-template geometry knobs in range", () => {
-    expect(
-      normalizeMultiCharacterOverrides({
-        pose_inset_frac: 0.12,
-        pose_gap_frac: 0.035,
-        pose_fig_width_frac: 0.95,
-        pose_fig_height_frac: 0.92,
-      }),
-    ).toEqual({
-      pose_inset_frac: 0.12,
-      pose_gap_frac: 0.035,
-      pose_fig_width_frac: 0.95,
-      pose_fig_height_frac: 0.92,
+    // an explicit keyframes_only in the overrides wins over the boolean
+    expect(normalizeRenderOverrides({ keyframes_only: false }, { keyframesOnly: true })).toEqual({
+      keyframes_only: false,
     });
-  });
-
-  it("drops pose-geometry knobs out of range", () => {
-    expect(normalizeMultiCharacterOverrides({ pose_inset_frac: 0.3 })).toBeUndefined();
-    expect(normalizeMultiCharacterOverrides({ pose_gap_frac: 0.2 })).toBeUndefined();
-    expect(normalizeMultiCharacterOverrides({ pose_fig_width_frac: 0.2 })).toBeUndefined();
-    expect(normalizeMultiCharacterOverrides({ pose_fig_height_frac: 1.1 })).toBeUndefined();
-  });
-
-  it("trims + caps pose_negative and drops empty", () => {
-    expect(
-      normalizeMultiCharacterOverrides({ pose_negative: "  floating cloth, third figure  " }),
-    ).toEqual({ pose_negative: "floating cloth, third figure" });
-    expect(normalizeMultiCharacterOverrides({ pose_negative: "   " })).toBeUndefined();
-    const long = "x".repeat(500);
-    const out = normalizeMultiCharacterOverrides({ pose_negative: long });
-    expect(out?.pose_negative?.length).toBe(400);
-  });
-
-  it("forwards openpose_controlnet_repo trimmed (contract symmetry)", () => {
-    expect(
-      normalizeMultiCharacterOverrides({ openpose_controlnet_repo: "  xinsir/controlnet-openpose-sdxl-1.0  " }),
-    ).toEqual({ openpose_controlnet_repo: "xinsir/controlnet-openpose-sdxl-1.0" });
-    expect(normalizeMultiCharacterOverrides({ openpose_controlnet_repo: "  " })).toBeUndefined();
-  });
-
-  it("drops lora_scale_per_slot below 0", () => {
-    const out = normalizeMultiCharacterOverrides({ lora_scale_per_slot: -0.1 });
-    expect(out).toBeUndefined();
-  });
-
-  it("drops lora_scale_per_slot above 2", () => {
-    const out = normalizeMultiCharacterOverrides({ lora_scale_per_slot: 2.1 });
-    expect(out).toBeUndefined();
-  });
-
-  it("drops ip_adapter_scale_per_slot above 2", () => {
-    const out = normalizeMultiCharacterOverrides({ ip_adapter_scale_per_slot: 2.5 });
-    expect(out).toBeUndefined();
-  });
-
-  it("drops non-numeric scale values", () => {
-    const out = normalizeMultiCharacterOverrides({
-      lora_scale_per_slot: "0.3" as unknown as number,
-      ip_adapter_scale_per_slot: "0.7" as unknown as number,
-    });
-    expect(out).toBeUndefined();
-  });
-
-  it("still passes pre-Phase-R fields (mode / layout / feather_px) alongside Phase R", () => {
-    const out = normalizeMultiCharacterOverrides({
-      mode: "auto",
-      layout: "layer",
-      feather_px: 48,
-      engine: "regional",
-      lora_scale_per_slot: 0.3,
-      ip_adapter_scale_per_slot: 0.7,
-    });
-    expect(out).toEqual({
-      mode: "auto",
-      layout: "layer",
-      feather_px: 48,
-      engine: "regional",
-      lora_scale_per_slot: 0.3,
-      ip_adapter_scale_per_slot: 0.7,
-    });
-  });
-
-  it("returns undefined when raw is undefined", () => {
-    expect(normalizeMultiCharacterOverrides(undefined)).toBeUndefined();
-  });
-
-  it("returns undefined when raw is empty", () => {
-    expect(normalizeMultiCharacterOverrides({})).toBeUndefined();
-  });
-});
-
-describe("normalizeRunpodResponse", () => {
-  it("normalizes a freshly-submitted job (IN_QUEUE)", () => {
-    const v = normalizeRunpodResponse({ id: "abc123", status: "IN_QUEUE" });
-    expect(v).not.toBeNull();
-    expect(v?.jobId).toBe("abc123");
-    expect(v?.status).toBe("IN_QUEUE");
-    expect(v?.statusRaw).toBe("IN_QUEUE");
-    expect(v?.output).toBeUndefined();
-    expect(v?.error).toBeUndefined();
-  });
-
-  it("normalizes a completed job with output and executionTime", () => {
-    const v = normalizeRunpodResponse({
-      id: "abc123",
-      status: "COMPLETED",
-      output: { project: "cherry", output_key: "renders/cherry/full.mp4" },
-      executionTime: 1931280,
-      delayTime: 11412,
-    });
-    expect(v?.status).toBe("COMPLETED");
-    expect(v?.executionTimeMs).toBe(1931280);
-    expect(v?.delayTimeMs).toBe(11412);
-    expect(v?.output).toEqual({
-      project: "cherry",
-      output_key: "renders/cherry/full.mp4",
-    });
-  });
-
-  it("normalizes a failed job with error and executionTime", () => {
-    const v = normalizeRunpodResponse({
-      id: "abc123",
-      status: "FAILED",
-      error: "executionTimeout exceeded",
-      executionTime: 608597,
-    });
-    expect(v?.status).toBe("FAILED");
-    expect(v?.error).toBe("executionTimeout exceeded");
-    expect(v?.executionTimeMs).toBe(608597);
-  });
-
-  it("returns null for non-object inputs", () => {
-    expect(normalizeRunpodResponse(null)).toBeNull();
-    expect(normalizeRunpodResponse("nope")).toBeNull();
-    expect(normalizeRunpodResponse([])).toBeNull();
-  });
-
-  it("returns null when id or status is missing", () => {
-    expect(normalizeRunpodResponse({ status: "IN_QUEUE" })).toBeNull();
-    expect(normalizeRunpodResponse({ id: "abc123" })).toBeNull();
-    expect(normalizeRunpodResponse({ id: 123, status: "IN_QUEUE" })).toBeNull();
-  });
-
-  it("preserves statusRaw and falls back to IN_PROGRESS on unknown status", () => {
-    const v = normalizeRunpodResponse({ id: "abc123", status: "SOMETHING_NEW" });
-    expect(v?.status).toBe("IN_PROGRESS");
-    expect(v?.statusRaw).toBe("SOMETHING_NEW");
-  });
-
-  it("does not include empty error strings", () => {
-    const v = normalizeRunpodResponse({
-      id: "abc123",
-      status: "COMPLETED",
-      error: "",
-    });
-    expect(v?.error).toBeUndefined();
-  });
-
-  it("recognizes all known RunPod statuses verbatim", () => {
-    for (const s of ["IN_QUEUE", "IN_PROGRESS", "COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"] as const) {
-      const v = normalizeRunpodResponse({ id: "x", status: s });
-      expect(v?.status).toBe(s);
-      expect(v?.statusRaw).toBe(s);
-    }
   });
 });

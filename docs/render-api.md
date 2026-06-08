@@ -45,30 +45,50 @@ already exist in R2 (the planner writes it at bundle time, under
 | `project` | string | display label; derived from `bundleKey` if omitted |
 | `qualityTier` | `"draft" \| "standard" \| "final"` | default `final`. draft = 4-step distilled; standard = 8-step keyframe + 20-step EasyCache i2v (the middle); final = 30-step keyframe + 40-step MixCache i2v. (`keyframesOnly: true` for the fast keyframe-only preview.) |
 | `keyframesOnly` | boolean | SDXL keyframes only, skip Wan I2V + assembly (fast preview) |
-| `renderOverrides` | object | freeform pod render overrides, e.g. `{ "seed": 202 }` |
+| `renderOverrides` | object | the **namespaced** generation contract (see below): `{ keyframe, i2v, lora }` + routing flags. |
 | `audioKey` | string | R2 key of an audio bed to mux; a MiniMax `out/<uuid>.mp3` is cross-bucket-copied for you |
 | `castLoras` | object | `{ "A": <cast_id>, "B": <cast_id> }`; resolved to trained-LoRA keys so a ready cast is reused (no retrain) |
-| `multiCharacterOverrides` | object | engine, pose conditioning + geometry, scales (see the planner's multi-character panel) |
-| `wanDiffusionOverrides` | object | I2V knobs incl. `wan_negative_prompt`, `num_frames`, guidance |
-| `loraTrainOverrides`, `qualityGateOverrides`, `consistencyOverrides`, `continuityOverrides`, `faceLockOverrides`, `adetailerOverrides`, ... | object | the full override surface; each block routes to the matching pod config block |
 | `projectId` | number | optional FK to one of your storyboard projects (must be yours) |
 
-The server validates each block (out-of-range values are dropped or 400'd) and
-forwards the rest. The response is `{ ok, jobId, statusRaw, ... }`.
+The response is `{ ok, jobId, statusRaw, ... }`.
+
+### `renderOverrides`: the namespaced generation contract
+
+Every generation knob lives under one of three sections, layered over the
+`qualityTier` baseline. This is exactly what the render backend reads
+(`RenderConfig.from_request`); any key outside these sections is dropped before
+the wire (so it never reaches, or silently no-ops on, the pod), and the pod
+re-clamps every value to its valid range.
+
+- **`keyframe`** -- SDXL keyframe stage: `base_model`, `steps`, `guidance_scale`,
+  `scheduler`, `width`/`height` (or `resolution` as `"WxH"`), `distill`,
+  `distill_steps`, `seed`, `identity_method`, `ip_adapter_scale`,
+  `instantid_controlnet_scale`, `instantid_ip_adapter_scale`, and nested
+  **`multi_char`** (`regional`, `pose_conditioning`, `lora_scale_per_slot`,
+  `ip_adapter_scale_per_slot`, `max_slots`, `controlnet_pose_scale`).
+- **`i2v`** -- Wan image-to-video: `model`, `num_frames`, `fps`, `steps`,
+  `guidance_scale`, `flow_shift`, `seconds_per_shot`, `distill`, `distill_steps`,
+  `loader`, `feature_cache`, `negative_prompt`.
+- **`lora`** -- character LoRA training: `rank`, `resolution`, `learning_rate`,
+  `max_steps`, `batch_size`, `gradient_accumulation_steps`, `seed`, `random_flip`,
+  `gradient_checkpointing`, `caption_template`, `save_every`.
+
+Plus routing flags read off the top level of `renderOverrides`: `keyframes_only`
+and `finish_offloaded`.
 
 ### Examples
 
-Keyframes-only preview:
+Keyframes-only preview (the `qualityTier` baseline drives everything else):
 ```bash
 curl -X POST https://skyphusion.org/api/storyboard/render \
   -H "cf-access-token: $TOKEN" -H "content-type: application/json" \
   -d '{ "project": "my_project", "bundleKey": "bundles/my_project.tar.gz",
         "qualityTier": "draft", "keyframesOnly": true,
-        "renderOverrides": { "seed": 202 } }'
+        "renderOverrides": { "keyframe": { "seed": 202 } } }'
 ```
 
 Full multi-character render with pose conditioning + a muxed track, reusing a
-ready cast:
+ready cast, with explicit keyframe / i2v tuning:
 ```bash
 curl -X POST https://skyphusion.org/api/storyboard/render \
   -H "cf-access-token: $TOKEN" -H "content-type: application/json" \
@@ -76,18 +96,22 @@ curl -X POST https://skyphusion.org/api/storyboard/render \
     "project": "my_project",
     "bundleKey": "bundles/my_project.tar.gz",
     "qualityTier": "final",
-    "renderOverrides": { "seed": 202 },
     "audioKey": "out/9d863853-....mp3",
     "castLoras": { "A": 8, "B": 7 },
-    "multiCharacterOverrides": {
-      "engine": "regional", "mode": "auto", "pose_conditioning": true,
-      "lora_scale_per_slot": 0.3, "ip_adapter_scale_per_slot": 0.7,
-      "controlnet_conditioning_scale": 0.85,
-      "pose_inset_frac": 0.18, "pose_gap_frac": 0.06, "pose_fig_width_frac": 1.0,
-      "pose_negative": "third figure, extra person"
-    },
-    "wanDiffusionOverrides": {
-      "wan_negative_prompt": "centaur, extra legs, quadruped, deformed legs, blurry, low quality"
+    "renderOverrides": {
+      "keyframe": {
+        "seed": 202,
+        "guidance_scale": 6.5,
+        "multi_char": {
+          "regional": true, "pose_conditioning": true,
+          "lora_scale_per_slot": 0.3, "ip_adapter_scale_per_slot": 0.7,
+          "controlnet_pose_scale": 0.85, "max_slots": 2
+        }
+      },
+      "i2v": {
+        "steps": 40,
+        "negative_prompt": "centaur, extra legs, quadruped, deformed legs, blurry, low quality"
+      }
     }
   }'
 ```
