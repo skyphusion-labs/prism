@@ -67,7 +67,7 @@ import {
   parseBeatTimingInput,
   type BeatTimingInput,
 } from "./beat-timing";
-import { finishInputFromPodOutput, parseVideoFinishInput, runVideoFinish } from "./video-finish";
+import { finishInputFromPodOutput, isOffloadedRenderOutput, parseVideoFinishInput, runVideoFinish } from "./video-finish";
 import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
@@ -2478,12 +2478,7 @@ async function resolveOffloadedFinish(
     view.output && typeof view.output === "object" && !Array.isArray(view.output)
       ? (view.output as Record<string, unknown>)
       : null;
-  if (
-    view.status !== "COMPLETED" ||
-    !out ||
-    out.finish_offloaded !== true ||
-    !Array.isArray(out.clips)
-  ) {
+  if (view.status !== "COMPLETED" || !out || !isOffloadedRenderOutput(out)) {
     return { kind: "passthrough" };
   }
 

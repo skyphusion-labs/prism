@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.156.2
+
+Off-GPU finish now actually fires for an offloaded render. The control plane's
+`resolveOffloadedFinish` keyed on `out.finish_offloaded === true`, and
+`finishInputFromPodOutput` required `out.output_key` -- but a clean-room pod
+`finish_offloaded` render emits per-shot clips with NEITHER (no flag, no merged
+output_key), so the CF video-finish merge never ran: the render completed with clips
+in R2 but no `full.mp4`. (Caught driving the A+B render verification.)
+
+Recognize an offloaded render by its SHAPE -- per-shot clips and no merged output_key
+(a normal render is the inverse) -- via a new `isOffloadedRenderOutput` predicate, and
+derive the canonical `renders/<project>/full.mp4` target from the clips' `/clips/`
+prefix when the pod omits `output_key`. The explicit `finish_offloaded` flag and an
+explicit `output_key` (the cloud / hybrid paths) still work unchanged.
+
+### Code
+
+- `src/video-finish.ts` - new `isOffloadedRenderOutput`; `finishInputFromPodOutput`
+  derives `<prefix>/full.mp4` when `output_key` is absent (was: return null).
+- `src/index.ts` - `resolveOffloadedFinish` triggers on `isOffloadedRenderOutput(out)`
+  instead of the never-sent `finish_offloaded` flag.
+- `tests/offloaded-finish.test.ts` - new: 7 cases (the predicate + the target derive).
+- `tests/video-finish.test.ts` - updated the missing-output_key case to assert the derive.
+- `package.json` - 0.156.1 -> 0.156.2.
+- typecheck clean; full suite green.
+
 ## v0.156.1
 
 Drop the vestigial `standard` quality tier. The render tiers are `keyframe` (the

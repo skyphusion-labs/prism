@@ -109,8 +109,11 @@ describe("finishInputFromPodOutput", () => {
     expect(input?.audioKey).toBeUndefined();
   });
 
-  it("returns null on a missing output_key or empty clips", () => {
-    expect(finishInputFromPodOutput({ ...podOut, output_key: undefined })).toBeNull();
+  it("derives the target from the clips prefix when output_key is missing; null on empty/keyless clips", () => {
+    // v0.156.2: an offloaded render omits output_key, so derive renders/<prefix>/full.mp4
+    // from the clips' shared /clips/ prefix instead of rejecting it.
+    expect(finishInputFromPodOutput({ ...podOut, output_key: undefined })?.outputKey)
+      .toBe("renders/p/job/full.mp4");
     expect(finishInputFromPodOutput({ ...podOut, clips: [] })).toBeNull();
     expect(finishInputFromPodOutput({ ...podOut, clips: [{ shot_id: "x" }] })).toBeNull();
   });

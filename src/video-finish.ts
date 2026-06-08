@@ -118,9 +118,7 @@ export function parseVideoFinishInput(
 // is snake_case (trim_join_frames); we translate to the container's camelCase.
 export function finishInputFromPodOutput(out: Record<string, unknown>): VideoFinishInput | null {
   const clipsRaw = out.clips;
-  const outputKey = out.output_key;
   if (!Array.isArray(clipsRaw) || clipsRaw.length === 0) return null;
-  if (typeof outputKey !== "string" || !outputKey) return null;
   const clips: VideoFinishClip[] = [];
   for (const c of clipsRaw) {
     if (!c || typeof c !== "object") return null;
@@ -130,6 +128,15 @@ export function finishInputFromPodOutput(out: Record<string, unknown>): VideoFin
     const ts = (c as { target_seconds?: unknown }).target_seconds;
     if (typeof ts === "number" && Number.isFinite(ts) && ts > 0) clip.targetSeconds = ts;
     clips.push(clip);
+  }
+  // The pod sets output_key to the desired final key. An OFFLOADED render leaves it
+  // unset (it emits per-shot clips for the off-GPU merge), so derive the canonical
+  // <prefix>/full.mp4 from the clips' shared renders/<project>/clips/ prefix.
+  let outputKey = typeof out.output_key === "string" && out.output_key ? out.output_key : "";
+  if (!outputKey) {
+    const i = clips[0].key.lastIndexOf("/clips/");
+    if (i < 0) return null;  // clips not in the expected renders/<project>/clips/ layout
+    outputKey = clips[0].key.slice(0, i) + "/full.mp4";
   }
   const input: VideoFinishInput = { clips, outputKey };
   if (typeof out.audio_key === "string" && out.audio_key) input.audioKey = out.audio_key;
@@ -146,6 +153,17 @@ export function finishInputFromPodOutput(out: Record<string, unknown>): VideoFin
   if (n(fp.trim_join_frames) !== undefined) input.trimJoinFrames = fp.trim_join_frames as number;
   if (typeof fp.preset === "string") input.preset = fp.preset;
   return input;
+}
+
+// Whether a completed render's output is an OFF-GPU-finish job needing the merge:
+// per-shot clips with no merged output_key (a normal render is the inverse -- it
+// has output_key set and no clips). Accepts the explicit finish_offloaded flag too,
+// though the clean-room pod does not currently stamp it, so the shape is what fires
+// the auto-finish in resolveOffloadedFinish.
+export function isOffloadedRenderOutput(out: Record<string, unknown> | null | undefined): boolean {
+  if (!out) return false;
+  if (out.finish_offloaded === true) return true;
+  return Array.isArray(out.clips) && out.clips.length > 0 && !out.output_key;
 }
 
 // Call the container's /finish with the same cold-start guard as callImagePrep:
