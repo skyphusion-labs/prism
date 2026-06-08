@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.159.0
+
+Item D groundwork: the multi-job GATHER core for distributed (scatter/gather) renders.
+Purely additive -- new exported helpers in `video-finish.ts`, no existing path changed.
+
+Distributed renders fan a single film's shots across N RunPod workers (each renders a
+`process_shot_ids` subset with `finish_offloaded`, writing per-shot clips to R2), so the i2v
+long pole becomes max-of-shots instead of sum-of-shots. Every backend primitive for that is
+already shipped (the shot-subset render path, the R2-pull of reused LoRAs, per-shot clip keys,
+the off-GPU finish container, the progress channel). What was missing is the control-plane piece
+that merges clips no single job owns -- this adds it:
+
+- `clipKey(project, shotId)` / `finishOutputKey(project)` -- the canonical R2 keys
+  (`renders/<slug>/clips/<shot_id>.mp4`, `renders/<slug>/full.mp4`), byte-identical to the
+  backend's `keys.clip_key` (via the shared `renderSlug`), so they address the SAME objects the
+  shot-workers write.
+- `finishInputFromClipKeys(project, orderedShotIds, opts)` -- builds a `VideoFinishInput` by
+  addressing clips directly by project + storyboard order (vs `finishInputFromPodOutput`, which
+  reads one job's manifest), so it merges whatever N shot-jobs wrote. Reuses the existing
+  `runVideoFinish` + `VIDEO_FINISH` container unchanged.
+- `gatherClipPresence(env, project, shotIds)` -- the gather signal: which shots already have a
+  clip in R2 (cheap `R2_RENDERS.head`), so a scatter render is finishable when all are present.
+
+Next (separate PR): the gather-finish endpoint + the fan-out orchestrator that submits the N
+shot-jobs and auto-triggers the finish. This PR is the reusable core they build on.
+
+### Code
+
+- `src/video-finish.ts` - add `clipKey`, `finishOutputKey`, `GatherFinishOpts`,
+  `finishInputFromClipKeys`, `gatherClipPresence`; import `renderSlug`.
+- `tests/video-finish.test.ts` - cover the key layout, the assembler (order / targetSeconds /
+  finish params / null-on-empty), and the gather signal (present/missing split, head-rejection
+  tolerance).
+- `package.json` - 0.158.0 -> 0.159.0.
+- typecheck clean; tests pass (video-finish suite 22, full suite green). No backend/contract change.
+
 ## v0.158.0
 
 Rework the planner render step to the namespaced `render_overrides` contract,

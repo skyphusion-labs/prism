@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   callVideoFinish,
+  clipKey,
+  finishInputFromClipKeys,
+  finishOutputKey,
   finishInputFromPodOutput,
+  gatherClipPresence,
   parseVideoFinishInput,
 } from "../src/video-finish";
 import type { Env } from "../src/env";
@@ -160,5 +164,65 @@ describe("callVideoFinish cold-start guard", () => {
     const { env } = fakeEnv([503]);
     const resp = await callVideoFinish(env, {}, { backoffMs: 0, retries: 2 });
     expect(resp?.status).toBe(503);
+  });
+});
+
+// item D: the scatter/gather multi-job finish core.
+describe("clipKey / finishOutputKey (canonical R2 layout)", () => {
+  it("mirrors the backend keys.clip_key + <prefix>/full.mp4 layout, slugging the project", () => {
+    expect(clipKey("neon rain", "shot_03")).toBe("renders/neon_rain/clips/shot_03.mp4");
+    expect(finishOutputKey("neon rain")).toBe("renders/neon_rain/full.mp4");
+  });
+});
+
+describe("finishInputFromClipKeys (multi-job gather assembler)", () => {
+  it("builds clips in the given storyboard order + the canonical output key", () => {
+    const input = finishInputFromClipKeys("my_film", ["shot_01", "shot_02", "shot_03"]);
+    expect(input).not.toBeNull();
+    expect(input!.clips.map((c) => c.key)).toEqual([
+      "renders/my_film/clips/shot_01.mp4",
+      "renders/my_film/clips/shot_02.mp4",
+      "renders/my_film/clips/shot_03.mp4",
+    ]);
+    expect(input!.outputKey).toBe("renders/my_film/full.mp4");
+  });
+
+  it("attaches per-shot targetSeconds when provided, omits otherwise", () => {
+    const input = finishInputFromClipKeys("f", ["a", "b"], { targetSeconds: { a: 5.5 } });
+    expect(input!.clips[0]).toEqual({ key: "renders/f/clips/a.mp4", targetSeconds: 5.5 });
+    expect(input!.clips[1]).toEqual({ key: "renders/f/clips/b.mp4" });
+  });
+
+  it("passes audioKey + finish params through", () => {
+    const input = finishInputFromClipKeys("f", ["a"], {
+      audioKey: "audio/x.mp3", width: 1920, height: 1080, fps: 16, crf: 18, crossfade: 0.45,
+    });
+    expect(input!.audioKey).toBe("audio/x.mp3");
+    expect(input!.width).toBe(1920);
+    expect(input!.crossfade).toBe(0.45);
+  });
+
+  it("returns null on an empty or malformed shot list", () => {
+    expect(finishInputFromClipKeys("f", [])).toBeNull();
+    expect(finishInputFromClipKeys("f", ["a", "" as string])).toBeNull();
+  });
+});
+
+describe("gatherClipPresence (the gather signal)", () => {
+  const envWith = (presentKeys: Set<string>): Env =>
+    ({ R2_RENDERS: { head: (k: string) => Promise.resolve(presentKeys.has(k) ? { key: k } : null) } } as unknown as Env);
+
+  it("splits the shots into present + missing by R2 head", async () => {
+    const env = envWith(new Set(["renders/f/clips/a.mp4", "renders/f/clips/c.mp4"]));
+    const { present, missing } = await gatherClipPresence(env, "f", ["a", "b", "c"]);
+    expect(present.sort()).toEqual(["a", "c"]);
+    expect(missing).toEqual(["b"]);
+  });
+
+  it("treats a head() rejection as missing (never throws)", async () => {
+    const env = { R2_RENDERS: { head: () => Promise.reject(new Error("r2 down")) } } as unknown as Env;
+    const { present, missing } = await gatherClipPresence(env, "f", ["a"]);
+    expect(present).toEqual([]);
+    expect(missing).toEqual(["a"]);
   });
 });

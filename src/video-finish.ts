@@ -8,6 +8,7 @@
 
 import type { Env } from "./env";
 import { presignR2Get, presignR2Put } from "./r2-presign";
+import { renderSlug } from "./render-progress";
 
 export interface VideoFinishClip {
   key: string;
@@ -153,6 +154,87 @@ export function finishInputFromPodOutput(out: Record<string, unknown>): VideoFin
   if (n(fp.trim_join_frames) !== undefined) input.trimJoinFrames = fp.trim_join_frames as number;
   if (typeof fp.preset === "string") input.preset = fp.preset;
   return input;
+}
+
+// v0.159.0 (item D): the canonical R2 keys for a render's per-shot clips and final
+// MP4, byte-identical to the backend's keys.clip_key + the <prefix>/full.mp4 layout
+// (renders/<slug>/clips/<shot_id>.mp4, renders/<slug>/full.mp4). renderSlug mirrors
+// the backend _slug, so these address the SAME objects N independent shot-jobs write.
+export function clipKey(project: string, shotId: string): string {
+  return `renders/${renderSlug(project)}/clips/${shotId}.mp4`;
+}
+
+export function finishOutputKey(project: string): string {
+  return `renders/${renderSlug(project)}/full.mp4`;
+}
+
+// v0.159.0 (item D): finish params for the multi-job gather (same knobs the pod's
+// finish_params carry; all optional, the container has defaults).
+export interface GatherFinishOpts {
+  audioKey?: string;
+  targetSeconds?: Record<string, number>;
+  width?: number;
+  height?: number;
+  fps?: number;
+  crf?: number;
+  preset?: string;
+  crossfade?: number;
+  trimJoinFrames?: number;
+}
+
+// v0.159.0 (item D): build a VideoFinishInput for the SCATTER/GATHER finish. Unlike
+// finishInputFromPodOutput (one job's manifest), this addresses the clips directly by
+// project + the storyboard's shot order, so it merges whatever N shot-jobs wrote to
+// the canonical clip keys -- no single job owns all the clips. `orderedShotIds` MUST
+// already be in storyboard order (the container concats in array order). Per-shot
+// `targetSeconds` is optional (the container derives duration from the clip when
+// absent). Returns null on an empty / malformed shot list.
+export function finishInputFromClipKeys(
+  project: string,
+  orderedShotIds: string[],
+  opts: GatherFinishOpts = {},
+): VideoFinishInput | null {
+  if (!Array.isArray(orderedShotIds) || orderedShotIds.length === 0) return null;
+  const clips: VideoFinishClip[] = [];
+  for (const shotId of orderedShotIds) {
+    if (typeof shotId !== "string" || !shotId) return null;
+    const clip: VideoFinishClip = { key: clipKey(project, shotId) };
+    const ts = opts.targetSeconds?.[shotId];
+    if (typeof ts === "number" && Number.isFinite(ts) && ts > 0) clip.targetSeconds = ts;
+    clips.push(clip);
+  }
+  const input: VideoFinishInput = { clips, outputKey: finishOutputKey(project) };
+  if (opts.audioKey) input.audioKey = opts.audioKey;
+  if (typeof opts.width === "number" && Number.isFinite(opts.width)) input.width = opts.width;
+  if (typeof opts.height === "number" && Number.isFinite(opts.height)) input.height = opts.height;
+  if (typeof opts.fps === "number" && Number.isFinite(opts.fps)) input.fps = opts.fps;
+  if (typeof opts.crf === "number" && Number.isFinite(opts.crf)) input.crf = opts.crf;
+  if (typeof opts.preset === "string") input.preset = opts.preset;
+  if (typeof opts.crossfade === "number" && Number.isFinite(opts.crossfade)) input.crossfade = opts.crossfade;
+  if (typeof opts.trimJoinFrames === "number" && Number.isFinite(opts.trimJoinFrames)) {
+    input.trimJoinFrames = opts.trimJoinFrames;
+  }
+  return input;
+}
+
+// v0.159.0 (item D): the gather signal -- which of the storyboard's shots already
+// have a clip in R2. A scatter render is finishable when every shot is present.
+// Uses R2_RENDERS.head (cheap, no body). Order of the returned lists is not
+// significant; the caller orders by the storyboard before building the finish input.
+export async function gatherClipPresence(
+  env: Env,
+  project: string,
+  shotIds: string[],
+): Promise<{ present: string[]; missing: string[] }> {
+  const present: string[] = [];
+  const missing: string[] = [];
+  await Promise.all(
+    shotIds.map(async (shotId) => {
+      const head = await env.R2_RENDERS.head(clipKey(project, shotId)).catch(() => null);
+      (head ? present : missing).push(shotId);
+    }),
+  );
+  return { present, missing };
 }
 
 // Whether a completed render's output is an OFF-GPU-finish job needing the merge:
