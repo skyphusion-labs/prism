@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.156.1
+
+Drop the vestigial `standard` quality tier. The render tiers are `keyframe` (the
+`keyframesOnly` preview flag), `draft` (4-step distilled), and `final` (full-step
+high-cfg); the pod's `for_tier` only ever branched draft vs final, so `standard` was a
+label that promised a tier that does not exist.
+
+Removed `standard` from the `qualityTier` type unions, the planner picker, and the
+render-api doc, and changed the adopt default from `standard` to `final`. A single
+`coerceQualityTier` helper normalizes input: `draft` / `final` pass through, the legacy
+`standard` coerces to `final` (so old History rows and any old client never 400),
+anything else is an invalid tier. The consistency-mode `standard` option (a different
+control entirely) is untouched.
+
+### Code
+
+- `src/runpod-submit.ts` - new `coerceQualityTier`; `qualityTier` / `quality_tier` unions
+  narrowed to `"draft" | "final"`; `validateRenderContract` coerces; comments.
+- `src/index.ts` - import + use `coerceQualityTier` across the submit / adopt / finalize /
+  retry paths; adopt default `standard` -> `final`; validation messages -> `'draft' | 'final'`.
+- `public/planner.html` - drop the `standard` quality-tier `<option>`.
+- `docs/render-api.md` - union -> `draft | final`, examples `standard` -> `final`.
+- `tests/coerce-quality-tier.test.ts` - new: 3 cases (pass-through, legacy coerce, invalid).
+- `package.json` - 0.156.0 -> 0.156.1.
+- typecheck clean; full suite 604 green.
+
 ## v0.156.0
 
 Live render progress, read from R2 instead of SSH. The planner can now poll a

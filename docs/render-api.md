@@ -43,7 +43,7 @@ already exist in R2 (the planner writes it at bundle time, under
 |---|---|---|
 | `bundleKey` | string (required) | R2 key of the project bundle, e.g. `bundles/my_project.tar.gz` |
 | `project` | string | display label; derived from `bundleKey` if omitted |
-| `qualityTier` | `"draft" \| "standard" \| "final"` | default `final` |
+| `qualityTier` | `"draft" \| "final"` | default `final` (and `keyframesOnly: true` for the fast keyframe-only preview) |
 | `keyframesOnly` | boolean | SDXL keyframes only, skip Wan I2V + assembly (fast preview) |
 | `renderOverrides` | object | freeform pod render overrides, e.g. `{ "seed": 202 }` |
 | `audioKey` | string | R2 key of an audio bed to mux; a MiniMax `out/<uuid>.mp3` is cross-bucket-copied for you |
@@ -75,7 +75,7 @@ curl -X POST https://skyphusion.org/api/storyboard/render \
   -d '{
     "project": "my_project",
     "bundleKey": "bundles/my_project.tar.gz",
-    "qualityTier": "standard",
+    "qualityTier": "final",
     "renderOverrides": { "seed": 202 },
     "audioKey": "out/9d863853-....mp3",
     "castLoras": { "A": 8, "B": 7 },
@@ -107,7 +107,7 @@ control plane never recorded it, so it will not appear in History. Adopt it:
 curl -X POST https://skyphusion.org/api/storyboard/renders/adopt \
   -H "cf-access-token: $TOKEN" -H "content-type: application/json" \
   -d '{ "jobId": "<runpod-job-id>", "project": "my_project",
-        "bundleKey": "bundles/my_project.tar.gz", "qualityTier": "standard",
+        "bundleKey": "bundles/my_project.tar.gz", "qualityTier": "final",
         "mode": "full" }'
 ```
 

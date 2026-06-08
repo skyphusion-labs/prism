@@ -83,6 +83,7 @@ import {
   submitRenderJob,
   submitTrainLoraJob,
   parseAudioBeatPlan,
+  coerceQualityTier,
   type AudioAnalyzeRequest,
   type RenderSubmitArgs,
   type RunpodJobView,
@@ -1645,8 +1646,8 @@ async function handleStoryboardBundle(request: Request, env: Env): Promise<Respo
 //
 // Submit a render job to the vivijure-serverless RunPod endpoint and poll
 // its status. The submit route accepts the bundleKey returned by
-// /api/storyboard/bundle plus an optional qualityTier ("draft" | "standard"
-// | "final"; default "final") and optional renderOverrides (passed through
+// /api/storyboard/bundle plus an optional qualityTier ("draft" | "final";
+// default "final") and optional renderOverrides (passed through
 // to rp_handler.py's `render_overrides` payload field for tuning per-shot
 // settings). Returns the RunPod-issued jobId; the UI polls
 // GET /api/storyboard/render/<jobId> for status.
@@ -2103,14 +2104,9 @@ async function handleAdoptRender(request: Request, env: Env): Promise<Response> 
   if (body.hasAudio !== undefined && typeof body.hasAudio !== "boolean") {
     return json({ error: "hasAudio must be a boolean if provided" }, { status: 400 });
   }
-  if (
-    body.qualityTier !== undefined &&
-    body.qualityTier !== "draft" &&
-    body.qualityTier !== "standard" &&
-    body.qualityTier !== "final"
-  ) {
+  if (body.qualityTier !== undefined && coerceQualityTier(body.qualityTier) === undefined) {
     return json(
-      { error: "qualityTier must be 'draft' | 'standard' | 'final' if provided" },
+      { error: "qualityTier must be 'draft' | 'final' if provided" },
       { status: 400 },
     );
   }
@@ -2150,7 +2146,7 @@ async function handleAdoptRender(request: Request, env: Env): Promise<Response> 
       jobId,
       project,
       bundleKey,
-      qualityTier: typeof body.qualityTier === "string" ? body.qualityTier : "standard",
+      qualityTier: coerceQualityTier(body.qualityTier) ?? "final",
       status: outputKey ? "COMPLETED" : "SUBMITTED",
       mode: (body.mode as "full" | "keyframes-only" | undefined) ?? "full",
       projectId: null,
@@ -2181,9 +2177,9 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
   if (typeof body.bundleKey !== "string" || body.bundleKey.trim().length === 0) {
     return json({ error: "bundleKey is required (non-empty string)" }, { status: 400 });
   }
-  if (body.qualityTier !== undefined && body.qualityTier !== "draft" && body.qualityTier !== "standard" && body.qualityTier !== "final") {
+  if (body.qualityTier !== undefined && coerceQualityTier(body.qualityTier) === undefined) {
     return json(
-      { error: "qualityTier must be 'draft' | 'standard' | 'final' if provided" },
+      { error: "qualityTier must be 'draft' | 'final' if provided" },
       { status: 400 },
     );
   }
@@ -3506,10 +3502,7 @@ async function handleRenderFromKeyframes(request: Request, env: Env): Promise<Re
     );
   }
 
-  const qualityTier =
-    body.qualityTier === "draft" || body.qualityTier === "standard" || body.qualityTier === "final"
-      ? body.qualityTier
-      : undefined;
+  const qualityTier = coerceQualityTier(body.qualityTier);
   const renderOverrides =
     body.renderOverrides && typeof body.renderOverrides === "object" && !Array.isArray(body.renderOverrides)
       ? (body.renderOverrides as Record<string, unknown>)
@@ -4189,7 +4182,7 @@ async function handleFinalizeSubmit(
   const result = await submitFinalizeJob(env, {
     project: row.project,
     bundleKey: row.bundle_key,
-    qualityTier: row.quality_tier as "draft" | "standard" | "final" | undefined,
+    qualityTier: row.quality_tier as "draft" | "final" | undefined,
     renderOverrides: row.render_overrides ?? undefined,
     userEmail,
     processShotIds: row.locked_shots && row.locked_shots.length > 0
@@ -4357,10 +4350,7 @@ async function handleRenderRetry(
   // Resubmit with the original row's args. quality_tier round-trips
   // as-is; the only narrowing is "(empty / unknown tier) -> final"
   // which matches the buildSubmitPayload default.
-  const qualityTier =
-    row.quality_tier === "draft" || row.quality_tier === "standard" || row.quality_tier === "final"
-      ? row.quality_tier
-      : "final";
+  const qualityTier = coerceQualityTier(row.quality_tier) ?? "final";
 
   const args: RenderSubmitArgs = {
     bundleKey: row.bundle_key,
@@ -8958,7 +8948,7 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
               const res = await submitFinalizeJob(this.env, {
                 project,
                 bundleKey: gpuBundleKey,
-                qualityTier: qualityTier as "draft" | "standard" | "final" | undefined,
+                qualityTier: qualityTier as "draft" | "final" | undefined,
                 userEmail,
                 processShotIds: gpuShots.map((s) => s.shot_id),
                 // pod SkyPhusion/vivijure-serverless#17: emit per-shot clips, no on-GPU assembly.

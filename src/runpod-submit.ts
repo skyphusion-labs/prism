@@ -10,19 +10,31 @@
 // job input shape is fixed in rp_handler.py:
 //
 //   { "project": "<name>", "bundle_key": "bundles/<name>.tar.gz",
-//     "quality_tier": "draft|standard|final", "render_overrides": {...} }
+//     "quality_tier": "draft|final", "render_overrides": {...} }
 //
 // RunPod wraps this in `{ "input": {...} }` on submit. Polling returns an
 // envelope { id, status, output?, error?, executionTime?, delayTime? }.
 
 import type { Env } from "./env";
 
+// Quality tier normalizer (v0.156.1). The tiers are keyframe (a separate
+// keyframesOnly flag), draft (4-step distilled), and final (full-step high-cfg);
+// there is no real "standard" tier (the pod's for_tier only branches draft vs
+// final). "standard" was a vestigial label, removed here; it coerces to "final"
+// for back-compat so old History rows / clients never 400. Anything else is
+// undefined (an invalid tier the caller should be told about).
+export function coerceQualityTier(t: unknown): "draft" | "final" | undefined {
+  if (t === "draft") return "draft";
+  if (t === "final" || t === "standard") return "final";
+  return undefined;
+}
+
 // What the planner / UI sends to /api/storyboard/render.
 export interface RenderSubmitArgs {
   // Project slug; if omitted, derived from bundleKey by stripping prefix.
   project?: string;
   bundleKey: string;
-  qualityTier?: "draft" | "standard" | "final";
+  qualityTier?: "draft" | "final";
   renderOverrides?: Record<string, unknown>;
   // v0.39.0: stamped on every R2 upload the GPU side produces (MP4,
   // state.tar.gz, keyframes) as x-amz-meta-user_email, so the existing
@@ -515,8 +527,8 @@ export interface ConsistencyOverrides {
   // is the consistency-block-level version which the chain logic reads.
   face_lock_mode?: "img2img" | "ip_adapter" | "instantid" | "both";
   // Hard-pin the consistency profile to a specific quality tier
-  // ("draft"|"standard"|"final"). Pod default "standard".
-  quality_tier?: "draft" | "standard" | "final";
+  // ("draft"|"final"). Pod default "final".
+  quality_tier?: "draft" | "final";
   // Denoise strength when chaining a previous shot's last frame into the
   // next shot's keyframe gen. Lower = more carryover of the prior shot.
   // 0..1; pod default 0.24.
@@ -642,7 +654,7 @@ export interface MultiCharacterOverrides {
 export interface RenderJobInput {
   project: string;
   bundle_key: string;
-  quality_tier: "draft" | "standard" | "final";
+  quality_tier: "draft" | "final";
   render_overrides?: Record<string, unknown>;
   user_email?: string;
   audio_key?: string;
@@ -719,7 +731,7 @@ export interface RegenShotJobInput {
 export interface FinalizeArgs {
   project: string;
   bundleKey: string;
-  qualityTier?: "draft" | "standard" | "final";
+  qualityTier?: "draft" | "final";
   renderOverrides?: Record<string, unknown>;
   userEmail?: string;
   // v0.45.0: optional shot_id list to restrict the I2V pass + final
@@ -774,7 +786,7 @@ export interface FinalizeJobInput {
   action: "finalize";
   project: string;
   bundle_key: string;
-  quality_tier: "draft" | "standard" | "final";
+  quality_tier: "draft" | "final";
   render_overrides?: Record<string, unknown>;
   user_email?: string;
   process_shot_ids?: string[];
@@ -1591,8 +1603,9 @@ export function normalizeConsistencyOverrides(
   ) {
     out.face_lock_mode = raw.face_lock_mode;
   }
-  if (raw.quality_tier === "draft" || raw.quality_tier === "standard" || raw.quality_tier === "final") {
-    out.quality_tier = raw.quality_tier;
+  {
+    const qt = coerceQualityTier(raw.quality_tier);  // legacy "standard" coerces to "final"
+    if (qt) out.quality_tier = qt;
   }
   if (typeof raw.chain_denoising === "number" && Number.isFinite(raw.chain_denoising) && raw.chain_denoising >= 0 && raw.chain_denoising <= 1) {
     out.chain_denoising = raw.chain_denoising;
