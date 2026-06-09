@@ -1675,8 +1675,9 @@ interface RenderSubmitRequest {
   project?: unknown;
   qualityTier?: unknown;
   renderOverrides?: unknown;
-  // v0.40.0: opt out of the I2V + assembly pass. Merged into
-  // render_overrides.keyframes_only on the wire (runpod-submit.ts).
+  // v0.40.0: opt out of the I2V + assembly pass. v0.160.0: selects the
+  // first-class action="preview" on the wire (runpod-submit.ts), not a
+  // render_overrides.keyframes_only flag.
   keyframesOnly?: unknown;
   // v0.52.0: R2 key for an optional audio bed to mux onto the final
   // video on the GPU side (vivijure-serverless 0.4.11+). Two prefixes

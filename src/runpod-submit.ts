@@ -40,9 +40,10 @@ export interface RenderSubmitArgs {
   qualityTier?: "draft" | "standard" | "final";
   // The namespaced generation-override contract the clean-room backend reads
   // (config.py RenderConfig.from_request): { keyframe, i2v, lora } layered over
-  // the quality-tier baseline, plus the routing flags it reads off the raw dict
-  // (keyframes_only, finish_offloaded). normalizeRenderOverrides drops anything
-  // else; the pod re-clamps. See docs/render-api.md.
+  // the quality-tier baseline, plus the one routing flag it reads off the raw
+  // dict (finish_offloaded; keyframes-only is the `preview` action now, not a
+  // flag). normalizeRenderOverrides drops anything else; the pod re-clamps. See
+  // docs/render-api.md.
   renderOverrides?: Record<string, unknown>;
   // v0.39.0: stamped on every R2 upload the GPU side produces (MP4,
   // state.tar.gz, keyframes) as x-amz-meta-user_email, so the existing
@@ -52,11 +53,12 @@ export interface RenderSubmitArgs {
   userEmail?: string;
   // v0.40.0: skip Wan I2V + silent-MP4 assembly; produce only SDXL
   // keyframes so the user can preview shots before committing to the
-  // full render. Merged into render_overrides.keyframes_only=true on
-  // the wire; the GPU side (vivijure-serverless 0.4.2+) reads it from
-  // the payload and short-circuits the orchestrator after the SDXL
-  // pass. A render_overrides.keyframes_only set via the freeform
-  // overrides textarea wins over an unset top-level keyframesOnly.
+  // full render. v0.160.0: this now selects the first-class
+  // action="preview" on the wire (vivijure-backend Action.PREVIEW), not
+  // a render_overrides.keyframes_only flag. The retired vivijure-
+  // serverless read that flag and short-circuited after the SDXL pass;
+  // the clean-room backend dispatches on `action` only, so the flag was
+  // silently ignored and every "preview" ran a full render.
   keyframesOnly?: boolean;
   // v0.52.0: optional R2 key for an audio bed to mux onto the final
   // video. Vivijure-serverless 0.4.11+ downloads from R2_BUCKET and
@@ -74,6 +76,11 @@ export interface RenderSubmitArgs {
 // names mirror the Python side (snake_case) so any change there propagates
 // here without a layer of remapping.
 export interface RenderJobInput {
+  // v0.160.0: "preview" selects the keyframes-only render (train + SDXL
+  // keyframes, no Wan i2v, no MP4) via vivijure-backend Action.PREVIEW.
+  // Absent = full render (the backend's default "render"). A first-class
+  // action like finalize/train_lora, not a render_overrides flag.
+  action?: "preview";
   project: string;
   bundle_key: string;
   quality_tier: "draft" | "standard" | "final";
@@ -221,9 +228,13 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
     bundle_key: args.bundleKey,
     quality_tier: args.qualityTier ?? "final",
   };
-  // The namespaced render_overrides ({keyframe,i2v,lora} + routing flags); the
-  // keyframesOnly boolean folds into keyframes_only unless already pinned.
-  const ro = normalizeRenderOverrides(args.renderOverrides, { keyframesOnly: args.keyframesOnly });
+  // v0.160.0: keyframes-only is a first-class action (Action.PREVIEW), not a
+  // render_overrides.keyframes_only flag the backend has to remember to read.
+  // The retired vivijure-serverless honored the flag; the clean-room backend
+  // dispatches on `action` only, so the flag was a dead passenger and every
+  // preview ran the full train -> keyframes -> i2v -> MP4 path.
+  if (args.keyframesOnly) input.action = "preview";
+  const ro = normalizeRenderOverrides(args.renderOverrides);
   if (ro) input.render_overrides = ro;
   if (typeof args.userEmail === "string" && args.userEmail.length > 0) {
     input.user_email = args.userEmail;
@@ -302,8 +313,9 @@ export function buildTrainLoraPayload(args: TrainLoraArgs): { input: TrainLoraJo
 
 // The namespaced render-override contract the clean-room vivijure-backend reads
 // (config.py RenderConfig.from_request): a { keyframe, i2v, lora } object layered
-// over the quality-tier baseline, plus the routing flags the backend reads off the
-// raw overrides dict (keyframes_only, finish_offloaded). Anything outside these
+// over the quality-tier baseline, plus the one routing flag the backend reads off
+// the raw overrides dict (finish_offloaded; keyframes-only is the `preview` action
+// now). Anything outside these
 // known sections / flags is DROPPED here -- the planner historically sent ~24
 // vivijure-serverless *_overrides blocks (multi_character, wan_diffusion, ...) that
 // the clean-room backend never reads, so every advanced knob was silently lost
@@ -312,11 +324,13 @@ export function buildTrainLoraPayload(args: TrainLoraArgs): { input: TrainLoraJo
 // stray key wastes no GPU. Advanced users now send the namespaced shape directly
 // (docs/render-api.md).
 const _OVERRIDE_SECTIONS = ["keyframe", "i2v", "lora"] as const;
-const _OVERRIDE_FLAGS = ["keyframes_only", "finish_offloaded"] as const;
+// v0.160.0: keyframes_only is no longer a wire flag -- it is the `preview` action
+// now (buildSubmitPayload sets input.action). finish_offloaded stays the one
+// routing flag the backend reads off the raw overrides dict.
+const _OVERRIDE_FLAGS = ["finish_offloaded"] as const;
 
 export function normalizeRenderOverrides(
   raw: unknown,
-  opts?: { keyframesOnly?: boolean },
 ): Record<string, unknown> | undefined {
   const out: Record<string, unknown> = {};
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
@@ -329,9 +343,6 @@ export function normalizeRenderOverrides(
       if (typeof r[f] === "boolean") out[f] = r[f];
     }
   }
-  // The top-level keyframesOnly flag sets keyframes_only only when the caller did not
-  // already pin it in the overrides (a power-user override is never silently dropped).
-  if (opts?.keyframesOnly && out.keyframes_only === undefined) out.keyframes_only = true;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

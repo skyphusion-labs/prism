@@ -73,8 +73,10 @@ re-clamps every value to its valid range.
   `max_steps`, `batch_size`, `gradient_accumulation_steps`, `seed`, `random_flip`,
   `gradient_checkpointing`, `caption_template`, `save_every`.
 
-Plus routing flags read off the top level of `renderOverrides`: `keyframes_only`
-and `finish_offloaded`.
+Plus the one routing flag read off the top level of `renderOverrides`:
+`finish_offloaded`. (Keyframes-only preview is the top-level `keyframesOnly`
+request field, which selects `action: "preview"` on the wire as of v0.160.0, not
+a `renderOverrides` flag.)
 
 ### Examples
 

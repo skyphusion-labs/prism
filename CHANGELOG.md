@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.160.0
+
+Feature/fix: the "render keyframes only" checkbox produced a full render with motion
+(a silent MP4) instead of stopping at SDXL keyframes. Same envelope-shape family as the
+v0.159.1 LoRA bug: a contract field the consumer never read.
+
+Cause: keyframes-only was sent as `render_overrides.keyframes_only`. The retired
+vivijure-serverless honored that flag by short-circuiting after the SDXL pass; the
+clean-room vivijure-backend dispatches on the `action` field ONLY and never read the
+flag (`grep keyframes_only` across the backend: zero hits), so a keyframes-only request
+ran the full train -> keyframes -> i2v -> assemble path. The flag was a dead passenger
+on the wire.
+
+Fix: keyframes-only is now a first-class `action: "preview"` (vivijure-backend
+`Action.PREVIEW`, backend-v0.1.12), exactly like `finalize` / `train_lora`. `buildSubmitPayload`
+sets `input.action = "preview"` when `keyframesOnly` is true and no longer folds anything into
+`render_overrides`; `normalizeRenderOverrides` drops `keyframes_only` from its wire flags (only
+`finish_offloaded` remains). Routing is one word now, traceable producer -> consumer. The public
+`keyframesOnly` request field and the `keyframes-only` render `mode` are unchanged; only the
+pod wire representation moved.
+
+DEPLOY ORDER: requires the backend `preview` action live first (tag `backend-v0.1.12`).
+Sending `action: "preview"` to an older backend falls back to `render` (`Action.parse`), i.e.
+today's full-render behavior -- no regression, but not the fix until both are deployed.
+
+### Code
+- `src/runpod-submit.ts`: `RenderJobInput.action?: "preview"`; `buildSubmitPayload` sets it from
+  `keyframesOnly`; `normalizeRenderOverrides` drops the `keyframes_only` flag + the `opts` arg
+- `src/index.ts`: render-request `keyframesOnly` comment now points at `action="preview"`
+- `docs/render-api.md`: routing-flags note + keyframes-only description
+- `tests/runpod-submit.test.ts`: preview-action assertions; dropped the obsolete flag/opts cases
+- `package.json`: 0.159.1 -> 0.160.0
+- typecheck: clean; tests: green
+
 ## v0.159.1
 
 Fix: cast LoRA training appeared broken on the clean-room backend. The job trained

@@ -131,46 +131,48 @@ describe("buildSubmitPayload", () => {
     expect("user_email" in out.input).toBe(false);
   });
 
-  it("merges keyframesOnly:true into render_overrides.keyframes_only (v0.40.0)", () => {
+  it("sets action='preview' when keyframesOnly is true (v0.160.0)", () => {
     const out = buildSubmitPayload({
       bundleKey: "bundles/cherry.tar.gz",
       keyframesOnly: true,
     });
-    expect(out.input.render_overrides).toEqual({ keyframes_only: true });
+    expect(out.input.action).toBe("preview");
+    // keyframes-only is the action now, not a render_overrides flag
+    expect(out.input.render_overrides).toBeUndefined();
   });
 
-  it("preserves an existing render_overrides.keyframes_only over keyframesOnly (v0.40.0)", () => {
-    const out = buildSubmitPayload({
-      bundleKey: "bundles/cherry.tar.gz",
-      keyframesOnly: true,
-      renderOverrides: { keyframes_only: false, keyframe: { steps: 8 } },
-    });
-    expect(out.input.render_overrides).toEqual({
-      keyframe: { steps: 8 },
-      keyframes_only: false,
-    });
-  });
-
-  it("merges keyframesOnly:true alongside the namespaced sections (v0.40.0)", () => {
+  it("keeps the namespaced sections but never emits a keyframes_only flag (v0.160.0)", () => {
     const out = buildSubmitPayload({
       bundleKey: "bundles/cherry.tar.gz",
       keyframesOnly: true,
       renderOverrides: { keyframe: { steps: 8 }, i2v: { steps: 20 } },
     });
+    expect(out.input.action).toBe("preview");
     expect(out.input.render_overrides).toEqual({
       keyframe: { steps: 8 },
       i2v: { steps: 20 },
-      keyframes_only: true,
     });
   });
 
-  it("omits keyframes_only when keyframesOnly is false / undefined (v0.40.0)", () => {
+  it("drops a raw render_overrides.keyframes_only (no longer a wire flag) (v0.160.0)", () => {
+    const out = buildSubmitPayload({
+      bundleKey: "bundles/cherry.tar.gz",
+      renderOverrides: { keyframes_only: true, keyframe: { steps: 8 } },
+    });
+    // a keyframes_only typed into raw overrides is dropped; only the section survives
+    expect(out.input.render_overrides).toEqual({ keyframe: { steps: 8 } });
+    expect("action" in out.input).toBe(false);
+  });
+
+  it("omits action when keyframesOnly is false / undefined (v0.160.0)", () => {
     const out1 = buildSubmitPayload({ bundleKey: "bundles/cherry.tar.gz" });
+    expect("action" in out1.input).toBe(false);
     expect(out1.input.render_overrides).toBeUndefined();
     const out2 = buildSubmitPayload({
       bundleKey: "bundles/cherry.tar.gz",
       keyframesOnly: false,
     });
+    expect("action" in out2.input).toBe(false);
     expect(out2.input.render_overrides).toBeUndefined();
   });
 });
@@ -409,13 +411,14 @@ describe("normalizeRenderOverrides", () => {
     });
   });
 
-  it("keeps the routing flags (keyframes_only / finish_offloaded) when boolean", () => {
-    expect(normalizeRenderOverrides({ keyframes_only: true, finish_offloaded: false })).toEqual({
-      keyframes_only: true,
+  it("keeps the finish_offloaded routing flag when boolean, drops keyframes_only (v0.160.0)", () => {
+    expect(normalizeRenderOverrides({ finish_offloaded: false })).toEqual({
       finish_offloaded: false,
     });
+    // keyframes_only is the `preview` action now, not a wire flag: it is dropped here
+    expect(normalizeRenderOverrides({ keyframes_only: true })).toBeUndefined();
     // non-boolean flags are dropped
-    expect(normalizeRenderOverrides({ keyframes_only: "yes" })).toBeUndefined();
+    expect(normalizeRenderOverrides({ finish_offloaded: "yes" })).toBeUndefined();
   });
 
   it("drops a section that is not a plain object", () => {
@@ -429,14 +432,4 @@ describe("normalizeRenderOverrides", () => {
     expect(normalizeRenderOverrides([{ keyframe: {} }])).toBeUndefined();
   });
 
-  it("folds opts.keyframesOnly into keyframes_only unless the caller already pinned it", () => {
-    expect(normalizeRenderOverrides({ keyframe: { steps: 8 } }, { keyframesOnly: true })).toEqual({
-      keyframe: { steps: 8 },
-      keyframes_only: true,
-    });
-    // an explicit keyframes_only in the overrides wins over the boolean
-    expect(normalizeRenderOverrides({ keyframes_only: false }, { keyframesOnly: true })).toEqual({
-      keyframes_only: false,
-    });
-  });
 });
