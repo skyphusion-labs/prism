@@ -70,6 +70,11 @@ export interface RenderSubmitArgs {
   // v0.58.0: pretrained-LoRA passthrough. Resolved by the route from a
   // body-side {slot: cast_id} map; keys are R2 paths under loras/...
   pretrainedLoras?: Record<string, string>;
+  // v0.161.0: restrict a fresh render to a subset of shots (scatter shards).
+  // The backend orchestrator.plan() scopes scenes to process_shot_ids for ANY
+  // action (not finalize-only); a scatter shard is a finish-offloaded render
+  // over its slice. Empty / undefined => the full storyboard.
+  processShotIds?: string[];
 }
 
 // What the vivijure-serverless rp_handler.py reads off the job input. Field
@@ -91,6 +96,9 @@ export interface RenderJobInput {
   // stage to skip Stage 1 training. Resolved server-side from cast
   // bindings against cast_members rows the user owns.
   pretrained_loras?: Record<string, string>;
+  // v0.161.0: subset of shots for a scatter shard (mirrors finalize's field).
+  // The backend plan() scopes scenes to it for the render action too.
+  process_shot_ids?: string[];
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -256,6 +264,11 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   // was that the field never reached it.
   if (args.pretrainedLoras && Object.keys(args.pretrainedLoras).length > 0) {
     input.pretrained_loras = { ...args.pretrainedLoras };
+  }
+  // v0.161.0: subset render for a scatter shard. Same empty-array-is-undefined
+  // semantic as finalize: an empty list means "the full storyboard".
+  if (Array.isArray(args.processShotIds) && args.processShotIds.length > 0) {
+    input.process_shot_ids = [...args.processShotIds];
   }
   return { input };
 }
