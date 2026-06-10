@@ -891,6 +891,33 @@ export async function setRenderLockedShots(
   return changes > 0;
 }
 
+// v0.161.0: the integer id for a job_id. The scatter submit inserts a parent
+// row keyed by a synthetic scatter-<uuid> job_id, then needs its autoincrement
+// id to link the child shard rows via parent_id. job_id is UNIQUE + unguessable,
+// so this is not user-scoped (the same capability model as getRenderForPoll).
+export async function getRenderIdByJobId(env: Env, jobId: string): Promise<number | null> {
+  const r = await env.DB.prepare(`SELECT id FROM renders WHERE job_id = ?`)
+    .bind(jobId)
+    .first<{ id: number }>();
+  return r ? Number(r.id) : null;
+}
+
+// v0.161.0: the child shard rows of a scatter parent (job_id + last status),
+// for the gather watcher to poll each shard and decide finish/wait/fail. A
+// scatter parent's children are exactly its shards (no finalize/animate child
+// ever points at a scatter parent), so parent_id alone is the right filter.
+export async function getScatterChildren(
+  env: Env,
+  parentId: number,
+): Promise<Array<{ job_id: string; status: string }>> {
+  const rs = await env.DB.prepare(
+    `SELECT job_id, status FROM renders WHERE parent_id = ? ORDER BY id ASC`,
+  )
+    .bind(parentId)
+    .all<{ job_id: string; status: string }>();
+  return (rs.results ?? []).map((r) => ({ job_id: String(r.job_id), status: String(r.status) }));
+}
+
 // v0.126.0: PATCH the folder_path on a row, scoped to user_email. null / ''
 // clears it (unfiled). Same return-bool semantics as setRenderLabel.
 export async function setRenderFolder(

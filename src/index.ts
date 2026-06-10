@@ -67,7 +67,8 @@ import {
   parseBeatTimingInput,
   type BeatTimingInput,
 } from "./beat-timing";
-import { finishInputFromPodOutput, isOffloadedRenderOutput, parseVideoFinishInput, runVideoFinish } from "./video-finish";
+import { finishInputFromClipKeys, finishInputFromPodOutput, gatherClipPresence, isOffloadedRenderOutput, parseVideoFinishInput, runVideoFinish } from "./video-finish";
+import { buildShardJobs, gatherDecision, isScatterParentJobId, scatterParentJobId } from "./scatter";
 import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
@@ -98,6 +99,8 @@ import {
   getFinishState,
   getRenderByIdForUser,
   getRenderForPoll,
+  getRenderIdByJobId,
+  getScatterChildren,
   insertRender,
   listRendersForUser,
   listUnresolvedNotifiableJobs,
@@ -564,6 +567,13 @@ export default {
     // v0.32.0: submit a render job to the vivijure-serverless RunPod endpoint.
     if (url.pathname === "/api/storyboard/render" && request.method === "POST") {
       return handleRenderSubmit(request, env);
+    }
+    // v0.161.0: distributed scatter/gather render. Splits the storyboard across
+    // N parallel finish-offloaded shard jobs (reusing pre-trained LoRAs), then
+    // gathers their per-shot clips into one MP4. Poll the returned parentJobId
+    // at GET /api/storyboard/render/<parentJobId> to watch the gather.
+    if (url.pathname === "/api/storyboard/render/scatter" && request.method === "POST") {
+      return handleScatterSubmit(request, env);
     }
 
     // v0.150.0 (Phase 4b): submit a GPU i2v render DIRECTLY against a bundle's
@@ -2368,6 +2378,323 @@ async function resolveOffloadedFinish(
   return { kind: "finished" };
 }
 
+// v0.161.0: distributed scatter/gather render. Split the storyboard across N
+// finish-offloaded subset jobs that REUSE pre-trained LoRAs (so no shard
+// retrains, and every shot shares byte-identical identity), then GATHER their
+// per-shot clips into one MP4 once every shot is present. The pure conductor
+// decisions live in src/scatter.ts; the gather core (clip presence + finish
+// input + the video-finish container) is reused from video-finish.ts. The
+// parent is a synthetic scatter-<uuid> renders row; each shard is a child row
+// linked by parent_id, with the shard's shots stored on it.
+interface ScatterSubmitRequest {
+  bundleKey?: unknown;
+  project?: unknown;
+  shotIds?: unknown;
+  shardCount?: unknown;
+  castLoras?: unknown;
+  qualityTier?: unknown;
+  renderOverrides?: unknown;
+  projectId?: unknown;
+  shotSlots?: unknown;
+}
+
+async function handleScatterSubmit(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  let body: ScatterSubmitRequest;
+  try {
+    body = await request.json<ScatterSubmitRequest>();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (typeof body.bundleKey !== "string" || body.bundleKey.trim().length === 0) {
+    return json({ error: "bundleKey is required (non-empty string)" }, { status: 400 });
+  }
+  const shotIds = Array.isArray(body.shotIds)
+    ? body.shotIds.filter((s): s is string => typeof s === "string" && s.length > 0)
+    : [];
+  if (shotIds.length < 2) {
+    return json({ error: "shotIds must be an ordered array of at least 2 shot ids" }, { status: 400 });
+  }
+  if (typeof body.shardCount !== "number" || !Number.isInteger(body.shardCount) || body.shardCount < 2) {
+    return json({ error: "shardCount must be an integer >= 2" }, { status: 400 });
+  }
+  if (body.qualityTier !== undefined && coerceQualityTier(body.qualityTier) === undefined) {
+    return json({ error: "qualityTier must be 'draft' | 'standard' | 'final' if provided" }, { status: 400 });
+  }
+  if (
+    body.renderOverrides !== undefined &&
+    (typeof body.renderOverrides !== "object" || body.renderOverrides === null || Array.isArray(body.renderOverrides))
+  ) {
+    return json({ error: "renderOverrides must be an object if provided" }, { status: 400 });
+  }
+  if (typeof body.castLoras !== "object" || body.castLoras === null || Array.isArray(body.castLoras)) {
+    return json(
+      { error: "castLoras {slot: cast_id} is required for a scatter render (every character must already have a trained LoRA)" },
+      { status: 400 },
+    );
+  }
+  let shotSlots: Record<string, string[]> | undefined;
+  if (body.shotSlots !== undefined) {
+    if (typeof body.shotSlots !== "object" || body.shotSlots === null || Array.isArray(body.shotSlots)) {
+      return json({ error: "shotSlots must be an object {shotId: slot[]} if provided" }, { status: 400 });
+    }
+    shotSlots = {};
+    for (const [k, v] of Object.entries(body.shotSlots as Record<string, unknown>)) {
+      if (Array.isArray(v)) shotSlots[k] = v.filter((x): x is string => typeof x === "string");
+    }
+  }
+  let projectId: number | null = null;
+  if (body.projectId !== undefined && body.projectId !== null) {
+    if (typeof body.projectId !== "number" || !Number.isInteger(body.projectId) || body.projectId <= 0) {
+      return json({ error: "projectId must be a positive integer if provided" }, { status: 400 });
+    }
+    const proj = await getProjectById(env, body.projectId, userEmail);
+    if (!proj) return json({ error: "projectId not found" }, { status: 404 });
+    projectId = proj.id;
+  }
+  if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
+    return json({ error: "RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID must be set on the Worker." }, { status: 503 });
+  }
+
+  // Resolve {slot: cast_id} -> {slot: lora_key}. Scatter REQUIRES every bound
+  // slot to be a ready, trained LoRA: a shard that retrains would defeat the
+  // parallelism AND risk per-shard identity drift, so a not-ready binding is a
+  // hard 400, not the silent fresh-train a normal render falls back to.
+  const castLorasInput = body.castLoras as CastLoraBindings;
+  const castLoraSkipped: Array<{ slot: string; cast_id: number; reason: string }> = [];
+  const ids = uniqueCastIds(castLorasInput);
+  const loaded = new Map<number, Awaited<ReturnType<typeof getCastById>>>();
+  await Promise.all(
+    ids.map(async (id) => {
+      const c = await getCastById(env, id, userEmail);
+      loaded.set(id, await refreshTrainingLora(env, c, userEmail));
+    }),
+  );
+  const resolved = resolveCastLoraBindings(castLorasInput, loaded);
+  for (const s of resolved.skipped) castLoraSkipped.push(s);
+  if (castLoraSkipped.length > 0) {
+    return json(
+      { error: "every character's LoRA must be trained + ready before a scatter render", castLoraSkipped },
+      { status: 400 },
+    );
+  }
+  const pretrainedLoras = resolved.pretrained;
+  if (Object.keys(pretrainedLoras).length === 0) {
+    return json({ error: "scatter requires pretrained LoRAs (castLoras) for the storyboard's characters" }, { status: 400 });
+  }
+
+  const project =
+    typeof body.project === "string" && body.project.trim().length > 0
+      ? body.project
+      : deriveProjectFromBundleKey(body.bundleKey);
+  const qualityTier = body.qualityTier as RenderSubmitArgs["qualityTier"] | undefined;
+
+  const shardJobs = buildShardJobs({
+    project,
+    bundleKey: body.bundleKey,
+    qualityTier,
+    pretrainedLoras,
+    shotIds,
+    shardCount: body.shardCount,
+    renderOverrides: body.renderOverrides as Record<string, unknown> | undefined,
+    userEmail,
+    shotSlots,
+  });
+  if (shardJobs.length < 2) {
+    return json({ error: "scatter produced fewer than 2 shards; add shots or lower shardCount" }, { status: 400 });
+  }
+
+  // Parent row (synthetic job_id; NOT a RunPod job). The ordered shot list is
+  // stored on it (locked_shots) so the gather watcher can check clip presence
+  // across the whole storyboard and assemble the clips in storyboard order.
+  const parentJobId = scatterParentJobId(crypto.randomUUID());
+  await insertRender(env, {
+    userEmail,
+    jobId: parentJobId,
+    project,
+    bundleKey: body.bundleKey,
+    qualityTier: qualityTier ?? "final",
+    status: "SCATTERING",
+    mode: "full",
+    projectId,
+  });
+  const parentId = await getRenderIdByJobId(env, parentJobId);
+  if (parentId === null) {
+    return json({ error: "failed to persist the scatter parent row" }, { status: 500 });
+  }
+  await setRenderLockedShots(env, parentId, userEmail, shotIds);
+
+  // Submit each shard + insert its child row (parent_id linked). Best-effort per
+  // shard: a shard that fails to submit is reported; the rest still run.
+  const children: string[] = [];
+  const failedShards: Array<{ shots: string[] | undefined; error: string }> = [];
+  for (const job of shardJobs) {
+    const res = await submitRenderJob(env, job);
+    if (!res.ok) {
+      failedShards.push({ shots: job.processShotIds, error: res.error });
+      continue;
+    }
+    children.push(res.view.jobId);
+    try {
+      await insertRender(env, {
+        userEmail,
+        jobId: res.view.jobId,
+        project,
+        bundleKey: body.bundleKey,
+        qualityTier: qualityTier ?? "final",
+        status: "SUBMITTED",
+        mode: "full",
+        projectId,
+        parentId,
+      });
+      const childId = await getRenderIdByJobId(env, res.view.jobId);
+      if (childId !== null && job.processShotIds) {
+        await setRenderLockedShots(env, childId, userEmail, job.processShotIds);
+      }
+    } catch (err) {
+      console.error("scatter child insert failed:", err);
+    }
+  }
+  if (children.length === 0) {
+    await markRenderFailedByJobId(env, parentJobId, "all scatter shards failed to submit").catch(() => {});
+    return json({ ok: false, error: "all scatter shards failed to submit", failedShards, user: userEmail }, { status: 502 });
+  }
+
+  return json({
+    ok: true,
+    parentJobId,
+    parentId,
+    shards: children.length,
+    children,
+    failedShards,
+    pretrainedSlots: Object.keys(pretrainedLoras),
+    user: userEmail,
+  });
+}
+
+// v0.161.0: the gather watcher. Called from the poll handler for a scatter
+// parent (scatter-<uuid>). Refreshes each shard's RunPod status, checks whether
+// every storyboard shot now has a clip in R2, and on completion assembles the
+// single MP4 via the video-finish container (D1-locked on the parent job, the
+// same idempotency model as resolveOffloadedFinish). A dead shard with shots
+// still missing fails the parent; otherwise it reports progress and keeps polling.
+async function resolveScatterGather(env: Env, parentJobId: string, userEmail: string): Promise<Response> {
+  const parentId = await getRenderIdByJobId(env, parentJobId);
+  if (parentId === null) return json({ error: "scatter render not found" }, { status: 404 });
+  const parent = await getRenderByIdForUser(env, parentId, userEmail);
+  if (!parent) return json({ error: "scatter render not found" }, { status: 404 });
+
+  // Already terminal? Serve the cached row (COMPLETED carries the merged MP4).
+  if (isTerminalStatus(parent.status)) {
+    return json({
+      ok: true,
+      jobId: parentJobId,
+      status: parent.status,
+      statusRaw: parent.status,
+      output: parent.output ?? (parent.output_key ? { output_key: parent.output_key } : null),
+      error: parent.error,
+      user: userEmail,
+    });
+  }
+
+  const shots = parent.locked_shots ?? [];
+  const children = await getScatterChildren(env, parentId);
+  // Refresh each shard's status from RunPod (best-effort) so a dead shard is
+  // seen and the child rows reflect reality. The shards are finish_offloaded, so
+  // they write per-shot clips to R2 and never assemble; we deliberately do NOT
+  // run resolveOffloadedFinish on a shard (the parent owns the single merge).
+  const childStatuses = await Promise.all(
+    children.map(async (c) => {
+      const poll = await pollRenderJob(env, c.job_id).catch(() => null);
+      if (poll && poll.ok) {
+        try {
+          await updateRenderFromView(env, poll.view);
+        } catch {
+          /* best effort */
+        }
+        return { status: poll.view.status };
+      }
+      return { status: c.status };
+    }),
+  );
+
+  const { present, missing } = await gatherClipPresence(env, parent.project, shots);
+  const decision = gatherDecision(present, missing, childStatuses);
+
+  if (decision.kind === "failed") {
+    await markRenderFailedByJobId(env, parentJobId, decision.reason).catch(() => {});
+    await maybeNotifyRenderDone(env, parentJobId);
+    return json({ ok: true, jobId: parentJobId, status: "FAILED", statusRaw: "SCATTER_FAILED", error: decision.reason, user: userEmail });
+  }
+
+  if (decision.kind === "finish") {
+    // Idempotent finish lock on the PARENT job id (reuses the offloaded-finish
+    // machinery). A concurrent poll that loses reports "assembling".
+    const won = await claimFinish(env, parentJobId);
+    if (!won) {
+      const st = await getFinishState(env, parentJobId);
+      if (st?.finish_state === "done" && st.output_key) {
+        return json({ ok: true, jobId: parentJobId, status: "COMPLETED", output: { output_key: st.output_key, scatter: true }, user: userEmail });
+      }
+      return json({ ok: true, jobId: parentJobId, status: "IN_PROGRESS", statusRaw: "FINISHING", error: "assembling final video", user: userEmail });
+    }
+    const input = finishInputFromClipKeys(parent.project, shots);
+    if (!input) {
+      await markFinishFailed(env, parentJobId, "gather finish manifest empty");
+      return json({ ok: true, jobId: parentJobId, status: "IN_PROGRESS", statusRaw: "FINISHING", error: "gather manifest empty", user: userEmail });
+    }
+    const res = await runVideoFinish(env, input);
+    if (!res.ok) {
+      await markFinishFailed(env, parentJobId, res.error);
+      return json({ ok: true, jobId: parentJobId, status: "IN_PROGRESS", statusRaw: "FINISHING", error: res.error, user: userEmail });
+    }
+    // The container PUT via a presigned URL, which drops the user_email metadata
+    // /api/artifact needs; re-stamp through the binding (same as the single-job
+    // offloaded finish does).
+    try {
+      const obj = await env.R2_RENDERS.get(input.outputKey);
+      if (obj) {
+        await env.R2_RENDERS.put(input.outputKey, obj.body, {
+          httpMetadata: { contentType: "video/mp4" },
+          customMetadata: { user_email: userEmail },
+        });
+      }
+    } catch (e) {
+      console.error("scatter finish metadata stamp failed:", e);
+    }
+    const r = res.result as { durationSeconds?: number; hasAudio?: boolean };
+    const out: Record<string, unknown> = {
+      output_key: input.outputKey,
+      project: parent.project,
+      scatter: true,
+      shots: shots.length,
+      shards: children.length,
+    };
+    if (typeof r.durationSeconds === "number") out.seconds = r.durationSeconds;
+    if (typeof r.hasAudio === "boolean") out.has_audio = r.hasAudio;
+    await markFinishDone(env, parentJobId, input.outputKey, JSON.stringify(out));
+    await maybeNotifyRenderDone(env, parentJobId);
+    return json({ ok: true, jobId: parentJobId, status: "COMPLETED", output: out, user: userEmail });
+  }
+
+  // waiting
+  return json({
+    ok: true,
+    jobId: parentJobId,
+    status: "IN_PROGRESS",
+    statusRaw: "SCATTERING",
+    output: {
+      scatter: true,
+      shots_total: shots.length,
+      shots_present: present.length,
+      shots_missing: missing.length,
+      shards: children.length,
+    },
+    user: userEmail,
+  });
+}
+
 // v0.136.0: poll RunPod, then reconcile a "job not found" (404) against our
 // own render row so a dropped submission fails the row instead of hanging the
 // UI at IN_QUEUE forever. RunPod's /run can return IN_QUEUE for a job its
@@ -2531,6 +2858,13 @@ async function handleRenderPoll(
       error: row.error,
       user: userEmail,
     });
+  }
+
+  // v0.161.0: scatter parents (scatter-<uuid>) are not RunPod jobs; they own N
+  // shard jobs. Route to the gather watcher, which polls the shards, checks clip
+  // presence across the storyboard, and assembles the single MP4 on completion.
+  if (isScatterParentJobId(jobId)) {
+    return resolveScatterGather(env, jobId, userEmail);
   }
 
   if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
