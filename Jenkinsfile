@@ -9,11 +9,11 @@
 // disable "Discover pull requests from forks", mirroring the fork guard in ci.yml).
 //
 // Required Jenkins credentials (Manage Jenkins -> Credentials):
-//   - skyphusion-wrangler-toml  (Secret file)   the real wrangler.toml with
-//                                                database_id + account_id filled in
-//   - CLOUDFLARE_API_TOKEN      (Secret text)   Cloudflare API token with
-//                                                "Edit Workers" permissions
-//                                                (already present on mindcrime-ci)
+//   - CLOUDFLARE_API_TOKEN  (Secret text)  Cloudflare API token with "Edit Workers" permissions
+//   - CLOUDFLARE_ACCOUNT_ID (Secret text)  Cloudflare account ID
+//   - D1_DATABASE_ID        (Secret text)  skyphusion-llm D1 database_id (not secret per se,
+//                                          but account-specific; injected into wrangler.toml
+//                                          from the wrangler.example.toml template at build time)
 // Deploy never pushes Worker secrets (GATEWAY_ID, BYOK keys); those stay set on
 // the Worker via `wrangler secret put` and are untouched by `wrangler deploy`.
 
@@ -25,13 +25,12 @@ pipeline {
       // `wrangler deploy` build the three Cloudflare Container images
       // (containers/{audio-beat-sync,image-prep,video-finish}) before publishing.
       image 'ghcr.io/skyphusion-labs/ci-node-docker:latest'
-      // Bind-mount the host Docker socket and join the `docker` group (gid 988 on
-      // mindcrime-ci, per `id jenkins`) so wrangler's container builds reach the
+      // Bind-mount the host Docker socket so wrangler's container builds reach the
       // host daemon. Still runs as the Jenkins uid (the docker-pipeline default),
       // NOT root: running as root made npm write root-owned files into the
       // workspace that the host jenkins user then could not clean on the next
       // checkout. HOME below points npm at a writable workspace dir.
-      args '-v /var/run/docker.sock:/var/run/docker.sock --group-add 988'
+      args '-v /var/run/docker.sock:/var/run/docker.sock --group-add docker'
     }
   }
 
@@ -80,20 +79,25 @@ pipeline {
       }
       environment {
         CLOUDFLARE_API_TOKEN = credentials('CLOUDFLARE_API_TOKEN')
+        CLOUDFLARE_ACCOUNT_ID = credentials('CLOUDFLARE_ACCOUNT_ID')
+        D1_DATABASE_ID = credentials('D1_DATABASE_ID')
       }
       steps {
-        // wrangler.toml is gitignored, so inject the real one from a Secret file
-        // credential before deploying. account_id lives inside that file.
-        withCredentials([file(credentialsId: 'skyphusion-wrangler-toml', variable: 'WRANGLER_TOML')]) {
-          sh 'cp "$WRANGLER_TOML" wrangler.toml'
-          sh 'npm run deploy'
-        }
+        // Build wrangler.toml from the committed template. wrangler.example.toml
+        // ships with a PLACEHOLDER for database_id (intentional: new deployers must
+        // provision their own D1). CI injects the real value from a secret credential
+        // so the file never needs to live in the credential store as an opaque blob.
+        // CLOUDFLARE_ACCOUNT_ID is picked up by wrangler from the env var directly.
+        sh '''
+          cp wrangler.example.toml wrangler.toml
+          sed -i "s/PLACEHOLDER_RUN_wrangler_d1_create_THEN_PASTE_HERE/$D1_DATABASE_ID/" wrangler.toml
+          npm run deploy
+        '''
       }
       post {
-        // Scrub the injected secret file. A stage-level post runs in the stage's
+        // Scrub the generated wrangler.toml. A stage-level post runs in the stage's
         // agent context, so it can't hit the missing-node-context error a top-level
-        // post would if an earlier stage failed before the agent came up. The git
-        // checkout wipes the rest of the workspace at the start of each build.
+        // post would if an earlier stage failed before the agent came up.
         always {
           sh 'rm -f wrangler.toml || true'
         }
