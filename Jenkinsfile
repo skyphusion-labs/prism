@@ -9,6 +9,8 @@
 // disable "Discover pull requests from forks", mirroring the fork guard in ci.yml).
 //
 // Required Jenkins credentials (Manage Jenkins -> Credentials):
+//   - ghcr-skyphusion       (User/pass)    ghcr.io pull creds (skyphusion-strummer + PAT);
+//                                          used for authenticated pulls to avoid rate limits
 //   - CLOUDFLARE_API_TOKEN  (Secret text)  Cloudflare API token with "Edit Workers" permissions
 //   - CLOUDFLARE_ACCOUNT_ID (Secret text)  Cloudflare account ID
 //   - D1_DATABASE_ID        (Secret text)  skyphusion-llm D1 database_id (not secret per se,
@@ -25,6 +27,8 @@ pipeline {
       // `wrangler deploy` build the three Cloudflare Container images
       // (containers/{audio-beat-sync,image-prep,video-finish}) before publishing.
       image 'ghcr.io/skyphusion-labs/ci-node-docker:latest'
+      registryUrl 'https://ghcr.io'
+      registryCredentialsId 'ghcr-skyphusion'
       // Bind-mount the host Docker socket so wrangler's container builds reach the
       // host daemon. Still runs as the Jenkins uid (the docker-pipeline default),
       // NOT root: running as root made npm write root-owned files into the
