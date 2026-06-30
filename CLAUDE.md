@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
+This repo is **prism** (renamed from `skyphusion-llm-public`), deployed at **play.skyphusion.org** behind Cloudflare Access. Only the repo was renamed: the deployed Worker, D1, R2, and Vectorize keep their original `skyphusion-llm` names, so binding/resource names in this file and `wrangler.example.toml` still read `skyphusion-llm` on purpose.
+
 A multimodal AI playground deployed as a **single Cloudflare Worker** (no framework, no build step beyond TypeScript). One web UI behind Cloudflare Access exposes chat (35 models / 5 providers), image / TTS / STT / video / music generation, and RAG over files of any type. The interesting part is the patterns, not the model count: every modality funnels through `env.AI.run()` (the unified AI binding) or gateway provider endpoints with **Cloudflare Unified Billing**. The one deployer BYOK escape hatch is optional `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs, because the Unified Billing proxy rejects `background`/`output_format`.
 
 ## Commands
@@ -136,6 +138,7 @@ Tests live in `tests/` and run under plain Vitest in a Node environment (`vitest
 ## Identity & commits
 - Handle/username is `skyphusion` across all services. Default to it when a username is needed.
 - One scoped commit per release. Subject = scoped change, body = the why, footer = files touched.
+- Crew work as their own identity: the FIRST command in any op is the member's own login shell, `sudo -u <member> bash -lc '<ops>'` (own `$HOME`, own clone, own gh/CF creds); commits and PRs land under `skyphusion-<member>`, never Conrad's. Conrad's own commits author `conrad@rockenhaus.net`. Operating memory for this repo lives in its per-project memory; load it before acting.
 
 ## Release versioning
 - SemVer-style `0.MINOR.PATCH` (currently pre-1.0). **PATCH** for fixes, follow-throughs, and backend-only tweaks; **MINOR** for new features (a new model, modality, or capability). Bump `package.json` `version` in the same commit.
