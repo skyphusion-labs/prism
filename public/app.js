@@ -550,14 +550,14 @@ function loadImage(src) {
 }
 
 async function extractVideoFrames(file, n, maxDim) {
-  const url = URL.createObjectURL(file);
-  try {
-    const video = document.createElement("video");
-    video.preload = "auto";
-    video.muted = true;
-    video.playsInline = true;
-    video.src = url;
+  const video = document.createElement("video");
+  video.preload = "auto";
+  video.muted = true;
+  video.playsInline = true;
+  // File via srcObject, not blob: URL on .src (CodeQL js/xss-through-dom).
+  video.srcObject = file;
 
+  try {
     await new Promise((resolve, reject) => {
       video.addEventListener("loadedmetadata", () => resolve(), { once: true });
       video.addEventListener("error", () => reject(new Error("Video load failed")), { once: true });
@@ -592,7 +592,7 @@ async function extractVideoFrames(file, n, maxDim) {
     }
     return { frames, duration, width: w, height: h };
   } finally {
-    URL.revokeObjectURL(url);
+    video.srcObject = null;
   }
 }
 
