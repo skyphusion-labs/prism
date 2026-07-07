@@ -30,6 +30,8 @@ binding = "AI"
 binding = "DB"
 database_name = "skyphusion-llm"
 database_id = "PLACEHOLDER_RUN_wrangler_d1_create_THEN_PASTE_HERE"
+# D1 schema migrations live in ./migrations/ (wrangler d1 migrations apply).
+# CI applies pending migrations before every main deploy; see .github/workflows/ci.yml.
 
 # R2 bucket for input + output artifacts (images, audio, video frames).
 # Create with:

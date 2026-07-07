@@ -1,6 +1,6 @@
 // skyphusion-llm-public worker. Routes:
 //   GET    /health                 liveness probe (no binding access, always 200)
-//   GET    /health/deep            deep check: D1, R2, Vectorize, AI gateway config
+//   GET    /health/deep            deep check: D1, D1 schema, R2, Vectorize, AI gateway config
 //   GET    /api/models             list models with type + capabilities, return user email
 //   GET    /api/prefs              per-user AI Gateway settings (slug + token status)
 //   PATCH  /api/prefs              update per-user AI Gateway settings
@@ -35,6 +35,7 @@ import {
   maskSecret,
 } from "./gateway-credentials";
 import { loadUserPrefs, saveUserPrefs } from "./user-prefs";
+import { probeD1Schema } from "./health-schema";
 import { extractOutput, extractUsage, detectProviderFailure, extractProxiedImageUrl } from "./output-extract";
 import { chunkText } from "./chunking";
 import { isZip, unzip } from "./zip";
@@ -3819,6 +3820,21 @@ async function handleHealthDeep(env: Env): Promise<Response> {
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       checks.d1 = { ok: false, latency_ms: Date.now() - t0, error: m };
+    }
+  }
+
+  // D1 schema: required tables for the deployed worker (v0.164.3). Catches
+  // schema drift when code ships before a migration runs (e.g. missing user_prefs).
+  {
+    const t0 = Date.now();
+    try {
+      const schema = await probeD1Schema(env.DB);
+      checks.d1_schema = schema.ok
+        ? { ok: true, latency_ms: Date.now() - t0 }
+        : { ok: false, latency_ms: Date.now() - t0, error: `missing tables: ${schema.missing.join(", ")}` };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      checks.d1_schema = { ok: false, latency_ms: Date.now() - t0, error: m };
     }
   }
 

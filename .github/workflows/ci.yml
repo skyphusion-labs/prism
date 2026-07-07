@@ -32,13 +32,27 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+      - name: Render wrangler.toml (main only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          cp wrangler.example.toml wrangler.toml
+          sed -i "s/PLACEHOLDER_RUN_wrangler_d1_create_THEN_PASTE_HERE/${{ secrets.D1_DATABASE_ID }}/" wrangler.toml
+
+      # Apply D1 migrations BEFORE deploy so new code never runs against an old
+      # schema. Idempotent: wrangler tracks applied files in d1_migrations and
+      # only runs pending ones (mirrors vivijure/postern deploy pipelines).
+      - name: Apply D1 migrations (main only)
+        if: github.ref == 'refs/heads/main'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler d1 migrations apply skyphusion-llm --remote
+
       - name: Deploy (main only)
         if: github.ref == 'refs/heads/main'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          cp wrangler.example.toml wrangler.toml
-          sed -i "s/PLACEHOLDER_RUN_wrangler_d1_create_THEN_PASTE_HERE/${{ secrets.D1_DATABASE_ID }}/" wrangler.toml
           npm run deploy
           rm -f wrangler.toml
