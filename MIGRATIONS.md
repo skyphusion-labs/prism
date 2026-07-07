@@ -4,6 +4,8 @@ This is the per-version upgrade runbook for an existing deployment. For a fresh
 install use `schema.sql` (see the README). Apply the deltas below in order, then
 redeploy.
 
+**CI auto-apply (v0.164.3+).** Production deploys on `main` run `wrangler d1 migrations apply skyphusion-llm --remote` before `wrangler deploy` (see `.github/workflows/ci.yml`). Pending migrations live in `migrations/`; wrangler tracks applied files in the D1 `d1_migrations` table. Additive migrations (`CREATE TABLE IF NOT EXISTS`, etc.) ship with zero friction. The legacy per-release `migrate-vX.Y.Z.sql` files below remain for historical reference and for operators upgrading across ancient versions manually; new schema changes should add a numbered file under `migrations/` instead.
+
 **Migration philosophy (read this first).** `schema.sql` is the canonical full schema for standing up a *fresh* database. It contains non-idempotent `ALTER TABLE` statements, so re-running it against a database that already has tables will raise `SQLITE_ERROR: duplicate column name` and, because `wrangler d1 execute --file` runs the whole file as one transaction, abort and roll back the entire run. **Never re-run `schema.sql` against an existing database.** To upgrade an existing deployment, apply only the delta for each version you're crossing, using the explicit commands below (or, for releases that ship one, the per-release `migrate-vX.Y.Z.sql` delta file). Apply each version's delta in order, then redeploy.
 
 v0.13.0 onward touched the D1 schema only at v0.20.0, v0.20.2, and v0.20.3; everything else in the v0.13.0 to v0.20.0 range is code-only. The pre-v0.13.0 migrations (v0.7.0 to v0.10.0) are below for anyone upgrading from very old deployments.

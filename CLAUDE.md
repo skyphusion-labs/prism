@@ -97,7 +97,7 @@ All matched in the single `fetch` handler in `src/index.ts` (top-of-file comment
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | Liveness probe; no binding access, always 200. |
-| GET | `/health/deep` | Deep check: D1, R2, Vectorize, AI Gateway config (50–200ms). |
+| GET | `/health/deep` | Deep check: D1, D1 schema tables, R2, Vectorize, AI Gateway config (50–200ms). |
 | GET | `/api/models` | List models with `type` + capability flags; returns caller email + `gateway` status. |
 | GET / PATCH | `/api/prefs` | Per-user AI Gateway settings (slug + token); v0.164.0 public demo mode. |
 | POST | `/api/chat` | Run a model; dispatches by `model.type`. Persists a row. |

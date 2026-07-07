@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.164.3
+
+fix(deploy): auto-apply D1 migrations in CI; deep health probes required tables (v0.164.3)
+
+v0.164.0 shipped code that queries `user_prefs` but CI only ran `wrangler deploy`, never
+the manual `migrate-v0.164.0.sql` delta, so prod 500'd on `/api/models`. Align with vivijure/postern:
+apply `migrations/` via `wrangler d1 migrations apply` before deploy. `/health/deep` now checks
+that all required D1 tables exist (`d1_schema` check) so schema drift surfaces in monitoring.
+
+### Code
+- `migrations/0001_init.sql`: squashed idempotent baseline for wrangler D1 migrations
+- `.github/workflows/ci.yml`: render wrangler.toml, apply migrations, then deploy
+- `src/health-schema.ts`, `tests/health-schema.test.ts`: required-table probe for deep health
+- `src/index.ts`: `/health/deep` adds `d1_schema` check
+- `MIGRATIONS.md`, `wrangler.example.toml`, `CLAUDE.md`: document CI migration path
+- `package.json`: 0.164.2 -> 0.164.3
+
+typecheck green; vitest green.
+
 ## v0.164.2
 
 fix(deploy): convert all v1-v5 migration tags to cursor-advance, clear remaining 10074s (v0.164.2)
