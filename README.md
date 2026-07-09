@@ -4,7 +4,7 @@
 [![Typecheck](https://github.com/skyphusion-labs/prism/actions/workflows/typecheck.yml/badge.svg)](https://github.com/skyphusion-labs/prism/actions/workflows/typecheck.yml)
 [![Voice chat](https://img.shields.io/badge/%F0%9F%8E%99%EF%B8%8F_voice_chat-speak_%26_hear_35_chat_models-6d8cff)](#voice-chat)
 
-A multimodal AI playground deployed as a single Cloudflare Worker. 35 chat models across 5 providers, **hands-free voice chat** (talk to any model and hear it reply), image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily, Brave, and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
+A multimodal AI playground deployed as a single Cloudflare Worker. **Live demo:** https://play.skyphusion.org (Cloudflare Access). 35 chat models across 5 providers, **hands-free voice chat** (talk to any model and hear it reply), image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily, Brave, and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
 
 <p align="center">
   <img src="docs/screenshot-desktop.jpg" alt="Desktop UI: image generation with Nano Banana Pro" width="800"><br><br>
@@ -22,7 +22,11 @@ A multimodal AI playground deployed as a single Cloudflare Worker. 35 chat model
 
 ## What this is
 
-A working template for the Cloudflare AI stack. One Worker, no framework, no build step beyond TypeScript. The interesting parts are the patterns, not the model count:
+A working template for the Cloudflare AI stack and a self-hosted multimodal playground. **Who this is for:** operators and builders who want one Worker covering chat, voice, image, video, music, RAG, and search on Cloudflare Unified Billing.
+
+**Live:** https://play.skyphusion.org · **Skyphusion Labs:** https://skyphusion.org · **Org:** https://github.com/skyphusion-labs
+
+One Worker, no framework, no build step beyond TypeScript. The interesting parts are the patterns, not the model count:
 
 - **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, conversational STT + voice chat (Flux over a WebSocket), video gen, and music gen. Paid third-party models bill through **Cloudflare Unified Billing** on your AI Gateway.
 - **Per-provider dispatch helpers** for Anthropic Claude, xAI Grok, and Google Gemini, each transforming our internal `messages` shape into the provider's native format while authorizing keylessly via `cf-aig-authorization`. OpenAI chat and Workers AI ride the `env.AI.run` binding directly. The one deployer BYOK escape hatch is **OpenAI image only**: an optional `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs, because the Unified Billing proxy rejects `background`/`output_format`.
