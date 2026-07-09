@@ -1,17 +1,27 @@
 {
-  "name": "skyphusion-llm-public",
+  "name": "prism",
   "version": "0.164.3",
-  "description": "Multimodal AI on Cloudflare Workers: chat (35 models across 5 providers), image / TTS / STT / video / music generation, RAG over files of any type, multi-turn conversations, behind Cloudflare Access.",
+  "description": "Multimodal AI playground on Cloudflare Workers: 35 chat models, voice chat, image/video/music generation, RAG, and web search.",
   "license": "AGPL-3.0-only",
   "author": "Conrad Rockenhaus",
-  "homepage": "https://github.com/SkyPhusion/skyphusion-llm-public",
+  "homepage": "https://play.skyphusion.org",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SkyPhusion/skyphusion-llm-public.git"
+    "url": "git+https://github.com/skyphusion-labs/prism.git"
   },
   "bugs": {
-    "url": "https://github.com/SkyPhusion/skyphusion-llm-public/issues"
+    "url": "https://github.com/skyphusion-labs/prism/issues"
   },
+  "keywords": [
+    "cloudflare-workers",
+    "llm",
+    "multimodal",
+    "rag",
+    "voice-chat",
+    "workers-ai",
+    "self-hosted",
+    "ai-playground"
+  ],
   "private": true,
   "type": "module",
   "scripts": {
