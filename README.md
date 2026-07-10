@@ -933,3 +933,11 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 Built and maintained by [SkyPhusion](https://x.com/SkyPhusion).
 
 Built on Cloudflare Workers, Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Image generation models courtesy of Black Forest Labs and Leonardo.Ai. Text-to-speech via Deepgram. Speech-to-text via OpenAI Whisper. Web search via Tavily and Wikipedia.
+
+## Hosted instance policies (play.skyphusion.org)
+
+Prism is self-hosted software; run your own and you are the operator (see above). Separately,
+Skyphusion Labs operates one public instance at **play.skyphusion.org** under its own instance
+notices: [privacy](docs/legal/INSTANCE-PRIVACY.md) (what that instance retains and how to have it
+cleared) and [acceptable use](docs/legal/INSTANCE-ACCEPTABLE-USE.md) (good-faith use, no wallet abuse,
+and the CSAM / NCII bright line). These bind users of the hosted instance only, not self-hosters.
