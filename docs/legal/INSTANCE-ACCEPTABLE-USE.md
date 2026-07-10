@@ -15,7 +15,7 @@ The hosted instance is offered freely so people can try the Cloudflare AI stack.
 
 ## Do not abuse the wallet
 
-The hosted instance runs model inference on Skyphusion Labs own Cloudflare AI Gateway credit. Draining
+The hosted instance runs model inference on Skyphusion Labs' own Cloudflare AI Gateway credit. Draining
 that credit is prohibited: no automated scraping of inference, no using the instance as a free API or
 proxy for another application, no reselling access, and no circumventing rate limits or access gates.
 We may rate-limit, suspend, or block access to the hosted instance to protect the service and the
@@ -49,7 +49,7 @@ not a defense, and it is not one we recognize.
 You may not use the hosted instance to create or distribute:
 
 - **Non-consensual intimate imagery:** sexual or nude depictions of a real, identifiable person made
-  or shared without that person consent, including "undressing" or sexualizing images of real people.
+  or shared without that person's consent, including "undressing" or sexualizing images of real people.
 - **Non-consensual deepfakes and likeness abuse:** realistic depictions of a real, identifiable person
   without their consent, especially where the result is intended or likely to deceive, defame,
   defraud, harass, or exploit, including putting words or actions onto a real person, or using their

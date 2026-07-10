@@ -3,7 +3,7 @@
 **Scope.** This notice applies only to the one public Prism instance that Skyphusion Labs operates at
 play.skyphusion.org. Prism is self-hosted software (AGPL-3.0-only). If you run your own Prism
 instance, this notice does not apply to you: you are the operator of your instance, your data lives on
-your own Cloudflare account, and Skyphusion Labs never sees it (see the project README for the
+your own Cloudflare account, and Skyphusion Labs never sees it (see the project's README for the
 self-hosted posture). This is a plain-language description of how the hosted instance handles data. It
 is not legal advice.
 
