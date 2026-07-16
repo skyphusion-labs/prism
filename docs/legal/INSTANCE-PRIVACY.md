@@ -33,7 +33,22 @@ not sell your data and we do not share it, with the single exception of the abus
 
 The hosted instance runs on Cloudflare (Workers, D1, R2, Vectorize, AI Gateway) and routes model
 inference through the Cloudflare AI Gateway. Your prompts and content pass through these providers so
-the instance can return a result. We do not add any others.
+the instance can return a result.
+
+**Web search is the one path that leaves Cloudflare, and only when you ask for it.** Prism has an
+opt-in, per-turn web search toggle. When you switch it on for a turn, the text of that one query is
+sent out to fetch snippets:
+
+- **Wikipedia** (en.wikipedia.org) needs no API key, so it is queried on every web-search turn.
+- **Tavily** and **Brave Search** are queried when the instance has been configured with that
+  provider's API key, and are silently skipped when it has not.
+
+Those providers receive **the query text only**, and handle it under their own privacy policies rather
+than ours. Your chat history, your uploaded documents, and your generated media are never sent to
+them. The snippets that come back are stored with the turn as retrieved context, the same way your RAG
+chunks are. Leave the toggle off and nothing leaves Cloudflare.
+
+Beyond Cloudflare and the search sources above, we add no others.
 
 ## Deleting your data
 
