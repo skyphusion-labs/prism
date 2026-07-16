@@ -43,6 +43,10 @@ sent out to fetch snippets:
 - **Tavily** and **Brave Search** are queried when the instance has been configured with that
   provider's API key, and are silently skipped when it has not.
 
+**On the hosted instance, both keys are configured**, so a web-search turn here queries all
+three: Wikipedia, Tavily, and Brave Search. The conditional above is how the software behaves
+for anyone self-hosting Prism; on play.skyphusion.org there is nothing conditional about it.
+
 Those providers receive **the query text only**, and handle it under their own privacy policies rather
 than ours. Your chat history, your uploaded documents, and your generated media are never sent to
 them. The snippets that come back are stored with the turn as retrieved context, the same way your RAG
