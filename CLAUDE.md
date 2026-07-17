@@ -32,7 +32,7 @@ Debugging a deployed worker: `npx wrangler tail`. Inspecting a stuck long-runnin
 
 Everything lives in one Worker `fetch` handler in `src/index.ts`. Pure/reusable logic is extracted into modules so `index.ts` is the orchestrator:
 
-- `src/models.ts` — **the model catalog**, single source of truth. Each entry's `id` is the routing key; `type` (`chat`|`image`|`tts`|`video`|`stt`|`music`) picks the dispatcher, `provider` (default `workers-ai`) picks the code path, `capabilities`/`streaming` drive the UI. Adding an entry here flows automatically to `GET /api/models` and the frontend picker.
+- `src/models.ts` — **the model catalog**, single source of truth. Each entry's `id` is the routing key; `type` (`chat`|`image`|`tts`|`video`|`stt`|`music`|`voice`) picks the dispatcher, `provider` (default `workers-ai`) picks the code path, `capabilities`/`streaming` drive the UI. Adding an entry here flows automatically to `GET /api/models` and the frontend picker.
 - `src/providers/*.ts` — per-provider dispatch helpers (`callAnthropic`, `callXai`, `callGemini`, `callWorkersAIStream`, `callOpenAIStream`, `openai-image`). Anthropic, xAI, and Gemini hit AI Gateway provider endpoints with keyless Unified Billing auth (`cf-aig-authorization`). OpenAI chat and Workers AI use `env.AI.run`. `openai-image.ts` is the sole BYOK path (direct `api.openai.com` when `OPENAI_API_KEY` is set).
 - `src/parsers/*.ts` — streaming adapters, one per wire format (Anthropic native SSE, OpenAI-compatible SSE for xAI/OpenAI, Workers AI SSE, Gemini SSE), all normalized to a common `ProviderStreamEvent` envelope (`parsers/types.ts`). `sse-framer.ts` is the shared line framer. **These are the bulk of the unit tests.**
 - `src/ai-binding.ts` — `aiRun()` wraps `env.AI.run` with the gateway opt; `aiLogId()` reads the AI Gateway log ID after a call.
@@ -92,7 +92,7 @@ Also: `[observability] enabled = true` (dashboard log tailing). `compatibility_d
 
 ## Routes reference
 
-All matched in the single `fetch` handler in `src/index.ts` (top-of-file comment lists the core set). Anything not matched falls through to `ASSETS` (static `public/`). Every `/api/*` route is scoped to the caller's `Cf-Access-Authenticated-User-Email`.
+All matched in the single `fetch` handler in `src/index.ts` (see the one-line pointer at the top of that file). Anything not matched falls through to `ASSETS` (static `public/`). Every `/api/*` route is scoped to the caller's `Cf-Access-Authenticated-User-Email`.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -102,6 +102,8 @@ All matched in the single `fetch` handler in `src/index.ts` (top-of-file comment
 | GET / PATCH | `/api/prefs` | Per-user AI Gateway settings (slug + token); v0.164.0 public demo mode. |
 | POST | `/api/chat` | Run a model; dispatches by `model.type`. Persists a row. |
 | POST | `/api/chat/stream` | SSE variant, only for catalog entries flagged `streaming: true`. |
+| POST | `/api/tts` | Dedicated TTS path (same catalog `tts` models as `/api/chat`). |
+| WS | `/api/stt/stream` | Live mic WebSocket for `voice` models (Deepgram Flux); Durable Object session. |
 | GET | `/api/history` | List caller's chats, newest first. |
 | GET / DELETE | `/api/history/:id` | One row (with attachments + output) / delete row + its R2 objects. |
 | GET | `/api/artifact/*` | Stream an R2 object, gated by `customMetadata.user_email`. |

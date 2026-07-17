@@ -1,15 +1,4 @@
-// skyphusion-llm-public worker. Routes:
-//   GET    /health                 liveness probe (no binding access, always 200)
-//   GET    /health/deep            deep check: D1, D1 schema, R2, Vectorize, AI gateway config
-//   GET    /api/models             list models with type + capabilities, return user email
-//   GET    /api/prefs              per-user AI Gateway settings (slug + token status)
-//   PATCH  /api/prefs              update per-user AI Gateway settings
-//   POST   /api/chat               run model, persist row, return result
-//   GET    /api/history            list this user's chats, newest first
-//   GET    /api/history/:id        one row (with attachments + output_artifact)
-//   DELETE /api/history/:id        delete one row + its R2 objects
-//   GET    /api/artifact/*         stream an R2 object (access-checked by user_email)
-//   *                              served from ./public via Workers Assets
+// prism worker (play.skyphusion.org). Route table: CLAUDE.md "Routes reference".
 //
 // Auth: Cloudflare Access. The worker trusts the
 // Cf-Access-Authenticated-User-Email header to scope history per user.
