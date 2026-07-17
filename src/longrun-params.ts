@@ -92,7 +92,11 @@ function imageToVideoParams(
 
     // Alibaba hh1-i2v (the original i2v wiring) and the safe default: field
     // `image`; resolution 720P; integer duration 3-15; prompt optional.
+    // v0.165.0: alibaba/hh1.1-i2v and alibaba/wan-2.7-i2v share this schema
+    // (verified against the CF model pages), so they ride the same case.
     case "alibaba/hh1-i2v":
+    case "alibaba/hh1.1-i2v":
+    case "alibaba/wan-2.7-i2v":
     default: {
       const params: Record<string, unknown> = {
         image: imageUrl,
