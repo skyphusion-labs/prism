@@ -57,6 +57,9 @@ export const MODELS: ModelEntry[] = [
   // ---- Chat (text generation) ----
   // Anthropic (Unified Billing via cf-aig-authorization, routed through AI Gateway)
   // v0.13.0: streaming: true makes these eligible for POST /api/chat/stream.
+  // v0.165.0 catalog refresh (#81): Claude 5 family added.
+  { id: "anthropic/claude-fable-5",                     label: "Claude Fable 5 (Anthropic)",           group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
+  { id: "anthropic/claude-sonnet-5",                    label: "Claude Sonnet 5 (Anthropic)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
   { id: "anthropic/claude-opus-4-8",                    label: "Claude Opus 4.8 (Anthropic)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
   { id: "anthropic/claude-opus-4-7",                    label: "Claude Opus 4.7 (Anthropic)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
   { id: "anthropic/claude-opus-4-6",                    label: "Claude Opus 4.6 (Anthropic)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
@@ -64,6 +67,9 @@ export const MODELS: ModelEntry[] = [
   { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic)",         group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
 
   // xAI / Grok (Unified Billing via cf-aig-authorization, routed through AI Gateway)
+  // grok-4.5 (v0.165.0): on xAI's own model list; CF's supported-models page
+  // lags it (as it does grok-build-0.1, which works) -- verify on deploy smoke.
+  { id: "xai/grok-4.5",                                 label: "Grok 4.5 (xAI)",                       group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
   { id: "xai/grok-4.3",                                 label: "Grok 4.3 (xAI)",                       group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
   { id: "xai/grok-4.20-multi-agent-0309",               label: "Grok 4.20 Multi-Agent (xAI)",          group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
   { id: "xai/grok-4.20-0309-reasoning",                 label: "Grok 4.20 Reasoning (xAI)",            group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
@@ -71,6 +77,7 @@ export const MODELS: ModelEntry[] = [
 
   // Frontier
   { id: "@cf/moonshotai/kimi-k2.6",                     label: "Kimi K2.6 (1T)",               group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"], streaming: true },
+  { id: "@cf/moonshotai/kimi-k2.7-code",                label: "Kimi K2.7 Code (1T, vision)",  group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"], streaming: true },
   { id: "@cf/openai/gpt-oss-120b",                      label: "GPT-OSS 120B (reasoning)",     group: "Chat \u00b7 Frontier", type: "chat", capabilities: [], streaming: true },
   { id: "@cf/meta/llama-4-scout-17b-16e-instruct",      label: "Llama 4 Scout (MoE, vision)",  group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"], streaming: true },
   { id: "@cf/google/gemma-4-26b-a4b-it",                label: "Gemma 4 26B (vision)",         group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"], streaming: true },
@@ -101,6 +108,7 @@ export const MODELS: ModelEntry[] = [
   { id: "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b", label: "DeepSeek R1 32B",              group: "Chat \u00b7 Other",    type: "chat", capabilities: [], streaming: true },
   { id: "@cf/mistralai/mistral-small-3.1-24b-instruct", label: "Mistral Small 3.1 (vision)",   group: "Chat \u00b7 Other",    type: "chat", capabilities: ["vision"], streaming: true },
   { id: "@cf/zai-org/glm-4.7-flash",                    label: "GLM-4.7 Flash (Z.AI, 100+ lang)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
+  { id: "@cf/zai-org/glm-5.2",                          label: "GLM-5.2 (Z.AI, agentic coding)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
   { id: "@cf/nvidia/nemotron-3-120b-a12b",              label: "Nemotron 3 120B (NVIDIA, agentic)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
   { id: "@cf/aisingapore/gemma-sea-lion-v4-27b-it",     label: "SEA-LION v4 27B (SE Asian langs)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
   // Gemini proxied via Unified Billing (v0.21.3; streaming v0.21.4). NOT
@@ -109,9 +117,12 @@ export const MODELS: ModelEntry[] = [
   // interpretGeminiSSEFrame, with a dual-mode delta reconciler (handles
   // incremental or cumulative chunks). Text-only (multimodal vision deferred).
   { id: "google/gemini-3.1-pro",                        label: "Gemini 3.1 Pro (Google)", group: "Chat \u00b7 Google",   type: "chat", capabilities: [], provider: "google", streaming: true },
-  { id: "@cf/google/gemma-3-12b-it",                    label: "Gemma 3 12B (vision, 128K)",   group: "Chat \u00b7 Google",   type: "chat", capabilities: ["vision"], streaming: true },
+  { id: "google/gemini-3.5-flash",                      label: "Gemini 3.5 Flash (Google)", group: "Chat \u00b7 Google",   type: "chat", capabilities: [], provider: "google", streaming: true },
+  // @cf/google/gemma-3-12b-it removed v0.165.0: marked Deprecated on the
+  // Workers AI model list; gemma-4-26b-a4b-it (above) is the current Gemma.
   { id: "@cf/ibm-granite/granite-4.0-h-micro",          label: "Granite 4.0 Micro (IBM)",      group: "Chat \u00b7 Other",    type: "chat", capabilities: [], streaming: true },
-  { id: "@hf/nousresearch/hermes-2-pro-mistral-7b",     label: "Hermes 2 Pro (function calling)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
+  // @hf/nousresearch/hermes-2-pro-mistral-7b removed v0.165.0: marked
+  // Deprecated (and Beta) on the Workers AI model list.
   // LLaVA 1.5: image-to-text, single-shot. Surfaced as a vision chat model so
   // the attach UI works, but runChat routes it to the { image, prompt } wire
   // format. No streaming (omitted): it returns one { description } per call.
@@ -122,6 +133,10 @@ export const MODELS: ModelEntry[] = [
   // Google proxied (Unified Billing): URL-returning, different schema from the
   // @cf models; handled by the provider:"google" branch in runImage (v0.21.2).
   { id: "google/nano-banana-pro",                       label: "Nano Banana Pro (Google)",   group: "Image Gen",            type: "image", capabilities: [], provider: "google" },
+  // v0.165.0 catalog refresh (#81): newer Google image models, same URL-returning
+  // proxied path as nano-banana-pro.
+  { id: "google/nano-banana-2",                         label: "Nano Banana 2 (Google)",     group: "Image Gen",            type: "image", capabilities: [], provider: "google" },
+  { id: "google/imagen-4",                              label: "Imagen 4 (Google)",          group: "Image Gen",            type: "image", capabilities: [], provider: "google" },
   // gpt-image-1.5 (v0.22.0/.1). Transparency is NOT available through the CF
   // proxy: that schema is { prompt, images, quality, size, style } and
   // 7003-rejects background/output_format. So the worker uses a BYOK direct call
@@ -129,10 +144,14 @@ export const MODELS: ModelEntry[] = [
   // back to the opaque proxy path otherwise. See providers/openai-image.ts and
   // the v0.22.1 CHANGELOG entry.
   { id: "openai/gpt-image-1.5",                         label: "GPT Image 1.5 (OpenAI; transparent PNG with OPENAI_API_KEY, else opaque)", group: "Image Gen", type: "image", capabilities: [], provider: "openai" },
+  // gpt-image-2 (v0.165.0): same dispatch as 1.5 (BYOK direct when
+  // OPENAI_API_KEY is set, opaque Unified Billing proxy otherwise).
+  { id: "openai/gpt-image-2",                           label: "GPT Image 2 (OpenAI)",       group: "Image Gen", type: "image", capabilities: [], provider: "openai" },
   // recraftv4 is opaque and art-directed (the CF proxy exposes no alpha flag,
   // only an opaque background_color). Strong text rendering and style controls;
   // returns webp. Added for logos/icons-on-bg/styled scenes, NOT transparency.
   { id: "recraft/recraftv4",                            label: "Recraft V4 (art-directed, opaque)", group: "Image Gen", type: "image", capabilities: [], provider: "recraft" },
+  { id: "recraft/recraftv4-1-pro",                      label: "Recraft V4.1 Pro (art-directed, opaque)", group: "Image Gen", type: "image", capabilities: [], provider: "recraft" },
   { id: "@cf/black-forest-labs/flux-2-klein-9b",        label: "FLUX 2 Klein 9B (frontier)",   group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/black-forest-labs/flux-2-klein-4b",        label: "FLUX 2 Klein 4B (faster)",     group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/black-forest-labs/flux-2-dev",             label: "FLUX 2 Dev (multi-reference)", group: "Image Gen",            type: "image", capabilities: [] },
@@ -176,11 +195,22 @@ export const MODELS: ModelEntry[] = [
   { id: "minimax/hailuo-2.3",                           label: "Hailuo 2.3 (MiniMax)",           group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "minimax" },
   { id: "minimax/hailuo-2.3-fast",                      label: "Hailuo 2.3 Fast (MiniMax)",      group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "minimax" },
   { id: "xai/grok-imagine-video",                       label: "Grok Imagine Video (xAI)",                   group: "Video Gen", type: "video", capabilities: [], provider: "xai" },
+  // v0.165.0: CF gateway id keeps the -preview suffix (xAI's own docs list it
+  // as grok-imagine-video-1.5); we route via the gateway, so use CF's id.
+  { id: "xai/grok-imagine-video-1.5-preview",           label: "Grok Imagine Video 1.5 (xAI, preview)",      group: "Video Gen", type: "video", capabilities: [], provider: "xai" },
   { id: "runwayml/gen-4.5",                             label: "Gen-4.5 (RunwayML)",             group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "runwayml" },
   { id: "alibaba/hh1-t2v",                              label: "HappyHorse 1.0 T2V (Alibaba)", group: "Video Gen", type: "video", capabilities: [], provider: "alibaba" },
   // Image-to-video (v0.21.5): requires a source image. Flagged "image-input";
   // runVideo requires body.image_url, and buildGenParams sends the i2v shape.
   { id: "alibaba/hh1-i2v",                              label: "HappyHorse 1.0 I2V (Alibaba, image-to-video)", group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "alibaba" },
+  // v0.165.0 catalog refresh (#81): HappyHorse 1.1 siblings + Wan 2.7 i2v. The
+  // i2v pair uses the same { image, resolution, duration } schema as hh1-i2v
+  // (verified against the CF model pages), so buildGenParams' alibaba/default
+  // shape covers them. hh1.1-r2v (reference-to-video) is deferred: it needs
+  // reference-input plumbing the worker does not have.
+  { id: "alibaba/hh1.1-t2v",                            label: "HappyHorse 1.1 T2V (Alibaba)", group: "Video Gen", type: "video", capabilities: [], provider: "alibaba" },
+  { id: "alibaba/hh1.1-i2v",                            label: "HappyHorse 1.1 I2V (Alibaba, image-to-video)", group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "alibaba" },
+  { id: "alibaba/wan-2.7-i2v",                          label: "Wan 2.7 I2V (Alibaba, image-to-video)", group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "alibaba" },
   { id: "pixverse/v6",                                  label: "PixVerse v6",                   group: "Video Gen", type: "video", capabilities: [], provider: "pixverse" },
   { id: "pixverse/v5.6",                                label: "PixVerse v5.6",                 group: "Video Gen", type: "video", capabilities: [], provider: "pixverse" },
   { id: "vidu/q3-pro",                                  label: "Vidu Q3 Pro",                   group: "Video Gen", type: "video", capabilities: [], provider: "vidu" },
