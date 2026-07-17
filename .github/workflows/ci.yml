@@ -30,6 +30,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # npm test runs BOTH vitest projects (v0.164.4): the Node pure-function
+      # suite and the workerd fetch-handler integration suite
+      # (@cloudflare/vitest-pool-workers). Both are fork-safe: local Miniflare
+      # bindings, no secrets, no network, so this runs on ubuntu-latest.
       - run: npm test
 
       - name: Render wrangler.toml (main only)

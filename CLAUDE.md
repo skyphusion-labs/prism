@@ -133,7 +133,12 @@ All matched in the single `fetch` handler in `src/index.ts` (top-of-file comment
 
 ## Testing
 
-Tests live in `tests/` and run under plain Vitest in a Node environment (`vitest.config.ts`) — **not** `@cloudflare/vitest-pool-workers`. They cover pure functions (SSE/eventstream parsers, chunking, output extraction, param builders, Discord parsing) that use only standard web APIs. There is no Workers-runtime integration test harness; if you add one that hits the fetch handler, you'll need the pool-workers adapter.
+Two Vitest projects run under a single `npm test` (`vitest run`), aggregated by the root `vitest.config.ts`:
+
+- **Node pure-function suite** (`vitest.node.config.ts`, `tests/**`): plain Vitest in a Node environment. Covers pure functions (SSE/eventstream parsers, chunking, output extraction, param builders, Discord parsing) that use only standard web APIs. Fast; no Workers runtime.
+- **Workers integration suite** (`vitest.workers.config.ts`, `tests-integration/**`): runs the real `src/index.ts` fetch handler inside workerd via `@cloudflare/vitest-pool-workers`, with local Miniflare D1 (schema applied from `schema.sql`) and R2. The `AI`, `VEC`, `LONGRUN`, and `STT_SESSION` bindings are inert stubs and `ASSETS` is a mock 404 Fetcher, so the suite is fork-safe (no secrets, no network) and runs in the public `ci.yml`. Covers route matching + 404 fallthrough, `getUserEmail` header/anonymous fallback, per-user scoping on `/api/history` and `/api/conversations`, the R2 ownership gate on `/api/artifact/*`, `/api/prefs` GET/PATCH round-trip, and the gateway 412 refusal path.
+
+Add pure-function tests to `tests/`; add fetch-handler or binding tests to `tests-integration/`. The two suites never share state.
 
 ## Identity & commits
 - Handle/username is `skyphusion` across all services. Default to it when a username is needed.
