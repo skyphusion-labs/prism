@@ -1,5 +1,82 @@
 # Changelog
 
+## v0.165.1
+
+test(harness): Workers-runtime integration suite (pool-workers) for routing, auth, ownership (v0.165.1)
+
+Closes #84. The fetch handler in `src/index.ts` had zero automated coverage: routing, `getUserEmail`,
+per-user D1 scoping, and the R2 ownership gate were verified only by live `wrangler dev` smoke. This
+adds a second Vitest project that boots the real worker inside workerd via
+`@cloudflare/vitest-pool-workers` with local Miniflare D1 + R2, so those paths run under CI. This is
+the groundwork blocker for #80 (auth-plane rewrite): #80 can now modify `getUserEmail` and watch the
+harness go red before shipping (verified by mutation: breaking the anonymous fallback reddens exactly
+the `getUserEmail` tests).
+
+`npm test` now runs two projects aggregated by the root `vitest.config.ts`: the existing Node
+pure-function suite (`vitest.node.config.ts`, `tests/**`) untouched, and the new workerd integration
+suite (`vitest.workers.config.ts`, `tests-integration/**`). The integration bindings are fork-safe:
+real local D1 (schema applied from `schema.sql`) and R2, with `AI`/`VEC`/`LONGRUN`/`STT_SESSION` as
+inert stubs and `ASSETS` as a mock 404 Fetcher. No secrets, no network, so it runs on the public
+`ci.yml` `ubuntu-latest` runner. Coverage: route matching + 404 fallthrough, `getUserEmail`
+header/anonymous fallback, per-user scoping on `/api/history` and `/api/conversations`, the R2
+ownership gate on `/api/artifact/*` (foreign `customMetadata.user_email` gets 403), `/api/prefs`
+GET/PATCH round-trip (with a secret-masking assertion), and the gateway 412 refusal path (with a
+positive control proving the gate is non-vacuous).
+
+### Code
+- `vitest.config.ts`: now a root aggregator listing the two projects (was the single Node config)
+- `vitest.node.config.ts` (new): the Node pure-function project, moved out of the old root config
+- `vitest.workers.config.ts` (new): the pool-workers project (worker `main`, Miniflare bindings)
+- `tests-integration/worker.test.ts` (new): 17 fetch-handler integration tests
+- `.github/workflows/ci.yml`: comment noting the `npm test` step now runs both suites
+- `.github/workflows/code-coverage.yml`: scope the coverage run to the `node` project (@vitest/coverage-v8 needs node:inspector, unavailable in the workerd pool)
+- `.gitignore`: ignore the generated `coverage/` output
+- `CLAUDE.md`: Testing section documents the two-project layout
+- `package.json`: adds `@cloudflare/vitest-pool-workers` devDep; 0.165.0 -> 0.165.1
+- `package-lock.json`: lock the new devDep tree
+
+typecheck green; vitest green (186 tests: 169 node + 17 workers).
+
+## v0.165.0
+
+feat(models): catalog refresh vs live CF availability, 14 added, 2 deprecated removed (v0.165.0)
+
+Closes #81. Full keep/add/remove/defer matrix in `docs/models-audit.md` (checked against the live
+Workers AI model list, the AI Gateway supported-models page, and provider docs on 2026-07-18).
+
+Removed (both marked Deprecated on the Workers AI model list): `@cf/google/gemma-3-12b-it`
+(gemma-4-26b-a4b-it stays as the current Gemma) and `@hf/nousresearch/hermes-2-pro-mistral-7b`.
+
+Added, all data-only against existing dispatchers, no new provider code:
+
+- Chat (+6): `anthropic/claude-fable-5`, `anthropic/claude-sonnet-5`, `xai/grok-4.5`,
+  `google/gemini-3.5-flash`, `@cf/zai-org/glm-5.2`, `@cf/moonshotai/kimi-k2.7-code`.
+  Chat is now 39 models, 38 stream-capable (LLaVA 1.5 stays the one single-shot).
+- Image (+4): `google/nano-banana-2`, `google/imagen-4`, `openai/gpt-image-2` (same
+  BYOK-transparent / proxy-opaque split as gpt-image-1.5), `recraft/recraftv4-1-pro`.
+- Video (+4): `alibaba/hh1.1-t2v`, `alibaba/hh1.1-i2v`, `alibaba/wan-2.7-i2v` (both i2v adds
+  verified to share the hh1-i2v `{ image, resolution, duration }` schema and ride the existing
+  buildGenParams alibaba/default case), `xai/grok-imagine-video-1.5-preview` (CF gateway id keeps
+  the -preview suffix; xAI's own docs call it 1.5).
+
+Deferred, documented in the audit doc: gpt-5.5-pro (Responses API dispatch), hh1.1-r2v
+(reference-input plumbing), runwayml/aleph-2 (video-edit semantics), Krea/Pruna image and
+MiniMax/Alibaba/Groq chat (new provider dispatchers), gemini-3.1-flash-lite / gpt-5.4-nano /
+grok-4.20-non-reasoning / aura-1 (curation, low value). `xai/grok-build-0.1` was flagged missing
+from CF's supported-models page but is live on xAI's own model list; kept, verify on deploy smoke
+(same page lag applies to the grok-4.5 add).
+
+### Code
+- `src/models.ts`: 2 removals, 14 adds, comments tagged (v0.165.0)
+- `src/longrun-params.ts`: explicit `alibaba/hh1.1-i2v` + `alibaba/wan-2.7-i2v` cases on the
+  existing alibaba i2v shape
+- `docs/models-audit.md`: NEW, the #81 comparison matrix and decisions
+- `README.md`: model lists + counts (35 -> 39 chat, 16 -> 20 video, badge, picker ~80)
+- `CLAUDE.md`: 35 -> 39 in the overview line
+- `package.json`: 0.164.3 -> 0.165.0, description count 35 -> 39
+
+typecheck green; vitest green (see PR CI).
+
 ## v0.164.3
 
 fix(deploy): auto-apply D1 migrations in CI; deep health probes required tables (v0.164.3)

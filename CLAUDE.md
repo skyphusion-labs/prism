@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This repo is **prism** (renamed from `skyphusion-llm-public`), deployed at **play.skyphusion.org** behind Cloudflare Access. Only the repo was renamed: the deployed Worker, D1, R2, and Vectorize keep their original `skyphusion-llm` names, so binding/resource names in this file and `wrangler.example.toml` still read `skyphusion-llm` on purpose.
 
-A multimodal AI playground deployed as a **single Cloudflare Worker** (no framework, no build step beyond TypeScript). One web UI behind Cloudflare Access exposes chat (35 models / 5 providers), image / TTS / STT / video / music generation, and RAG over files of any type. The interesting part is the patterns, not the model count: every modality funnels through `env.AI.run()` (the unified AI binding) or gateway provider endpoints with **Cloudflare Unified Billing**. The one deployer BYOK escape hatch is optional `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs, because the Unified Billing proxy rejects `background`/`output_format`.
+A multimodal AI playground deployed as a **single Cloudflare Worker** (no framework, no build step beyond TypeScript). One web UI behind Cloudflare Access exposes chat (39 models / 5 providers), image / TTS / STT / video / music generation, and RAG over files of any type. The interesting part is the patterns, not the model count: every modality funnels through `env.AI.run()` (the unified AI binding) or gateway provider endpoints with **Cloudflare Unified Billing**. The one deployer BYOK escape hatch is optional `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs, because the Unified Billing proxy rejects `background`/`output_format`.
 
 ## Commands
 
@@ -135,7 +135,12 @@ All matched in the single `fetch` handler in `src/index.ts` (see the one-line po
 
 ## Testing
 
-Tests live in `tests/` and run under plain Vitest in a Node environment (`vitest.config.ts`) — **not** `@cloudflare/vitest-pool-workers`. They cover pure functions (SSE/eventstream parsers, chunking, output extraction, param builders, Discord parsing) that use only standard web APIs. There is no Workers-runtime integration test harness; if you add one that hits the fetch handler, you'll need the pool-workers adapter.
+Two Vitest projects run under a single `npm test` (`vitest run`), aggregated by the root `vitest.config.ts`:
+
+- **Node pure-function suite** (`vitest.node.config.ts`, `tests/**`): plain Vitest in a Node environment. Covers pure functions (SSE/eventstream parsers, chunking, output extraction, param builders, Discord parsing) that use only standard web APIs. Fast; no Workers runtime.
+- **Workers integration suite** (`vitest.workers.config.ts`, `tests-integration/**`): runs the real `src/index.ts` fetch handler inside workerd via `@cloudflare/vitest-pool-workers`, with local Miniflare D1 (schema applied from `schema.sql`) and R2. The `AI`, `VEC`, `LONGRUN`, and `STT_SESSION` bindings are inert stubs and `ASSETS` is a mock 404 Fetcher, so the suite is fork-safe (no secrets, no network) and runs in the public `ci.yml`. Covers route matching + 404 fallthrough, `getUserEmail` header/anonymous fallback, per-user scoping on `/api/history` and `/api/conversations`, the R2 ownership gate on `/api/artifact/*`, `/api/prefs` GET/PATCH round-trip, and the gateway 412 refusal path.
+
+Add pure-function tests to `tests/`; add fetch-handler or binding tests to `tests-integration/`. The two suites never share state.
 
 ## Identity & commits
 - Handle/username is `skyphusion` across all services. Default to it when a username is needed.
