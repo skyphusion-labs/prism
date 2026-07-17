@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.165.1
+
+test(harness): Workers-runtime integration suite (pool-workers) for routing, auth, ownership (v0.165.1)
+
+Closes #84. The fetch handler in `src/index.ts` had zero automated coverage: routing, `getUserEmail`,
+per-user D1 scoping, and the R2 ownership gate were verified only by live `wrangler dev` smoke. This
+adds a second Vitest project that boots the real worker inside workerd via
+`@cloudflare/vitest-pool-workers` with local Miniflare D1 + R2, so those paths run under CI. This is
+the groundwork blocker for #80 (auth-plane rewrite): #80 can now modify `getUserEmail` and watch the
+harness go red before shipping (verified by mutation: breaking the anonymous fallback reddens exactly
+the `getUserEmail` tests).
+
+`npm test` now runs two projects aggregated by the root `vitest.config.ts`: the existing Node
+pure-function suite (`vitest.node.config.ts`, `tests/**`) untouched, and the new workerd integration
+suite (`vitest.workers.config.ts`, `tests-integration/**`). The integration bindings are fork-safe:
+real local D1 (schema applied from `schema.sql`) and R2, with `AI`/`VEC`/`LONGRUN`/`STT_SESSION` as
+inert stubs and `ASSETS` as a mock 404 Fetcher. No secrets, no network, so it runs on the public
+`ci.yml` `ubuntu-latest` runner. Coverage: route matching + 404 fallthrough, `getUserEmail`
+header/anonymous fallback, per-user scoping on `/api/history` and `/api/conversations`, the R2
+ownership gate on `/api/artifact/*` (foreign `customMetadata.user_email` gets 403), `/api/prefs`
+GET/PATCH round-trip (with a secret-masking assertion), and the gateway 412 refusal path (with a
+positive control proving the gate is non-vacuous).
+
+### Code
+- `vitest.config.ts`: now a root aggregator listing the two projects (was the single Node config)
+- `vitest.node.config.ts` (new): the Node pure-function project, moved out of the old root config
+- `vitest.workers.config.ts` (new): the pool-workers project (worker `main`, Miniflare bindings)
+- `tests-integration/worker.test.ts` (new): 17 fetch-handler integration tests
+- `.github/workflows/ci.yml`: comment noting the `npm test` step now runs both suites
+- `.github/workflows/code-coverage.yml`: scope the coverage run to the `node` project (@vitest/coverage-v8 needs node:inspector, unavailable in the workerd pool)
+- `.gitignore`: ignore the generated `coverage/` output
+- `CLAUDE.md`: Testing section documents the two-project layout
+- `package.json`: adds `@cloudflare/vitest-pool-workers` devDep; 0.165.0 -> 0.165.1
+- `package-lock.json`: lock the new devDep tree
+
+typecheck green; vitest green (186 tests: 169 node + 17 workers).
+
 ## v0.165.0
 
 feat(models): catalog refresh vs live CF availability, 14 added, 2 deprecated removed (v0.165.0)

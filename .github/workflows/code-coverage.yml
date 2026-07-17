@@ -33,9 +33,16 @@ jobs:
         run: npm run bootstrap
         continue-on-error: true # Prevents crash if wrangler.toml already exists in workspace
 
-      # Runs your vitest script with cobertura reporter enabled
+      # Runs the vitest coverage run with the cobertura reporter.
+      # Scoped to the 'node' project (v0.164.4): @vitest/coverage-v8 needs
+      # node:inspector, which the workerd runtime used by the 'workers'
+      # integration project does not provide (a documented pool-workers
+      # limitation), so an unscoped coverage run throws 'No such module
+      # node:inspector/promises'. The node project imports the same src/
+      # modules, so src coverage is unchanged; the workers suite still runs
+      # in full under ci.yml.
       - name: Run tests with coverage
-        run: npx vitest run --coverage.enabled=true --coverage.reporter=cobertura
+        run: npx vitest run --project node --coverage.enabled=true --coverage.reporter=cobertura
 
       # Upload to GitHub's native Enterprise code coverage engine
       # Upload to GitHub's native Enterprise code coverage engine
