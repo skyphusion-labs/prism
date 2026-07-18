@@ -1910,3 +1910,159 @@ body::before {
 @media (hover: none) {
   .composer-send:hover:not(:disabled) { transform: none; }
 }
+
+/* ---- #80 public-mode first-party auth screen ---- */
+.auth-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  overflow-y: auto;
+  background:
+    radial-gradient(1100px 560px at 50% -12%, rgba(109, 140, 255, 0.16), transparent 60%),
+    var(--bg);
+}
+.auth-screen[hidden] { display: none; }
+/* When the auth gate is up the app shell stays out of the layout entirely
+   (no empty shell bleeding behind the card, no stray tab targets). */
+body.auth-active .layout { display: none; }
+
+.auth-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow), var(--shadow-glow);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  padding: 2rem 1.75rem;
+}
+.auth-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.auth-sub {
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+  margin: 0 0 1.4rem;
+}
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 4px;
+  margin-bottom: 1.25rem;
+}
+.auth-tab {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.auth-tab[aria-selected="true"] {
+  background: var(--accent);
+  color: var(--bg);
+}
+.auth-error { margin-bottom: 0.9rem; }
+.auth-error[hidden] { display: none; }
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.9rem;
+}
+.auth-field[hidden] { display: none; }
+.auth-field label {
+  /* Override the global uppercase <label> style so the card matches the
+     lowercase aesthetic of the gateway modal the user visits next. */
+  font-size: 0.85rem;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--fg-dim);
+  font-weight: 600;
+}
+.auth-field input {
+  background: var(--bg);
+  border: 1px solid var(--bg-elev2);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.7rem;
+  color: inherit;
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+.auth-field input:focus {
+  outline: 0;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(109, 140, 255, 0.18);
+}
+.auth-field.invalid input { border-color: var(--error); }
+.auth-note {
+  font-size: 0.72rem;
+  color: var(--fg-dim);
+}
+.auth-note[hidden] { display: none; }
+.auth-field-err {
+  font-size: 0.75rem;
+  color: var(--error);
+}
+.auth-field-err[hidden] { display: none; }
+.auth-submit {
+  width: 100%;
+  border: 0;
+  background: var(--accent);
+  color: var(--bg);
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  padding: 0.7rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  margin-top: 0.25rem;
+}
+.auth-submit:hover { background: var(--accent-hover); }
+.auth-submit:disabled { opacity: 0.55; cursor: not-allowed; }
+.auth-foot {
+  color: var(--fg-dim);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  margin: 1.1rem 0 0;
+  text-align: center;
+}
+.account-logout .account-name { color: var(--error); }
+.account-logout[hidden] { display: none; }
+
+/* ---- #80 in-app account deletion ---- */
+.account-delete .account-name { color: var(--error); }
+.account-delete[hidden] { display: none; }
+.account-delete-warning {
+  color: var(--error);
+  background: rgba(255, 107, 138, 0.08);
+  border: 1px solid rgba(255, 107, 138, 0.28);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+}
+.modal-actions .modal-danger-primary {
+  background: var(--error);
+  border-color: var(--error);
+  color: var(--bg);
+  font-weight: 700;
+}
+.modal-actions .modal-danger-primary:hover {
+  background: #ff8aa2;
+  border-color: #ff8aa2;
+}
