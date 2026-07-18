@@ -4,7 +4,7 @@
 [![Typecheck](https://github.com/skyphusion-labs/prism/actions/workflows/typecheck.yml/badge.svg)](https://github.com/skyphusion-labs/prism/actions/workflows/typecheck.yml)
 [![Voice chat](https://img.shields.io/badge/%F0%9F%8E%99%EF%B8%8F_voice_chat-speak_%26_hear_39_chat_models-6d8cff)](#voice-chat)
 
-A multimodal AI playground deployed as a single Cloudflare Worker. **Live demo:** https://play.skyphusion.org (Cloudflare Access). 39 chat models across 5 providers, **hands-free voice chat** (talk to any model and hear it reply), image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily, Brave, and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
+A multimodal AI playground deployed as a single Cloudflare Worker. **Live demo:** https://play.skyphusion.org (Cloudflare Access). 39 chat models across 5 providers, **hands-free voice chat** (talk to any model and hear it reply), image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via self-hosted SearXNG and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
 
 <p align="center">
   <img src="docs/screenshot-desktop.jpg" alt="Desktop UI: image generation with Nano Banana Pro" width="800"><br><br>
@@ -29,7 +29,7 @@ A working template for the Cloudflare AI stack and a self-hosted multimodal play
 One Worker, no framework, no build step beyond TypeScript. The interesting parts are the patterns, not the model count:
 
 - **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, conversational STT + voice chat (Flux over a WebSocket), video gen, and music gen. Paid third-party models bill through **Cloudflare Unified Billing** on your AI Gateway.
-- **Per-provider dispatch helpers** for Anthropic Claude, xAI Grok, and Google Gemini, each transforming our internal `messages` shape into the provider's native format while authorizing keylessly via `cf-aig-authorization`. OpenAI chat and Workers AI ride the `env.AI.run` binding directly. The one deployer BYOK escape hatch is **OpenAI image only**: an optional `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs, because the Unified Billing proxy rejects `background`/`output_format`.
+- **Per-provider dispatch helpers** for Anthropic Claude, xAI Grok, and Google Gemini, each transforming our internal `messages` shape into the provider's native format while authorizing keylessly via `cf-aig-authorization`. OpenAI chat and Workers AI ride the `env.AI.run` binding directly. There is no deployer BYOK path: the last one, an optional `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs, was retired in v0.166.0 (prism#93), so `gpt-image-*` render opaque through the Unified Billing proxy.
 - **SSE streaming** (v0.13.0+) for chat models on all five providers: Anthropic native SSE, Workers AI OpenAI-compatible SSE, xAI OpenAI-compatible SSE, OpenAI proxied (binding-based, v0.21.1), and Gemini (binding-based, v0.21.4).
 - **AI Gateway** wraps every call for observability, caching, and rate-limiting.
 - **D1** holds chat metadata, multi-turn conversation history, and RAG chunk text. **R2** holds all binary artifacts. **Vectorize** holds RAG embeddings (768-dim BGE-base). The chat row references R2 keys; nothing binary touches D1.
@@ -47,7 +47,7 @@ One Worker, no framework, no build step beyond TypeScript. The interesting parts
 - OpenAI (Unified Billing): GPT-5.5, GPT-5.4, GPT-5.4 mini, o4-mini (streaming as of v0.21.1; needs CF credits)
 - Google Gemini (Unified Billing): Gemini 3.1 Pro and Gemini 3.5 Flash (streaming as of v0.21.4; needs CF credits)
 
-**Image generation:** Google Nano Banana Pro / Nano Banana 2 / Imagen 4 (Unified Billing), GPT Image 1.5 (OpenAI; transparent PNG with an OpenAI key, opaque otherwise; v0.22.1) and GPT Image 2 (v0.165.0), Recraft V4 / V4.1 Pro (opaque, art-directed; v0.22.0/v0.165.0), FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM, Stable Diffusion XL. FLUX.2 models accept up to 4 reference images (v0.16.0) for image-to-image generation, downscaled client-side to 512px.
+**Image generation:** Google Nano Banana Pro / Nano Banana 2 / Imagen 4 (Unified Billing), GPT Image 1.5 and GPT Image 2 (OpenAI, opaque; v0.22.1/v0.165.0), Recraft V4 / V4.1 Pro (opaque, art-directed; v0.22.0/v0.165.0), FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM, Stable Diffusion XL. FLUX.2 models accept up to 4 reference images (v0.16.0) for image-to-image generation, downscaled client-side to 512px.
 
 **Video generation:** Google Veo 3.1 / 3.1 Fast / 3 / 3 Fast, ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0 and 1.1 T2V / I2V plus Wan 2.7 I2V (image-to-video, v0.21.5/v0.165.0), PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, xAI Grok Imagine Video and Video 1.5. All 20 models route through Unified Billing and durable Cloudflare Workflows.
 
@@ -65,7 +65,7 @@ One Worker, no framework, no build step beyond TypeScript. The interesting parts
 
 **Discord ingestion (v0.20.3+):** import a [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter) JSON export into a project. The worker parses the export, groups messages into conversation-aware chunks (by author, time gap, and channel), and embeds them into the project's retrieval scope, so you can ask questions across an archived Discord channel's history. Import is a file picker in the project's "manage documents" modal.
 
-**Web search (v0.17.0):** opt-in retrieval source that queries Tavily and Brave (general web) and Wikipedia (reference and lore) in parallel. Snippets folded into the system prompt the same way RAG chunks are. Per-turn toggle. Tavily requires `TAVILY_API_KEY`; Brave requires `BRAVE_API_KEY`; Wikipedia needs no setup. See [Web search](#web-search) below.
+**Web search (v0.17.0):** opt-in retrieval source that queries self-hosted SearXNG (general web; v0.166.0) and Wikipedia (reference and lore) in parallel. Snippets folded into the system prompt the same way RAG chunks are. Per-turn toggle. SearXNG requires `SEARXNG_URL`; Wikipedia needs no setup. See [Web search](#web-search) below.
 
 **Streaming (v0.13.0+):** `POST /api/chat/stream` returns SSE for any chat model flagged `streaming: true` in the catalog. Token deltas surface as `{ type: "delta", text: "..." }` events, terminal completion as `{ type: "done", ... }` with token counts and conversation IDs. Client disconnect aborts the upstream model call immediately.
 
@@ -137,7 +137,7 @@ echo "CF_AIG_TOKEN=your-cloudflare-api-token" >> .dev.vars
 
 Then enable Unified Billing for each provider you plan to use: Dashboard > AI > AI Gateway > your gateway > Settings. Without credits, proxied models fail with `2021: Invalid User Credentials`.
 
-The **only** optional deployer BYOK secret is `OPENAI_API_KEY`, and it applies **only** to `openai/gpt-image-1.5` transparent PNG output (see [Image generation](#image-generation)). OpenAI chat does not use it.
+There is **no** deployer BYOK secret: the last one, `OPENAI_API_KEY` for `openai/gpt-image-1.5` transparent PNG output, was retired in v0.166.0 (prism#93). OpenAI chat has never used it.
 
 > **Public demo:** to run a separate try-it-yourself instance (no worker gateway secrets; visitors bring their own), see [Deploying a public demo (separate worker)](#deploying-a-public-demo-separate-worker). Skip steps 1 and 1b for that path.
 
@@ -209,16 +209,22 @@ Add your address and anyone else who should have access. Cloudflare Zero Trust i
 
 Do **not** use a **Bypass** policy on the main app URL. Bypass skips login, so the worker never receives a user email and everyone shares the `anonymous` bucket.
 
-### 7. Optional: web search (Tavily + Brave)
+### 7. Optional: web search (SearXNG)
 
-For the v0.17.0 web-search feature, set API keys for the sources you want:
+For the v0.17.0 web-search feature (SearXNG source added v0.166.0), point the worker at a self-hosted SearXNG instance with the JSON API enabled:
 
 ```
-npx wrangler secret put TAVILY_API_KEY
-npx wrangler secret put BRAVE_API_KEY
+npx wrangler secret put SEARXNG_URL
 ```
 
-Without `TAVILY_API_KEY`, the Tavily source is silently skipped. Without `BRAVE_API_KEY`, the Brave source is silently skipped. Wikipedia always works with no key. See [Web search](#web-search) below.
+If the instance is behind Cloudflare Access, also set the service-token halves:
+
+```
+npx wrangler secret put SEARXNG_ACCESS_CLIENT_ID
+npx wrangler secret put SEARXNG_ACCESS_CLIENT_SECRET
+```
+
+Without `SEARXNG_URL`, the SearXNG source is silently skipped. Wikipedia always works with no config. See [Web search](#web-search) below.
 
 ### 8. Local development
 
@@ -295,7 +301,7 @@ npx wrangler secret put GATEWAY_ID
 npx wrangler secret put CF_AIG_TOKEN
 ```
 
-For local dev, leave those keys out of `.dev.vars` as well. Optional deployer secrets (`OPENAI_API_KEY`, `TAVILY_API_KEY`, `BRAVE_API_KEY`) still work if you want global features, but most public demos omit them so visitors rely on their own gateway for paid models.
+For local dev, leave those keys out of `.dev.vars` as well. The optional web-search config (`SEARXNG_URL`, plus `SEARXNG_ACCESS_CLIENT_ID` / `SEARXNG_ACCESS_CLIENT_SECRET` for a gated instance) still works if you want global features, but most public demos omit it so visitors rely on their own gateway for paid models.
 
 ### 3. Deploy
 
@@ -395,7 +401,7 @@ For D1 **schema** changes, see [Migrating an existing deployment](#migrating-an-
        |
    +---+---+
    |       |
- Tavily  Brave  Wikipedia    (web search, v0.17.0)
+ SearXNG  Wikipedia          (web search)
 ```
 
 The worker is the only public surface. R2 is private; the worker streams objects through `GET /api/artifact/*` after verifying ownership via `customMetadata.user_email` on the R2 object.
@@ -434,7 +440,7 @@ The worker is the only public surface. R2 is private; the worker streams objects
 ### Model types
 
 - `chat`: text generation. Accepts vision attachments on vision-capable models. Audio attachments are transcribed via Whisper. Video attachments are 8 client-extracted keyframes. Text-file attachments (v0.24.0) are inlined into the prompt as a fenced block (any chat model).
-- `image`: text-to-image generation. The system prompt field becomes the negative prompt. FLUX.2 models additionally accept up to 4 reference images (v0.16.0). Output is a JPEG/PNG in R2; `openai/gpt-image-1.5` outputs a transparent RGBA PNG when `OPENAI_API_KEY` is set (v0.22.1), opaque otherwise.
+- `image`: text-to-image generation. The system prompt field becomes the negative prompt. FLUX.2 models additionally accept up to 4 reference images (v0.16.0). Output is a JPEG/PNG in R2; proxied image models including `openai/gpt-image-*` are opaque (v0.166.0 retired the transparent-PNG BYOK path).
 - `tts`: text-to-speech. Output is audio (MP3 or model-default container) in R2.
 - `stt`: speech-to-text transcription. Input audio, output text.
 - `voice`: conversational/streaming STT (Deepgram Flux). A live WebSocket session, not a request/response turn; powers the standalone `/stt.html` panel and the [voice chat](#voice-chat) loop. Special-cased on both routing and UI (the chat path rejects it with a pointer to `/api/stt/stream`).
@@ -471,7 +477,7 @@ Workers AI billing is per-token / per-image / per-minute depending on model. Fre
 
 D1 is roughly $0.75/GB-month for storage. R2 is roughly $0.015/GB-month with no egress fees inside Cloudflare. Free tiers on D1 and R2 cover small personal use indefinitely.
 
-Anthropic (Claude), xAI (Grok), OpenAI chat, Google Gemini, and proxied image / video / music models bill against your Cloudflare account via Unified Billing. The optional `OPENAI_API_KEY` (image only, transparent PNG) bills against your OpenAI account. Tavily and Brave web search bill against your respective API accounts (Tavily free tier: 1000 searches/month). See per-provider sections below.
+Anthropic (Claude), xAI (Grok), OpenAI chat, Google Gemini, and proxied image / video / music models bill against your Cloudflare account via Unified Billing. Self-hosted SearXNG web search has no per-search API cost (you run the instance); Wikipedia is free. See per-provider sections below.
 
 ## Anthropic models (Unified Billing)
 
@@ -513,7 +519,7 @@ GPT-5.5, GPT-5.4, GPT-5.4 mini, and o4-mini (a reasoning model) are routed throu
 
 This is a deliberate re-introduction. OpenAI chat shipped as BYOK in v0.11.0 and was removed in the v0.14.0 consolidation in favor of Unified Billing. These entries come back on the Unified Billing side of that same decision, so they are not a revert of v0.14.0; the BYOK chat path stays gone.
 
-One narrow BYOK exception exists for image, not chat (v0.22.1): `openai/gpt-image-1.5` can produce transparent PNGs, but the Unified Billing proxy's image schema is strictly `{ prompt, images, quality, size, style }` and rejects `background`/`output_format` (a request with them returns `7003: User Input Error`). Transparency therefore requires a direct call to `api.openai.com`, which does accept those fields. The worker uses an optional `OPENAI_API_KEY` for this single purpose. When set, gpt-image-1.5 goes direct and transparent; when unset, it falls back to the opaque proxy path. **This is the only deployer BYOK path in the playground.** See the Image generation section below.
+As of v0.166.0 there is no OpenAI BYOK path at all. A narrow image-only BYOK exception existed through v0.165.x: `openai/gpt-image-1.5` could produce transparent PNGs via a direct `api.openai.com` call, because the Unified Billing proxy's image schema is strictly `{ prompt, images, quality, size, style }` and rejects `background`/`output_format` (a request with them returns `7003: User Input Error`). prism#93 retired that path, so `gpt-image-*` now render opaque through the proxy like every other proxied image model. See the Image generation section below.
 
 Two current limitations:
 
@@ -662,7 +668,7 @@ This is a Cloudflare-proxied (third-party) model, so it requires Unified Billing
 
 ## Image generation
 
-Eleven models in the catalog: Google Nano Banana Pro and OpenAI GPT Image 1.5, plus Recraft V4, FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM, Stable Diffusion XL. The eight FLUX/Leonardo/Lykon/Stability models run through Workers AI (no Unified Billing required); Nano Banana Pro and Recraft V4 are proxied partner models on Unified Billing (need CF credits); GPT Image 1.5 is Unified Billing for opaque output and optional OpenAI BYOK for transparent output (see below). This is the **only** deployer BYOK path in the playground.
+Eleven models in the catalog: Google Nano Banana Pro and OpenAI GPT Image 1.5, plus Recraft V4, FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM, Stable Diffusion XL. The eight FLUX/Leonardo/Lykon/Stability models run through Workers AI (no Unified Billing required); Nano Banana Pro and Recraft V4 are proxied partner models on Unified Billing (need CF credits); GPT Image 1.5 and GPT Image 2 are proxied partner models on Unified Billing (opaque output; v0.166.0 retired the OpenAI BYOK transparent path). No deployer BYOK path remains.
 
 ### Google Nano Banana Pro (Unified Billing, v0.21.2)
 
@@ -673,33 +679,15 @@ Eleven models in the catalog: Google Nano Banana Pro and OpenAI GPT Image 1.5, p
 - First pass is **text-to-image only**. The schema's `image_input[]` (up to 3 reference images for editing) is a later add, mirroring the FLUX.2 reference-image work.
 - Generation is synchronous and observed around 20s. If a busier moment or a higher resolution pushes it past the worker's wall-clock budget, the fallback is to route it through `LongRunWorkflow` like video gen. `ai_gateway_log_id` stays null on the persisted row (the proxied response carries routing info in `gatewayMetadata` instead).
 
-### Proxied image models and transparent PNG (v0.22.0, v0.22.1)
+### Proxied image models (v0.22.0)
 
-`runImage` routes every model with a `provider` field (Nano Banana, GPT Image 1.5, Recraft V4) through one proxied path; the `@cf` models have no `provider` and take the Workers AI path. Per-model request shape comes from `buildProxiedImageParams` (`src/proxied-image-params.ts`), because each proxied schema is `additionalProperties: false` and rejects the `@cf` `{ width, height, steps, negative_prompt }` shape.
+`runImage` routes every model with a `provider` field (Nano Banana, GPT Image 1.5 / 2, Recraft V4) through one proxied path; the `@cf` models have no `provider` and take the Workers AI path. Per-model request shape comes from `buildProxiedImageParams` (`src/proxied-image-params.ts`), because each proxied schema is `additionalProperties: false` and rejects the `@cf` `{ width, height, steps, negative_prompt }` shape.
 
-- **Recraft V4** (`recraft/recraftv4`, Unified Billing) is opaque and art-directed (strong composition and text rendering). The CF proxy exposes no alpha control, only an opaque `background_color`, so this is not a transparency model. It returns WebP; the worker stores it with the response content-type, so no format is hardcoded.
+- **Recraft V4** (`recraft/recraftv4`, Unified Billing) is opaque and art-directed (strong composition and text rendering). The CF proxy exposes no alpha control, only an opaque `background_color`. It returns WebP; the worker stores it with the response content-type, so no format is hardcoded.
 
-- **GPT Image 1.5** (`openai/gpt-image-1.5`) is the transparent-PNG path, with a wrinkle: the Unified Billing proxy 7003-rejects `background`/`output_format`, so transparency is impossible through it. The worker therefore uses a BYOK direct call to `api.openai.com/v1/images/generations` (`src/providers/openai-image.ts`) with `background: "transparent"` + `output_format: "png"` when `OPENAI_API_KEY` is set; GPT image models always return base64 (`data[0].b64_json`, no URL), which the worker decodes and stores as `image/png`. Without the key, gpt-image-1.5 falls back to the opaque proxy path. The BYOK call bypasses the AI Gateway, so `ai_gateway_log_id` stays null on the persisted row (a quick way to tell which path ran).
+- **GPT Image 1.5 / 2** (`openai/gpt-image-1.5`, `openai/gpt-image-2`) are opaque through the Unified Billing proxy, whose image schema is strictly `{ prompt, images, quality, size, style }` and 7003-rejects `background`/`output_format`. v0.166.0 retired the `OPENAI_API_KEY` BYOK direct call to `api.openai.com` that was the only way to get a transparent PNG (prism#93), so these now render opaque like every other proxied image model.
 
-To enable transparent assets:
-
-```
-npx wrangler secret put OPENAI_API_KEY
-```
-
-Then redeploy. Billing for transparent generations is on your OpenAI account (BYOK), not CF credits.
-
-**Verifying transparency.** Do not check by re-uploading the image into a chat client; many clients flatten alpha onto a background and re-encode to JPEG, which falsely looks opaque. Check the stored or served bytes directly:
-
-```
-npx wrangler r2 object get <bucket>/out/<id>.png --remote --file /tmp/raw.png
-file /tmp/raw.png   # expect: PNG image data ... RGBA
-python3 -c "from PIL import Image; im=Image.open('/tmp/raw.png'); print(im.mode, im.getchannel('A').getextrema() if im.mode=='RGBA' else 'no alpha')"
-```
-
-Want `RGBA` with alpha extrema spanning `(0, 255)`. On a free Cloudflare plan there is no Polish/Mirage/image-resizing, so delivery does not transform the PNG.
-
-GIF is intentionally out of scope: PNG carries an 8-bit alpha channel (the standard sprite format), GIF transparency is 1-bit, and no model emits GIF.
+All proxied image models return a URL (not base64) in the `{ state, result }` envelope (`{ state: "Completed", result: { image: "<url>" } }`), which the worker fetches and stores in R2 with the response content-type, so no format is hardcoded.
 
 ### FLUX.2 reference images (v0.16.0)
 
@@ -804,37 +792,36 @@ An opt-in retrieval source (v0.17.0) that queries the web at request time and fo
 
 ### How it works
 
-When you check the "search the web" toggle next to the run button (chat models only), the worker fires three parallel queries on each turn:
+When you check the "search the web" toggle next to the run button (chat models only), the worker fires two parallel queries on each turn:
 
-1. **Tavily** for general web results. Cleaned snippets, no full-page fetches. Requires `TAVILY_API_KEY`; without it, this source is silently skipped.
-2. **Brave Search** for general web results from Brave's independent index. Requires `BRAVE_API_KEY`; without it, this source is silently skipped.
-3. **Wikipedia** for reference and lore. No API key needed. Returns titles + HTML-stripped snippets via the public MediaWiki search endpoint.
+1. **SearXNG** for general web results (v0.166.0). A self-hosted metasearch instance queried via its JSON API (`GET {SEARXNG_URL}/search?q=...&format=json`). Requires `SEARXNG_URL`; without it, this source is silently skipped. When the instance is gated by Cloudflare Access, the worker authenticates with a service token (`SEARXNG_ACCESS_CLIENT_ID` / `SEARXNG_ACCESS_CLIENT_SECRET`).
+2. **Wikipedia** for reference and lore. No API key needed. Returns titles + HTML-stripped snippets via the public MediaWiki search endpoint.
 
-All three have an 8-second per-source timeout. If one fails or times out, the others still return their hits. Results are persisted in the same `retrieved_context` column alongside any RAG chunks from the same turn, with a `source_type` discriminator so the UI can render web results (title + clickable URL + snippet) distinctly from doc chunks.
+Both have an 8-second per-source timeout. If one fails or times out, the other still returns its hits. Results are persisted in the same `retrieved_context` column alongside any RAG chunks from the same turn, with a `source_type` discriminator so the UI can render web results (title + clickable URL + snippet) distinctly from doc chunks.
 
 Per-turn opt-in: the toggle is not sticky across turns. Each turn decides independently whether to search. Web search and RAG can be on simultaneously; the model sees both in the system prompt.
 
 ### Setup
 
-Optional API keys (set whichever sources you want; Wikipedia needs none):
-
-1. **Tavily:** sign up at https://tavily.com and create an API key. Free tier is 1000 searches per month.
-2. **Brave Search:** subscribe at https://api.search.brave.com and create an API key.
-
-Load them as Worker secrets:
+Run a SearXNG instance with the JSON output format enabled, then point the worker at it (Wikipedia needs no config):
 
 ```
-npx wrangler secret put TAVILY_API_KEY
-npx wrangler secret put BRAVE_API_KEY
+npx wrangler secret put SEARXNG_URL
 ```
 
-Redeploy after setting secrets.
+If the instance is behind Cloudflare Access (recommended for a private deployment), also set the service-token halves so the worker can authenticate:
+
+```
+npx wrangler secret put SEARXNG_ACCESS_CLIENT_ID
+npx wrangler secret put SEARXNG_ACCESS_CLIENT_SECRET
+```
+
+The worker sends them as `CF-Access-Client-Id` / `CF-Access-Client-Secret` only when both are set; leave them unset for an un-gated instance. Redeploy after setting secrets.
 
 ### Caveats worth knowing
 
-- **Token budget.** Each turn with web search on adds roughly 2000-4000 tokens to the system prompt (up to 5 Tavily snippets, 5 Brave snippets, and 3 Wikipedia snippets). Long campaigns or document-heavy RAG turns may push against your model's context window.
-- **Tavily costs.** After the free tier, Tavily is ~$0.005 per search. Auto-search-every-turn would be wasteful; the per-turn toggle is intentional.
-- **Brave costs.** Brave Search API billing depends on your plan at https://api.search.brave.com. New accounts typically receive monthly credits; check the dashboard for current pricing.
+- **Token budget.** Each turn with web search on adds roughly 2000-4000 tokens to the system prompt (up to 5 SearXNG snippets and 3 Wikipedia snippets). Long campaigns or document-heavy RAG turns may push against your model's context window.
+- **Self-hosting cost.** SearXNG is free and open-source; the only cost is running the instance. Search-every-turn would still burn context tokens, so the per-turn toggle is intentional.
 - **No fact-checking.** Web snippets are supplementary context, not authoritative. The system prompt tells the model so. Verify anything that matters before quoting it.
 - **Wikipedia User-Agent.** The worker identifies itself per Wikimedia's policy. If you fork to a different repo name, update the UA string in `searchWikipedia` so you're not lumped in with anonymous scrapers.
 
@@ -932,7 +919,7 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 Built and maintained by [SkyPhusion](https://x.com/SkyPhusion).
 
-Built on Cloudflare Workers, Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Image generation models courtesy of Black Forest Labs and Leonardo.Ai. Text-to-speech via Deepgram. Speech-to-text via OpenAI Whisper. Web search via Tavily and Wikipedia.
+Built on Cloudflare Workers, Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Image generation models courtesy of Black Forest Labs and Leonardo.Ai. Text-to-speech via Deepgram. Speech-to-text via OpenAI Whisper. Web search via self-hosted SearXNG and Wikipedia.
 
 ## Hosted instance policies (play.skyphusion.org)
 

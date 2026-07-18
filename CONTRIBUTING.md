@@ -8,7 +8,7 @@ This project is maintained as time allows. Response times on issues and PRs may 
 
 ## Scope
 
-The project is a template for the Cloudflare AI stack: a single Worker that ties together Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Modalities covered: chat (text and vision), image generation, TTS, STT, video generation, music generation, and RAG over uploaded files. Paid third-party models run on **Cloudflare Unified Billing**; the only deployer BYOK path is optional `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs (the Unified Billing proxy rejects the fields needed for alpha).
+The project is a template for the Cloudflare AI stack: a single Worker that ties together Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Modalities covered: chat (text and vision), image generation, TTS, STT, video generation, music generation, and RAG over uploaded files. Paid third-party models run on **Cloudflare Unified Billing**; there is no deployer BYOK path (the last one, `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs, was retired in v0.166.0 under prism#93).
 
 PRs that fit:
 
@@ -38,7 +38,7 @@ When adding a new third-party model that isn't already in the catalog, prefer th
 - It uses Cloudflare's AI Gateway natively, so observability, caching, and rate limiting come free.
 - It is less code on our side: no per-provider dispatch helper, no transform between our internal `messages` shape and the provider's format (when the binding handles it).
 
-Add a deployer BYOK path only when Unified Billing lacks a capability the playground needs. The current example is `OPENAI_API_KEY` for transparent PNG on `gpt-image-1.5`: the proxy schema rejects `background`/`output_format`, so a direct OpenAI call is the only way to get alpha.
+Do not add a deployer BYOK path. Per prism#93 (2026-07-18), prism stays on the unified Cloudflare Workers AI / AI Gateway (Unified Billing) plane; new inference paths must be Unified-Billing-reachable. The former `OPENAI_API_KEY` transparent-PNG exception was retired in v0.166.0, so `gpt-image-*` now render opaque through the proxy like every other proxied image model.
 
 ## Long-running operations
 

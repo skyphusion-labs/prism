@@ -137,15 +137,13 @@ export const MODELS: ModelEntry[] = [
   // proxied path as nano-banana-pro.
   { id: "google/nano-banana-2",                         label: "Nano Banana 2 (Google)",     group: "Image Gen",            type: "image", capabilities: [], provider: "google" },
   { id: "google/imagen-4",                              label: "Imagen 4 (Google)",          group: "Image Gen",            type: "image", capabilities: [], provider: "google" },
-  // gpt-image-1.5 (v0.22.0/.1). Transparency is NOT available through the CF
-  // proxy: that schema is { prompt, images, quality, size, style } and
-  // 7003-rejects background/output_format. So the worker uses a BYOK direct call
-  // to api.openai.com when OPENAI_API_KEY is set (transparent PNG), and falls
-  // back to the opaque proxy path otherwise. See providers/openai-image.ts and
-  // the v0.22.1 CHANGELOG entry.
-  { id: "openai/gpt-image-1.5",                         label: "GPT Image 1.5 (OpenAI; transparent PNG with OPENAI_API_KEY, else opaque)", group: "Image Gen", type: "image", capabilities: [], provider: "openai" },
-  // gpt-image-2 (v0.165.0): same dispatch as 1.5 (BYOK direct when
-  // OPENAI_API_KEY is set, opaque Unified Billing proxy otherwise).
+  // gpt-image-1.5 (v0.22.0). Opaque only: the CF proxy schema is
+  // { prompt, images, quality, size, style } and 7003-rejects
+  // background/output_format, so transparency is impossible through it.
+  // v0.166.0 retired the OPENAI_API_KEY BYOK transparent-PNG path (prism#93),
+  // so this rides the Unified Billing proxy like the other proxied image models.
+  { id: "openai/gpt-image-1.5",                         label: "GPT Image 1.5 (OpenAI)",     group: "Image Gen", type: "image", capabilities: [], provider: "openai" },
+  // gpt-image-2 (v0.165.0): same opaque proxy dispatch as 1.5.
   { id: "openai/gpt-image-2",                           label: "GPT Image 2 (OpenAI)",       group: "Image Gen", type: "image", capabilities: [], provider: "openai" },
   // recraftv4 is opaque and art-directed (the CF proxy exposes no alpha flag,
   // only an opaque background_color). Strong text rendering and style controls;

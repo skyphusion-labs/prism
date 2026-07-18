@@ -31,18 +31,18 @@ export interface Env {
   // on close (a plain Worker has no reliable post-101 hook to write D1). Class
   // SttSession in src/stt-session.ts. One DO instance per session (newUniqueId).
   STT_SESSION: DurableObjectNamespace;
-  // v0.22.1: optional deployer BYOK for gpt-image-1.5 transparent PNG only.
-  // OpenAI chat rides Unified Billing; the proxy image schema rejects
-  // background/output_format, so transparency requires api.openai.com direct.
-  OPENAI_API_KEY?: string;
   // Unified Billing auth for Anthropic, xAI, and proxied partners. Bearer token
   // sent as cf-aig-authorization. Also used when Authenticated Gateway is on.
   // v0.164.0: optional on the worker in public demo mode (per-user token in D1).
   CF_AIG_TOKEN?: string;
-  // v0.17.0: Tavily Search API key for the optional web-search retrieval source.
-  // Optional: when unset, that source is silently skipped.
-  TAVILY_API_KEY?: string;
-  // v0.164.0: Brave Search API key for the optional web-search retrieval source.
-  // Optional: when unset, that source is silently skipped.
-  BRAVE_API_KEY?: string;
+  // v0.166.0: base URL of the self-hosted SearXNG instance for the optional
+  // web-search retrieval source (our deploy: https://search.skyphusion.org).
+  // Optional: when unset, the SearXNG source is silently skipped (Wikipedia,
+  // which needs no config, still runs). May be a plain [vars] entry or a secret.
+  SEARXNG_URL?: string;
+  // v0.166.0: Cloudflare Access service-token halves for a gated SearXNG
+  // instance. Sent as CF-Access-Client-Id / CF-Access-Client-Secret ONLY when
+  // both are set; a self-hoster running an un-gated instance leaves them unset.
+  SEARXNG_ACCESS_CLIENT_ID?: string;
+  SEARXNG_ACCESS_CLIENT_SECRET?: string;
 }
