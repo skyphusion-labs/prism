@@ -2,17 +2,17 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Typecheck](https://github.com/skyphusion-labs/prism/actions/workflows/typecheck.yml/badge.svg)](https://github.com/skyphusion-labs/prism/actions/workflows/typecheck.yml)
-[![Voice chat](https://img.shields.io/badge/%F0%9F%8E%99%EF%B8%8F_voice_chat-speak_%26_hear_39_chat_models-6d8cff)](#voice-chat)
+[![Voice chat](https://img.shields.io/badge/%F0%9F%8E%99%EF%B8%8F_voice_chat-speak_%26_hear_36_chat_models-6d8cff)](#voice-chat)
 
-A multimodal AI playground deployed as a single Cloudflare Worker. **Live demo:** https://play.skyphusion.org (free signup, bring your own AI Gateway). 39 chat models across 5 providers, **hands-free voice chat** (talk to any model and hear it reply), image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via self-hosted SearXNG and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI with first-party accounts, per-user history, R2 for all binary artifacts.
+A multimodal AI playground deployed as a single Cloudflare Worker. **Live demo:** https://play.skyphusion.org (free signup, bring your own AI Gateway). 36 chat models across 5 providers, **hands-free voice chat** (talk to any model and hear it reply), image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via self-hosted SearXNG and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI with first-party accounts, per-user history, R2 for all binary artifacts.
 
 <p align="center">
   <img src="docs/screenshot-desktop.jpg" alt="Desktop UI: image generation with Nano Banana Pro" width="800"><br><br>
   <img src="docs/screenshot-mobile.jpg" alt="Mobile UI: image generation with Nano Banana Pro" width="280">
 </p>
 
-> ### 🎙️ Speak to 39 AI models, and hear all 39 talk back
-> Not one voice assistant, **all 39 chat models**, by voice. Pick any model on the
+> ### 🎙️ Speak to 36 AI models, and hear all 36 talk back
+> Not one voice assistant, **all 36 chat models**, by voice. Pick any model on the
 > list, tap the mic, and have a real spoken conversation: your speech is
 > transcribed by Deepgram Flux, sent to the model through the normal chat path,
 > and the reply is **spoken back** with Aura-2 TTS, hands-free. End to end on
@@ -40,10 +40,10 @@ One Worker, no framework, no build step beyond TypeScript. The interesting parts
 
 ## Features
 
-**Chat (39 models across 5 providers; 38 of 39 stream-capable):**
+**Chat (36 models across 5 providers; 35 of 36 stream-capable):**
 - Workers AI: Llama 4 Scout, Llama 3.x family, Qwen3 30B / QwQ 32B / Qwen2.5 Coder 32B, DeepSeek R1, Mistral Small 3.1, Gemma 4 26B, Granite 4 Micro, Nemotron 3 120B, GLM-4.7 Flash / GLM-5.2, GPT-OSS 120B / 20B, Kimi K2.6 / K2.7 Code, SEA-LION v4 27B, LLaVA 1.5 7B (single-shot vision; the one non-streaming model)
-- Anthropic (Unified Billing): Fable 5, Sonnet 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5 (all streaming)
-- xAI (Unified Billing): Grok 4.5, Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning), Grok Build 0.1 (all streaming as of v0.16.0)
+- Anthropic (Unified Billing): Sonnet 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5 (all streaming)
+- xAI (Unified Billing): Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning) (all streaming as of v0.16.0)
 - OpenAI (Unified Billing): GPT-5.5, GPT-5.4, GPT-5.4 mini, o4-mini (streaming as of v0.21.1; needs CF credits)
 - Google Gemini (Unified Billing): Gemini 3.1 Pro and Gemini 3.5 Flash (streaming as of v0.21.4; needs CF credits)
 
@@ -57,7 +57,7 @@ One Worker, no framework, no build step beyond TypeScript. The interesting parts
 
 **Speech-to-text:** Whisper Large v3 Turbo / Whisper / Whisper Tiny EN and Deepgram Nova-3 (one-shot transcription), plus **Deepgram Flux** conversational/streaming STT with live turn detection over a WebSocket (v0.108.0).
 
-**Voice chat: talk to any model, hear it reply (v0.118.0):** a mic button on any chat model starts a hands-free loop, your speech is transcribed by Flux, each finished turn is sent to the selected model through the normal chat path, and the reply is spoken back via Aura-2 TTS. Works with all 39 chat models, the conversation saves to history like any other, and the whole loop runs on Cloudflare (no third-party STT/TTS). See [Voice chat](#voice-chat).
+**Voice chat: talk to any model, hear it reply (v0.118.0):** a mic button on any chat model starts a hands-free loop, your speech is transcribed by Flux, each finished turn is sent to the selected model through the normal chat path, and the reply is spoken back via Aura-2 TTS. Works with all 36 chat models, the conversation saves to history like any other, and the whole loop runs on Cloudflare (no third-party STT/TTS). See [Voice chat](#voice-chat).
 
 **RAG (Vectorize):** upload files of any type via the sidebar (v0.23.0), or a `.zip` to import many files at once (v0.25.0, each inner file becomes its own document). PDFs get per-page extraction and spreadsheets (`.xlsx`/`.xls`) per-sheet; every other file is read as UTF-8 text (CSV, JSON, HTML, source code, logs, etc.). Binary formats that don't decode to text (e.g. `.docx`, images) are rejected. The worker chunks, embeds via BGE-base, and stores vectors in Vectorize plus text in D1. Toggle "use my docs" per turn to fold the top-5 nearest chunks into the system prompt before the LLM call.
 
@@ -437,7 +437,7 @@ Billing: the call bills against your Cloudflare account at Anthropic's per-token
 
 ## xAI / Grok models (Unified Billing)
 
-Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning variants), and Grok Build 0.1 run on Cloudflare Unified Billing. Like Anthropic, the worker hits the AI Gateway's xAI provider endpoint with `cf-aig-authorization: Bearer <CF_AIG_TOKEN>` and no deployer API key. xAI's chat API is OpenAI-compatible, so no message transform is needed beyond what `callXai` already handles.
+Grok 4.3 and Grok 4.20 (Multi-Agent and Reasoning variants) run on Cloudflare Unified Billing. Like Anthropic, the worker hits the AI Gateway's xAI provider endpoint with `cf-aig-authorization: Bearer <CF_AIG_TOKEN>` and no deployer API key. xAI's chat API is OpenAI-compatible, so no message transform is needed beyond what `callXai` already handles.
 
 All four Grok entries support SSE streaming as of v0.16.0. The streaming path requests `stream_options.include_usage: true` so token counts arrive in the final pre-`[DONE]` frame.
 
@@ -557,7 +557,7 @@ All four are hosted on Workers AI (no Unified Billing needed).
 
 ## Voice chat
 
-Talk to any of the 39 chat models and hear it talk back, hands-free. This is one
+Talk to any of the 36 chat models and hear it talk back, hands-free. This is one
 of the headline features: a full **speech in, speech out** loop over any text
 model on the list, running entirely on Cloudflare with no third-party STT/TTS.
 
@@ -778,7 +778,7 @@ If your use case is the legal-research pattern (citation accuracy matters, sourc
 
 ## Streaming
 
-`POST /api/chat/stream` accepts the same request body as `POST /api/chat` and returns `text/event-stream`. Available for any chat model flagged `streaming: true` in the catalog (38 of the 39 chat models, all but the single-shot LLaVA 1.5, covering all five providers: Anthropic, xAI, Workers AI, OpenAI proxied, and Gemini).
+`POST /api/chat/stream` accepts the same request body as `POST /api/chat` and returns `text/event-stream`. Available for any chat model flagged `streaming: true` in the catalog (35 of the 36 chat models, all but the single-shot LLaVA 1.5, covering all five providers: Anthropic, xAI, Workers AI, OpenAI proxied, and Gemini).
 
 Wire format:
 
@@ -812,7 +812,7 @@ Note: AI Gateway does not surface `cf-aig-log-id` on proxied SSE responses, so s
 - `type`: `"chat"` | `"image"` | `"tts"` | `"video"` | `"stt"` | `"music"`
 - `capabilities`: array. Currently only `"vision"` is recognized; applies to chat models only.
 - `provider` (optional): `"workers-ai"` (default) | `"anthropic"` | `"xai"` | `"openai"` / `"google"` / `"bytedance"` / `"minimax"` / `"runwayml"` / `"alibaba"` / `"pixverse"` / `"vidu"` (Unified Billing). Drives the call dispatch.
-- `streaming` (optional, chat only): when `true`, the model is eligible for `POST /api/chat/stream`. 38 of the 39 chat models across the five providers (Anthropic, Workers AI, xAI, OpenAI, Gemini) are wired; only the single-shot LLaVA 1.5 is not.
+- `streaming` (optional, chat only): when `true`, the model is eligible for `POST /api/chat/stream`. 35 of the 36 chat models across the five providers (Anthropic, Workers AI, xAI, OpenAI, Gemini) are wired; only the single-shot LLaVA 1.5 is not.
 
 Full Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/. Skip anything tagged "Planned deprecation."
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.167.1
+
+fix(models): pull 3 not-yet-enabled Unified Billing ids (v0.167.1)
+
+Three catalog ids are rejected by Cloudflare Unified Billing as not-yet-enabled model ids. Live smoke on 2026-07-18 (Conrad's authed session, corroborated by Strummer's gateway tail) returned a roughly 3.5s 502 with a credentials-shaped error for each, while sibling ids on the SAME gateway prefs (claude-opus-4-8, claude-sonnet-5, grok-4.3, kimi) returned 200, which exonerates the credentials: the fingerprint is a gateway 502 refusal of the id itself, not an auth failure. Removed until developers.cloudflare.com lists them:
+
+- anthropic/claude-fable-5 (chat)
+- xai/grok-4.5 (chat)
+- xai/grok-build-0.1 (chat)
+
+Tail evidence (Strummer's gateway tail; all three dead ids share the ~3.48-3.52s Unified-Billing-reject fingerprint, while enabled siblings run 5-44s to a 200):
+- 00:49:48Z  502  3488ms  anthropic/claude-fable-5
+- 00:54:49Z  502  3479ms  xai/grok-4.5
+- 00:59:24Z  502  3522ms  xai/grok-build-0.1 (on v0.167.0)
+
+Passed on the same user prefs: claude-opus-4-8, claude-sonnet-5, grok-4.3, kimi-k2.6 (web-search run), and kimi-k2.7-code (live-verified by Conrad; it stays in the catalog). Fuller evidence chain: prism#93 issuecomment-5009034758.
+
+Each is replaced in src/models.ts by a one-line removal comment per the catalog convention, so re-adding is a one-line revert once CF enables the id. The chat catalog drops 39 -> 36; all three were streaming, so stream-capable drops 38 -> 35 (the single non-streaming model, LLaVA 1.5, is unaffected). README counts and model lists are updated to match. No code path or contract change; this is a catalog-only PATCH.
+
+### Code
+- `src/models.ts`: remove the three entries, each replaced by a `removed v0.167.1: ...` comment; drop the stale xAI comment that claimed grok-build-0.1 works.
+- `README.md`: chat count 39 -> 36 and stream-capable "38 of 39" -> "35 of 36" throughout; drop Fable 5 / Grok 4.5 / Grok Build 0.1 from the Anthropic and xAI model lists and the xAI provider prose.
+- `package.json`: 0.167.0 -> 0.167.1.
+- `npm run typecheck` clean; `npm test` green (230 tests).
+
 ## v0.167.0
 
 feat(auth): public signup + mandatory BYOK, drop CF Access on public deploy (v0.167.0)
