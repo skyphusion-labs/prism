@@ -1,9 +1,3 @@
-**Option A: scaffold from npm (recommended for a new deployment).** Ships a fresh prism tree into a new directory, no clone required (Node 20 or later):
-
-
-
-**Option B: clone the repo** (for contributors, or to track the source directly):
-
 # prism
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
@@ -206,8 +200,6 @@ npm run deploy
 ```
 
 You will get a `*.workers.dev` URL.
-
-> Note: `wrangler.example.toml` declares a `[[services]]` binding named `EMAIL` that targets a separate `skyphusion-email` Worker ([its own repo](https://github.com/SkyPhusion/skyphusion-email)). Wrangler will not deploy a service binding whose target Worker is not in your account, so this first deploy fails until you either deploy `skyphusion-email` first or comment out the `[[services]]` block in your `wrangler.toml`. The Worker treats `env.EMAIL` as optional at runtime (transactional mail just no-ops without it), so commenting it out is safe.
 
 ### 6. Cloudflare Access (access mode only)
 
