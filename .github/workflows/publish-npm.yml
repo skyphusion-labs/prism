@@ -36,8 +36,13 @@ jobs:
       # a mis-tagged Release can never publish the wrong version. Tag is vX.Y.Z;
       # package.json version is X.Y.Z (no leading v).
       - name: Verify release tag matches package version
+        # Route the (maintainer-controlled but still untrusted) tag through env
+        # rather than interpolating it into the script body, so a tag containing
+        # shell metacharacters ($ ( ) backticks) cannot inject into the run step.
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          tag="${{ github.event.release.tag_name }}"
+          tag="$RELEASE_TAG"
           tag_version="${tag#v}"
           pkg_version="$(node -p "require(\"./packages/create-prism/package.json\").version")"
           echo "Release tag:      $tag (version $tag_version)"
