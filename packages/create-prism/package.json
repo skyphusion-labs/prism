@@ -1,0 +1,44 @@
+{
+  "name": "@skyphusion/create-prism",
+  "version": "0.1.0",
+  "description": "Scaffold a new prism deployment: a multimodal AI playground on Cloudflare Workers.",
+  "license": "AGPL-3.0-only",
+  "author": "Conrad Rockenhaus",
+  "homepage": "https://github.com/skyphusion-labs/prism/tree/main/packages/create-prism#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skyphusion-labs/prism.git",
+    "directory": "packages/create-prism"
+  },
+  "bugs": {
+    "url": "https://github.com/skyphusion-labs/prism/issues"
+  },
+  "keywords": [
+    "cloudflare-workers",
+    "prism",
+    "scaffold",
+    "create",
+    "ai-playground",
+    "template"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "create-prism": "index.js"
+  },
+  "files": [
+    "index.js",
+    "template",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "node scripts/assemble-template.js"
+  }
+}

@@ -1,5 +1,77 @@
 # Changelog
 
+## v0.168.0
+
+feat(dist): npm scaffold, publish `@skyphusion/create-prism` (v0.168.0)
+
+Ship a one-command install path for prism. `npm create @skyphusion/prism my-app`
+(equivalently `npx @skyphusion/create-prism my-app`) copies a fresh, deployable
+prism tree into a new directory, so a new deployer no longer has to clone the repo
+to stand up their own instance. The clone flow stays for contributors.
+
+Shape (Conrad's ruling on #83): a scaffold CLI packaged as `@skyphusion/create-prism`,
+with the full template tree shipping INSIDE the CLI tarball (shape A). The publishable
+unit lives at `packages/create-prism/`; the repo root `package.json` stays
+`private: true` and is never published.
+
+Why this shape:
+- **No source duplication in git.** The deployable tree is NOT committed under the
+  package. A `prepack` script (`scripts/assemble-template.js`) copies the current repo
+  source into `packages/create-prism/template/` (gitignored) at pack/publish time, so
+  the tarball always carries a fresh copy and there is one source of truth. The script
+  fails loud if the repo layout drifts (a required source path missing, or the assembled
+  tree failing its post-copy invariants), so a rename can never silently ship a broken
+  template.
+- **Zero runtime dependencies, single file, Node >= 20.** The CLI is plain Node using
+  only `node:fs`/`node:path`/`node:url`, in keeping with the repo minimal-deps rule. It
+  refuses to scaffold into a non-empty directory (nothing written), sets the scaffolded
+  app package name from the target directory, prints numbered next steps (install,
+  bootstrap, wrangler resource creation, secrets, deploy), and has `--help`, `--version`,
+  and documented exit codes (0 ok, 1 usage, 2 target-not-empty, 3 template-missing,
+  4 io).
+- **The template is the whole deployable app.** src, public, tests, tests-integration,
+  migrations, schema.sql, the legacy migrate-v*.sql deltas, wrangler.example.toml, the
+  tsconfig and vitest configs, README/LICENSE/NOTICE/CONTRIBUTING, the two README
+  screenshots, and the adaptable instance-policy docs. Excluded: .env*, wrangler.toml,
+  .github/, .claude*, node_modules, and internal planning docs. The root package.json is
+  transformed for the scaffolded app (placeholder name, fresh 0.1.0 version, `private`
+  kept true, prism-project identity fields dropped; scripts and dependencies untouched).
+  The `.gitignore` ships as `gitignore` and the CLI restores the dot on scaffold, since
+  npm strips a literal `.gitignore` from published tarballs.
+- **BYOK / auth contract carried into the docs.** The package README (the npm landing
+  page) leads with the `npm create` flow, then documents required bindings (AI, D1, R2,
+  Vectorize, Workflows) vs optional (SEARXNG_*), the `AUTH_MODE` contract per #80 (access
+  default; public mode is first-party auth plus mandatory per-user BYOK, so the worker
+  holds no AI-spend secrets), the AGPL-3.0 section 13 network-service source obligation,
+  and a note that `xlsx` resolves from a `cdn.sheetjs.com` tarball URL (fine for npm,
+  flagged for mirrors/offline installs).
+
+The publish workflow (`.github/workflows/publish-npm.yml`), NPM_TOKEN wiring, provenance,
+and `brand/distribution.md` are Strummer's lane on this same branch; publishing is gated
+on a GitHub Release matching the package version and is not part of this app-side change.
+
+Verified end to end on a clean pack: `cd packages/create-prism && npm pack`, scaffold
+from the packed tarball into a scratch directory, then `npm install` and `npm run
+typecheck` pass in the scaffolded app.
+
+### Code
+- `packages/create-prism/package.json`: new; name `@skyphusion/create-prism`, version
+  0.1.0, AGPL-3.0-only, `publishConfig.access: public`, `engines.node >= 20`, `bin`
+  entry, `files` allowlist, `prepack` assembling the template. Zero runtime deps.
+- `packages/create-prism/index.js`: new; the scaffold CLI (single file, zero deps).
+- `packages/create-prism/scripts/assemble-template.js`: new; the prepack template
+  assembler with fail-loud layout invariants.
+- `packages/create-prism/README.md`: new; the npm landing page.
+- `packages/create-prism/.gitignore`: new; ignores the generated `template/`, the copied
+  LICENSE/NOTICE, and `*.tgz` pack output.
+- `README.md`: add the `npm create @skyphusion/prism` scaffold path as the first install
+  option in the Quickstart (Option A), clone flow kept as Option B.
+- `package.json`: 0.167.1 -> 0.168.0.
+- `.github/workflows/publish-npm.yml`, `brand/distribution.md`: Strummer's lane (publish
+  mechanics + secret wiring), same branch.
+- `npm run typecheck` clean; `npm test` green (230 tests); clean-pack scaffold verified
+  (npm install + typecheck green in the scaffolded app).
+
 ## v0.167.1
 
 fix(models): pull 3 not-yet-enabled Unified Billing ids (v0.167.1)

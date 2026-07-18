@@ -1,3 +1,9 @@
+**Option A: scaffold from npm (recommended for a new deployment).** Ships a fresh prism tree into a new directory, no clone required (Node 20 or later):
+
+
+
+**Option B: clone the repo** (for contributors, or to track the source directly):
+
 # prism
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
@@ -97,6 +103,17 @@ Prerequisites:
 - Cloudflare account with Workers, D1, R2, AI Gateway, and Workers AI enabled
 - Node.js 20 or later (CI runs on 22; Node 18 is end-of-life)
 - Workers Paid plan if you plan to exceed the free Workers AI tier (10,000 neurons per day across all model usage), and required as of v0.11.0 for the `unpdf` bundle size
+
+**Option A: scaffold from npm (recommended for a new deployment).** Ships a fresh prism tree into a new directory, no clone required (Node 20 or later):
+
+```
+npm create @skyphusion/prism my-prism
+cd my-prism
+npm install
+npm run bootstrap
+```
+
+**Option B: clone the repo** (for contributors, or to track the source directly):
 
 ```
 git clone https://github.com/skyphusion-labs/prism.git
