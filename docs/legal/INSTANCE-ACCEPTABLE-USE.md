@@ -4,22 +4,50 @@
 play.skyphusion.org. Prism is self-hosted software (AGPL-3.0-only); if you run your own instance, you
 set your own rules as its operator. This notice governs our instance. It is not legal advice.
 
+## Your account
+
+The hosted instance is open to self-serve signup: you create a username and password and use the
+playground on your own account. In return:
+
+- **Keep your credentials to yourself.** You are responsible for what happens under your account. Do
+  not share your login, and do not use someone else's account.
+- **One human per account, signing up honestly.** No automated or bulk account creation, no bots
+  registering accounts, no evading a suspension by opening new accounts.
+- **Signup and login are rate-limited**, and other basic abuse controls may be in place. Do not try to
+  defeat them.
+
 ## Use it in good faith
 
 The hosted instance is offered freely so people can try the Cloudflare AI stack. Do not abuse it:
 
 - No attacks on, or interference with, the service or its infrastructure: no attempts to break,
-  overload, probe, or circumvent access controls or limits.
+  overload, probe, or circumvent access controls, rate limits, or authentication.
 - No illegal use, and no using it to produce or distribute unlawful, infringing, or malicious content.
 - No harassment of, threats toward, or targeting of, other people.
 
-## Do not abuse the wallet
+## You pay for your own model inference
 
-The hosted instance runs model inference on Skyphusion Labs' own Cloudflare AI Gateway credit. Draining
-that credit is prohibited: no automated scraping of inference, no using the instance as a free API or
-proxy for another application, no reselling access, and no circumventing rate limits or access gates.
-We may rate-limit, suspend, or block access to the hosted instance to protect the service and the
-wallet.
+The hosted instance does not pay for the models you run. You configure your own Cloudflare AI Gateway,
+and model inference is billed to **your** Cloudflare Unified Billing account. That means:
+
+- **Your gateway spend is yours.** You are solely responsible for the cost of the model calls you make
+  and for keeping your own AI Gateway credentials and billing in order. Skyphusion Labs does not
+  reimburse, cap, or manage your Cloudflare bill.
+- **You own the content you generate**, and are responsible for it and for how you use it, subject to
+  the red lines below.
+
+## Do not abuse the host's infrastructure
+
+Even though you pay for inference, Skyphusion Labs still pays to run the service itself (Workers, D1,
+R2, and Vectorize compute and storage). Do not drain or abuse that:
+
+- No using the instance as a free API, proxy, or backend for another application.
+- No automated scraping of the service, no reselling or redistributing access to it.
+- No stockpiling storage (uploads, generated media, RAG documents) beyond genuine personal use, and no
+  circumventing rate limits or account controls.
+
+We may rate-limit, suspend, or terminate accounts, and block access to the hosted instance, to protect
+the service and its infrastructure.
 
 ## The absolute red line: child sexual abuse material (CSAM)
 
@@ -62,9 +90,9 @@ above.
 ## Enforcement
 
 Because Skyphusion Labs operates this instance, we can and will act on abuse we become aware of on it.
-For ordinary abuse (including wallet abuse) we may rate-limit, suspend, or terminate access. For the
-CSAM / NCII bright line, we will terminate access, preserve what the law requires, and report to the
-National Center for Missing & Exploited Children (NCMEC), through its CyberTipline, and to law
-enforcement. Our privacy stance is not a shield for this.
+For ordinary abuse (including infrastructure abuse) we may rate-limit, suspend, or terminate your
+account and block access. For the CSAM / NCII bright line, we will terminate the account, preserve what
+the law requires, and report to the National Center for Missing & Exploited Children (NCMEC), through
+its CyberTipline, and to law enforcement. Our privacy stance is not a shield for this.
 
 Not legal advice.
