@@ -15,7 +15,7 @@
 // users.id, in access mode the Access email, in local dev "anonymous".
 
 import type { Env } from "./env";
-import { hashPassword, verifyPassword } from "./auth-kdf";
+import { hashPassword, verifyPassword, PBKDF2_ITERATIONS } from "./auth-kdf";
 import {
   SESSION_COOKIE,
   buildSessionCookie,
@@ -26,7 +26,7 @@ import {
   lookupSession,
   parseSessionCookie,
 } from "./session";
-import { checkRateLimit } from "./rate-limit";
+import { checkRateLimit, resetRateLimit } from "./rate-limit";
 
 export type AuthMode = "public" | "access";
 
@@ -106,6 +106,14 @@ const LOGIN_WINDOW = 15 * 60; // 15 minutes per ip+username
 const SIGNUP_LIMIT = 10;
 const SIGNUP_WINDOW = 60 * 60; // 10 signups per hour per ip
 
+// Throwaway verify target for unknown usernames. Its iteration count MUST equal
+// PBKDF2_ITERATIONS so that an unknown-username login costs the same wall-clock
+// as a real one; otherwise the fast (low-iteration) path is a username-
+// enumeration timing oracle. Built from the constant so the two can never
+// drift. The salt/hash bytes are arbitrary; the compare always fails.
+export const DUMMY_PASSWORD_HASH =
+  `pbkdf2$sha256$${PBKDF2_ITERATIONS}$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=`;
+
 // ---------- routes ----------
 
 // POST /api/auth/signup {username, password}. Public mode only. Creates the
@@ -170,7 +178,9 @@ export async function handleLogin(request: Request, env: Env): Promise<Response>
 
   const ip = clientIp(request);
   const usernameLc = body.username.trim().toLowerCase();
-  if (!(await checkRateLimit(env.DB, `login:${ip}:${usernameLc}`, LOGIN_LIMIT, LOGIN_WINDOW))) {
+  const bucketKey = `login:${ip}:${usernameLc}`;
+  // Pre-verify check throttles a login flood (before the 600k-iter KDF cost).
+  if (!(await checkRateLimit(env.DB, bucketKey, LOGIN_LIMIT, LOGIN_WINDOW))) {
     return json({ error: "Too many login attempts. Try again later." }, { status: 429 });
   }
 
@@ -180,14 +190,18 @@ export async function handleLogin(request: Request, env: Env): Promise<Response>
     .bind(usernameLc)
     .first<{ id: string; username: string; password_hash: string }>();
 
-  // Verify against the stored hash, or a throwaway hash when the user is
+  // Verify against the stored hash, or the equal-cost dummy when the user is
   // unknown, so a missing account and a wrong password take the same time and
   // return the same generic error (no username enumeration).
-  const storedHash = row?.password_hash ?? "pbkdf2$sha256$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+  const storedHash = row?.password_hash ?? DUMMY_PASSWORD_HASH;
   const ok = await verifyPassword(body.password, storedHash);
   if (!row || !ok) {
     return json({ error: "Invalid username or password." }, { status: 401 });
   }
+
+  // Success: clear the failed-attempt tally so successful logins never count
+  // toward the cap (the limiter targets failed floods, per the design).
+  await resetRateLimit(env.DB, bucketKey);
 
   const token = await createSession(env.DB, row.id);
   return json(

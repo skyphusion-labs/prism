@@ -315,6 +315,40 @@ describe("DELETE /api/account cascade", () => {
   });
 });
 
+describe("login rate limit resets on success", () => {
+  it("successful logins beyond the failed cap never lock out, and clear the bucket", async () => {
+    await signup("pia", "password123", "198.51.100.9");
+    // More than LOGIN_LIMIT (5) SUCCESSFUL logins in one window must all pass.
+    for (let i = 0; i < 7; i++) {
+      const res = await req("/api/auth/login", {
+        method: "POST",
+        body: { username: "pia", password: "password123" },
+        ip: "198.51.100.9",
+      });
+      expect(res.status).toBe(200);
+    }
+    // Bucket is cleared after a success (not left accumulating).
+    const row = await env.DB.prepare(`SELECT count FROM auth_attempts WHERE bucket_key = ?`)
+      .bind("login:198.51.100.9:pia")
+      .first<{ count: number }>();
+    expect(row).toBeNull();
+  });
+
+  it("a burst of failures still locks out, then a later success would reset it", async () => {
+    await signup("quinn", "password123", "198.51.100.12");
+    let locked = false;
+    for (let i = 0; i < 8; i++) {
+      const res = await req("/api/auth/login", {
+        method: "POST",
+        body: { username: "quinn", password: "wrongpassword" },
+        ip: "198.51.100.12",
+      });
+      if (res.status === 429) { locked = true; break; }
+    }
+    expect(locked).toBe(true); // failures alone still trip the limiter
+  });
+});
+
 describe("rate limiting", () => {
   it("positive control: the counter records and eventually 429s repeated logins", async () => {
     await signup("olive", "password123", "198.51.100.5");

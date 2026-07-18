@@ -2,7 +2,8 @@
 // (v0.167.0, issue #80).
 
 import { describe, expect, it } from "vitest";
-import { validateUsername, validatePassword, generateUserId } from "../src/auth";
+import { validateUsername, validatePassword, generateUserId, DUMMY_PASSWORD_HASH } from "../src/auth";
+import { parsePhc, PBKDF2_ITERATIONS } from "../src/auth-kdf";
 import {
   SESSION_COOKIE,
   buildSessionCookie,
@@ -81,5 +82,16 @@ describe("session cookie helpers", () => {
     const t = generateSessionToken();
     expect(t).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(t.length).toBeGreaterThan(20);
+  });
+});
+
+describe("login timing oracle guard", () => {
+  it("the unknown-username dummy hash costs the same iterations as a real hash", () => {
+    const parsed = parsePhc(DUMMY_PASSWORD_HASH);
+    expect(parsed).not.toBeNull();
+    // Parity with the real KDF cost is what closes the enumeration side channel.
+    expect(parsed!.iterations).toBe(PBKDF2_ITERATIONS);
+    expect(parsed!.salt.length).toBe(16);
+    expect(parsed!.hash.length).toBe(32);
   });
 });

@@ -67,3 +67,11 @@ export async function checkRateLimit(
 
   return decision.allowed;
 }
+
+// Clear a bucket outright. Used to reset the login limiter on a SUCCESSFUL
+// login so that successful sign-ins never count toward the failed-attempt cap
+// (the check stays pre-verify to throttle the flood case; success just wipes
+// the tally).
+export async function resetRateLimit(db: D1Database, bucketKey: string): Promise<void> {
+  await db.prepare(`DELETE FROM auth_attempts WHERE bucket_key = ?`).bind(bucketKey).run();
+}
