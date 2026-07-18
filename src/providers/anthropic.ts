@@ -18,6 +18,7 @@
 // blocks with base64 source.
 
 import type { AiContext } from "../ai-binding";
+import { aiRun, aiLogId } from "../ai-binding";
 import type { ModelEntry } from "../models";
 import type { ProviderStreamEvent } from "../parsers/types";
 import { CF_AIG_TOKEN_REQUIRED_MSG } from "../gateway-credentials";
@@ -126,12 +127,110 @@ async function prepareAnthropicRequest(
   };
 }
 
+// v0.169.0: binding-dispatch path for models flagged `binding: true`
+// (currently anthropic/claude-fable-5). Cloudflare moved new-model onboarding
+// to the Unified Billing catalog surface reached through env.AI.run; the legacy
+// AI Gateway anthropic endpoint (prepareAnthropicRequest above) has a frozen
+// credential-injection allowlist that forwards unknown ids keyless, so the
+// provider 401s. The binding injects Unified Billing credentials and returns
+// the SAME native Anthropic wire shapes the legacy path does (message JSON for
+// non-stream; message_start / content_block_delta / message_delta SSE for
+// stream), so the existing message transform, output-extract, and
+// anthropic-sse interpreter are reused unchanged.
+//
+// The binding body is Anthropic-shaped (system top-level, base64 image blocks),
+// exactly what transformToAnthropic already produces. Unlike the legacy path we
+// pass the FULL prefixed id (e.g. "anthropic/claude-fable-5") to env.AI.run;
+// the catalog id carries the vendor prefix, so no "anthropic/" strip here.
+function buildAnthropicBindingBody(
+  systemPrompt: string | undefined,
+  messages: Array<unknown>,
+  stream: boolean,
+): Record<string, unknown> {
+  const { system, messages: aMessages } = transformToAnthropic(messages, systemPrompt);
+  const body: Record<string, unknown> = { max_tokens: 4096, messages: aMessages };
+  if (system) body.system = system;
+  if (stream) body.stream = true;
+  return body;
+}
+
+async function callAnthropicBinding(
+  ctx: AiContext,
+  model: ModelEntry,
+  systemPrompt: string | undefined,
+  messages: Array<unknown>,
+): Promise<{ raw: unknown; logId: string | null }> {
+  const body = buildAnthropicBindingBody(systemPrompt, messages, false);
+  const raw = await aiRun(ctx, model.id, body);
+  return { raw, logId: aiLogId(ctx) };
+}
+
+async function* callAnthropicStreamBinding(
+  ctx: AiContext,
+  model: ModelEntry,
+  systemPrompt: string | undefined,
+  messages: Array<unknown>,
+  signal: AbortSignal,
+): AsyncGenerator<ProviderStreamEvent> {
+  const body = buildAnthropicBindingBody(systemPrompt, messages, true);
+  const result = await aiRun(ctx, model.id, body);
+
+  if (!(result instanceof ReadableStream)) {
+    throw new Error(`Anthropic binding did not return a stream (got ${typeof result}). Ensure stream:true is honored by this model.`);
+  }
+
+  const reader = result.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  // env.AI.run takes no AbortSignal, so bridge it to reader.cancel() the same
+  // way callWorkersAIStream does. If already aborted, cancel immediately.
+  const onAbort = () => { try { reader.cancel(); } catch { /* fine */ } };
+  if (signal.aborted) {
+    onAbort();
+  } else {
+    signal.addEventListener("abort", onAbort, { once: true });
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      const { payloads, remainder } = extractSSEDataPayloads(buffer);
+      buffer = remainder;
+
+      for (const payload of payloads) {
+        let data: unknown;
+        try {
+          data = JSON.parse(payload);
+        } catch {
+          // Anthropic emits thinking + signature deltas by default (fable-5)
+          // and some data lines carry trailing whitespace; JSON.parse tolerates
+          // trailing whitespace, and a genuinely unparseable frame is skipped.
+          continue;
+        }
+        for (const event of interpretAnthropicSSEFrame(data)) yield event;
+      }
+    }
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    try { reader.releaseLock(); } catch { /* fine */ }
+  }
+}
+
 export async function callAnthropic(
   ctx: AiContext,
   model: ModelEntry,
   systemPrompt: string | undefined,
   messages: Array<unknown>,
 ): Promise<{ raw: unknown; logId: string | null }> {
+  // v0.169.0: flagged models dispatch through the env.AI.run binding, not the
+  // legacy AI Gateway provider fetch below.
+  if (model.binding) return callAnthropicBinding(ctx, model, systemPrompt, messages);
+
   const { url, headers, body } = await prepareAnthropicRequest(
     ctx, model, systemPrompt, messages, { stream: false },
   );
@@ -156,6 +255,12 @@ export async function* callAnthropicStream(
   messages: Array<unknown>,
   signal: AbortSignal,
 ): AsyncGenerator<ProviderStreamEvent> {
+  // v0.169.0: flagged models stream through the env.AI.run binding.
+  if (model.binding) {
+    yield* callAnthropicStreamBinding(ctx, model, systemPrompt, messages, signal);
+    return;
+  }
+
   const { url, headers, body } = await prepareAnthropicRequest(
     ctx, model, systemPrompt, messages, { stream: true },
   );

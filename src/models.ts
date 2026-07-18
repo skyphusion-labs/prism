@@ -51,6 +51,12 @@ export interface ModelEntry {
   // (server-sent events). Covers Anthropic, Workers AI, xAI, OpenAI, and
   // Google. Chat models only - irrelevant for image/tts/video/stt/music types.
   streaming?: boolean;
+  // v0.169.0: when true, dispatch through the env.AI.run binding (the new CF
+  // Unified Billing catalog surface) instead of the legacy AI Gateway
+  // provider-fetch path. Set for anthropic/claude-fable-5: the frozen legacy
+  // allowlist forwards its id keyless (provider 401), while the binding path
+  // injects Unified Billing credentials. See src/providers/anthropic.ts.
+  binding?: boolean;
 }
 
 export const MODELS: ModelEntry[] = [
@@ -58,7 +64,12 @@ export const MODELS: ModelEntry[] = [
   // Anthropic (Unified Billing via cf-aig-authorization, routed through AI Gateway)
   // v0.13.0: streaming: true makes these eligible for POST /api/chat/stream.
   // v0.165.0 catalog refresh (#81): Claude 5 family added.
-  // removed v0.167.1: anthropic/claude-fable-5 -- CF Unified Billing does not accept the id yet (502 gateway refusal, 2026-07-18 live smoke); re-add when developers.cloudflare.com lists it
+  // v0.169.0 (#169): claude-fable-5 re-added via the env.AI.run binding
+  // (binding: true). CF moved new-model onboarding to the Unified Billing
+  // catalog surface; the legacy AI Gateway anthropic allowlist is frozen and
+  // forwards this id keyless (provider 401, surfaced as a 502). The binding
+  // path injects credentials. Dispatch lives in src/providers/anthropic.ts.
+  { id: "anthropic/claude-fable-5",                     label: "Claude Fable 5 (Anthropic)",           group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true, binding: true },
   { id: "anthropic/claude-sonnet-5",                    label: "Claude Sonnet 5 (Anthropic)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
   { id: "anthropic/claude-opus-4-8",                    label: "Claude Opus 4.8 (Anthropic)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
   { id: "anthropic/claude-opus-4-7",                    label: "Claude Opus 4.7 (Anthropic)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
@@ -67,11 +78,17 @@ export const MODELS: ModelEntry[] = [
   { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic)",         group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
 
   // xAI / Grok (Unified Billing via cf-aig-authorization, routed through AI Gateway)
-  // removed v0.167.1: xai/grok-4.5 -- CF Unified Billing does not accept the id yet (502 gateway refusal, 2026-07-18 live smoke); re-add when developers.cloudflare.com lists it
+  // blocked (v0.169.0): xai/grok-4.5 is absent from the new CF Unified Billing
+  // catalog, and the legacy AI Gateway allowlist is frozen (forwards unknown ids
+  // keyless -> provider 401). Re-add when env.AI.run("xai/grok-4.5") resolves,
+  // not when a docs page updates.
   { id: "xai/grok-4.3",                                 label: "Grok 4.3 (xAI)",                       group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
   { id: "xai/grok-4.20-multi-agent-0309",               label: "Grok 4.20 Multi-Agent (xAI)",          group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
   { id: "xai/grok-4.20-0309-reasoning",                 label: "Grok 4.20 Reasoning (xAI)",            group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
-  // removed v0.167.1: xai/grok-build-0.1 -- CF Unified Billing does not accept the id yet (502 gateway refusal, 2026-07-18 live smoke); re-add when developers.cloudflare.com lists it
+  // blocked (v0.169.0): xai/grok-build-0.1 is absent from the new CF Unified
+  // Billing catalog, and the legacy AI Gateway allowlist is frozen (forwards
+  // unknown ids keyless -> provider 401). Re-add when
+  // env.AI.run("xai/grok-build-0.1") resolves, not when a docs page updates.
 
   // Frontier
   { id: "@cf/moonshotai/kimi-k2.6",                     label: "Kimi K2.6 (1T)",               group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"], streaming: true },
