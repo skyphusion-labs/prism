@@ -2,8 +2,11 @@
 // (v0.167.0, issue #80). Runs the real fetch handler in workerd with local
 // Miniflare D1 + R2. AUTH_MODE is flipped to "public" for these tests (the
 // existing worker.test.ts suite keeps the default "access" mode), so the
-// signup/login/session/gate/fail-closed/account-delete paths are all exercised
-// against the shipped handler, not stubs.
+// signup/login/boot-envelope/gate/fail-closed/account-delete paths are all
+// exercised against the shipped handler, not stubs.
+//
+// Boot contract: there is NO /api/session endpoint; GET /api/models is the
+// unauthenticated boot probe and carries { mode, authenticated, user, username }.
 
 import { env, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -59,6 +62,8 @@ afterEach(() => {
 });
 
 const WORKERS_AI_CHAT = MODELS.find((m) => m.type === "chat" && !m.provider)!.id;
+const STREAM_CHAT = MODELS.find((m) => m.type === "chat" && m.streaming && !m.provider)?.id
+  ?? MODELS.find((m) => m.type === "chat" && m.streaming)!.id;
 
 function cookieFrom(res: Response): string {
   const sc = res.headers.get("set-cookie");
@@ -85,27 +90,42 @@ function req(path: string, opts: ReqOpts = {}): Promise<Response> {
   });
 }
 
+interface BootEnvelope {
+  mode: string;
+  authenticated: boolean;
+  user: string | null;
+  username: string | null;
+  gateway: { source: string; configured: boolean };
+}
+
+async function boot(cookie?: string): Promise<BootEnvelope> {
+  return (await (await req("/api/models", { cookie })).json()) as BootEnvelope;
+}
+
 async function signup(username: string, password: string, ip?: string): Promise<string> {
   const res = await req("/api/auth/signup", { method: "POST", body: { username, password }, ip });
   expect(res.status).toBe(201);
   return cookieFrom(res);
 }
 
-describe("GET /api/session (boot gate)", () => {
-  it("reports unauthenticated in public mode with no session", async () => {
-    const res = await req("/api/session");
+describe("GET /api/models boot envelope (no /api/session)", () => {
+  it("is reachable unauthenticated and reports mode + authenticated=false + user null", async () => {
+    const res = await req("/api/models");
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { mode: string; authenticated: boolean };
+    const body = (await res.json()) as BootEnvelope & { models: unknown[] };
     expect(body.mode).toBe("public");
     expect(body.authenticated).toBe(false);
+    expect(body.user).toBeNull();
+    expect(body.username).toBeNull();
+    expect(Array.isArray(body.models)).toBe(true);
   });
 
-  it("reports the username once signed up", async () => {
+  it("reports authenticated + username once signed up", async () => {
     const cookie = await signup("alice", "password123");
-    const res = await req("/api/session", { cookie });
-    const body = (await res.json()) as { authenticated: boolean; user?: { username: string } };
-    expect(body.authenticated).toBe(true);
-    expect(body.user?.username).toBe("alice");
+    const b = await boot(cookie);
+    expect(b.authenticated).toBe(true);
+    expect(b.username).toBe("alice");
+    expect(b.user).toMatch(/^usr_/);
   });
 });
 
@@ -118,8 +138,7 @@ describe("signup / login / logout", () => {
     });
     expect(loginRes.status).toBe(200);
     const cookie = cookieFrom(loginRes);
-    const sess = await req("/api/session", { cookie });
-    expect(((await sess.json()) as { authenticated: boolean }).authenticated).toBe(true);
+    expect((await boot(cookie)).authenticated).toBe(true);
   });
 
   it("rejects a duplicate username (case-insensitive)", async () => {
@@ -127,6 +146,16 @@ describe("signup / login / logout", () => {
     const dup = await req("/api/auth/signup", {
       method: "POST",
       body: { username: "carol", password: "password123" },
+    });
+    expect(dup.status).toBe(409);
+  });
+
+  it("stores the cased username but compares lowercased", async () => {
+    const cookie = await signup("MixedCase", "password123");
+    expect((await boot(cookie)).username).toBe("MixedCase");
+    const dup = await req("/api/auth/signup", {
+      method: "POST",
+      body: { username: "mixedcase", password: "password123" },
     });
     expect(dup.status).toBe(409);
   });
@@ -143,51 +172,49 @@ describe("signup / login / logout", () => {
   it("logout revokes the session server-side", async () => {
     const cookie = await signup("erin", "password123");
     await req("/api/auth/logout", { method: "POST", cookie });
-    const sess = await req("/api/session", { cookie });
-    expect(((await sess.json()) as { authenticated: boolean }).authenticated).toBe(false);
+    expect((await boot(cookie)).authenticated).toBe(false);
   });
 
-  it("rejects weak input at signup", async () => {
+  it("enforces the validation contract with a stable code", async () => {
     const shortPw = await req("/api/auth/signup", {
       method: "POST",
-      body: { username: "frank", password: "short" },
+      body: { username: "frank", password: "short1234" }, // 9 chars
     });
     expect(shortPw.status).toBe(400);
-    const badUser = await req("/api/auth/signup", {
+    const dotUser = await req("/api/auth/signup", {
+      method: "POST",
+      body: { username: "has.dot", password: "password123" },
+    });
+    expect(dotUser.status).toBe(400);
+    const shortUser = await req("/api/auth/signup", {
       method: "POST",
       body: { username: "no", password: "password123" },
     });
-    expect(badUser.status).toBe(400);
+    expect(shortUser.status).toBe(400);
   });
 });
 
-describe("public-mode gate: uniform 401 auth_required", () => {
-  it("blocks /api/* without a session", async () => {
+describe("public-mode gate: uniform 401 unauthenticated", () => {
+  it("blocks /api/* without a session, with code unauthenticated", async () => {
     const res = await req("/api/history");
     expect(res.status).toBe(401);
-    expect(((await res.json()) as { error: string }).error).toBe("auth_required");
+    expect(((await res.json()) as { code: string }).code).toBe("unauthenticated");
   });
 
-  it("blocks /api/models without a session too", async () => {
-    const res = await req("/api/models");
-    expect(res.status).toBe(401);
+  it("does NOT block GET /api/models (the boot probe stays reachable)", async () => {
+    expect((await req("/api/models")).status).toBe(200);
   });
 
   it("allows /api/history with a session, scoped to the account", async () => {
     const cookie = await signup("gwen", "password123");
     const res = await req("/api/history", { cookie });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { chats: unknown[] };
-    expect(Array.isArray(body.chats)).toBe(true);
+    expect(Array.isArray(((await res.json()) as { chats: unknown[] }).chats)).toBe(true);
   });
 
-  it("isolates history between two accounts", async () => {
+  it("isolates prefs between two accounts", async () => {
     const aCookie = await signup("hank", "password123", "203.0.113.10");
     const bCookie = await signup("iris", "password123", "203.0.113.11");
-    // Seed a chat owned by hank's account id (read it back from session/db).
-    const aId = (await (await req("/api/session", { cookie: aCookie })).json()) as { user?: { username: string } };
-    expect(aId.user?.username).toBe("hank");
-    // hank writes via prefs to prove ownership scoping without hitting AI.
     await req("/api/prefs", { method: "PATCH", cookie: aCookie, body: { gateway_id: "hank-gw" } });
     const bPrefs = (await (await req("/api/prefs", { cookie: bCookie })).json()) as { gateway_id: string | null };
     expect(bPrefs.gateway_id).toBeNull(); // iris does not see hank's prefs
@@ -209,15 +236,27 @@ describe("fail-closed gateway in public mode", () => {
     expect(body.code).toBe("gateway_not_configured");
   });
 
+  it("stream path returns 412 as a clean JSON body BEFORE the event-stream opens", async () => {
+    const cookie = await signup("jade", "password123");
+    const res = await req("/api/chat/stream", {
+      method: "POST",
+      cookie,
+      body: { model: STREAM_CHAT, user_input: "hi" },
+    });
+    expect(res.status).toBe(412);
+    // The refusal is a JSON body, not a text/event-stream that already opened.
+    expect(res.headers.get("content-type") ?? "").toContain("application/json");
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("gateway_not_configured");
+  });
+
   it("source is never worker/mixed in public mode even with worker secrets present", async () => {
     anyEnv.GATEWAY_ID = "host-gateway";
     anyEnv.CF_AIG_TOKEN = "host-token";
     const cookie = await signup("kate", "password123");
-    const models = (await (await req("/api/models", { cookie })).json()) as {
-      gateway: { source: string; configured: boolean };
-    };
-    expect(models.gateway.source).toBe("none");
-    expect(models.gateway.configured).toBe(false);
+    const b = await boot(cookie);
+    expect(b.gateway.source).toBe("none");
+    expect(b.gateway.configured).toBe(false);
   });
 
   it("positive control: once the user sets a gateway, the 412 no longer fires", async () => {
@@ -238,13 +277,10 @@ describe("fail-closed gateway in public mode", () => {
 describe("DELETE /api/account cascade", () => {
   it("requires password re-entry and cascades the account's data", async () => {
     const cookie = await signup("mona", "password123");
-    const who = (await (await req("/api/session", { cookie })).json()) as { user?: { username: string } };
-    expect(who.user?.username).toBe("mona");
     const userId = (
       await env.DB.prepare(`SELECT id FROM users WHERE username_lc = 'mona'`).first<{ id: string }>()
     )!.id;
 
-    // Seed owned data across tables + an R2 artifact.
     await env.DB.prepare(
       `INSERT INTO chats (user_email, model, model_type, user_input, output, output_artifact)
        VALUES (?, 'm', 'image', 'hi', '', ?)`,
@@ -254,37 +290,28 @@ describe("DELETE /api/account cascade", () => {
     await env.R2.put("out/mona.png", new Uint8Array([1, 2, 3]), { customMetadata: { user_email: userId } });
     await req("/api/prefs", { method: "PATCH", cookie, body: { gateway_id: "mona-gw" } });
 
-    // A second account whose data must survive.
     const otherCookie = await signup("nell", "password123", "203.0.113.20");
     const otherId = (
       await env.DB.prepare(`SELECT id FROM users WHERE username_lc = 'nell'`).first<{ id: string }>()
     )!.id;
 
-    // Wrong password is refused.
     const bad = await req("/api/account", { method: "DELETE", cookie, body: { password: "nope" } });
     expect(bad.status).toBe(403);
 
-    // Correct password deletes and clears the cookie.
     const del = await req("/api/account", { method: "DELETE", cookie, body: { password: "password123" } });
     expect(del.status).toBe(200);
     expect(del.headers.get("set-cookie")).toContain("Max-Age=0");
 
-    // Account + its rows are gone.
-    const userGone = await env.DB.prepare(`SELECT id FROM users WHERE id = ?`).bind(userId).first();
-    expect(userGone).toBeNull();
-    const chatsGone = await env.DB.prepare(`SELECT COUNT(*) AS n FROM chats WHERE user_email = ?`).bind(userId).first<{ n: number }>();
-    expect(chatsGone!.n).toBe(0);
-    const prefsGone = await env.DB.prepare(`SELECT COUNT(*) AS n FROM user_prefs WHERE user_email = ?`).bind(userId).first<{ n: number }>();
-    expect(prefsGone!.n).toBe(0);
-    const sessGone = await env.DB.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?`).bind(userId).first<{ n: number }>();
-    expect(sessGone!.n).toBe(0);
+    expect(await env.DB.prepare(`SELECT id FROM users WHERE id = ?`).bind(userId).first()).toBeNull();
+    for (const [table, col] of [["chats", "user_email"], ["user_prefs", "user_email"], ["sessions", "user_id"]] as const) {
+      const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${col} = ?`).bind(userId).first<{ n: number }>();
+      expect(row!.n).toBe(0);
+    }
     expect(await env.R2.get("out/mona.png")).toBeNull();
 
     // The other account is untouched.
-    const otherStill = await env.DB.prepare(`SELECT id FROM users WHERE id = ?`).bind(otherId).first();
-    expect(otherStill).not.toBeNull();
-    const otherSess = await req("/api/session", { cookie: otherCookie });
-    expect(((await otherSess.json()) as { authenticated: boolean }).authenticated).toBe(true);
+    expect(await env.DB.prepare(`SELECT id FROM users WHERE id = ?`).bind(otherId).first()).not.toBeNull();
+    expect((await boot(otherCookie)).authenticated).toBe(true);
   });
 });
 
@@ -301,7 +328,6 @@ describe("rate limiting", () => {
       if (res.status === 429) { sawLimit = true; break; }
     }
     expect(sawLimit).toBe(true);
-    // Control: the bucket row actually exists (the limiter is not vacuous).
     const row = await env.DB.prepare(`SELECT count FROM auth_attempts WHERE bucket_key = ?`)
       .bind("login:198.51.100.5:olive")
       .first<{ count: number }>();

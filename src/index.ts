@@ -27,7 +27,6 @@ import { loadUserPrefs, saveUserPrefs } from "./user-prefs";
 import {
   resolveIdentity,
   authMode,
-  handleSession,
   handleSignup,
   handleLogin,
   handleLogout,
@@ -340,14 +339,11 @@ export default {
     }
 
     // ---- Auth plane (v0.167.0, issue #80) ----
-    // Boot gate: the SPA calls GET /api/session first to decide app vs signup.
-    // Unauthenticated in both modes; in access mode authenticated is always true
-    // so a private deploy never shows the signup screen.
-    if (url.pathname === "/api/session" && request.method === "GET") {
-      return handleSession(request, env);
-    }
-    // Signup/login/logout are the only /api/* routes reachable without a session
-    // in public mode; they are disabled (403) in access mode.
+    // Boot probe is GET /api/models (below): reachable without a session, it
+    // returns { mode, authenticated, user, username, gateway } so the SPA can
+    // decide app vs signup in one call. Signup/login/logout are the only other
+    // /api/* routes reachable without a session in public mode; they are
+    // disabled (403) in access mode.
     if (url.pathname === "/api/auth/signup" && request.method === "POST") {
       return handleSignup(request, env);
     }
@@ -359,14 +355,16 @@ export default {
     }
 
     // Public-mode gate: every other /api/* route requires a valid session.
-    // Uniform 401 { error: "auth_required" } so the frontend routes the user to
-    // the login screen. Access mode skips this (Access gates upstream).
+    // GET /api/models is exempt (it is the unauthenticated boot probe). Uniform
+    // 401 { code: "unauthenticated" } so the frontend routes the user to the
+    // login screen. Access mode skips this entirely (Access gates upstream).
     if (
       authMode(env) === "public" &&
       url.pathname.startsWith("/api/") &&
+      !(url.pathname === "/api/models" && request.method === "GET") &&
       (await resolveIdentity(request, env)) === null
     ) {
-      return json({ error: "auth_required" }, { status: 401 });
+      return json({ error: "Authentication required.", code: "unauthenticated" }, { status: 401 });
     }
 
     // Session-authed account deletion (password re-entry enforced in handler).
@@ -375,9 +373,29 @@ export default {
     }
 
     if (url.pathname === "/api/models" && request.method === "GET") {
-      const userEmail = await getUserEmail(request, env);
-      const gateway = await loadGatewayStatus(env, userEmail);
-      return json({ models: MODELS, user: userEmail, gateway });
+      // Boot probe: reachable without a session. Carries mode + authenticated so
+      // the SPA gates itself in one call (no separate /api/session endpoint).
+      // In access mode resolveIdentity never returns null, so authenticated is
+      // always true and the signup screen never shows on a private deploy.
+      const mode = authMode(env);
+      const id = await resolveIdentity(request, env);
+      const authenticated = id !== null;
+      let username: string | null = null;
+      let gateway;
+      if (authenticated) {
+        gateway = await loadGatewayStatus(env, id);
+        if (mode === "access") {
+          username = id; // the Access email is the handle
+        } else {
+          const row = await env.DB.prepare(`SELECT username FROM users WHERE id = ?`)
+            .bind(id)
+            .first<{ username: string }>();
+          username = row?.username ?? null;
+        }
+      } else {
+        gateway = { configured: false, source: "none" as const, gateway_id: null, cf_aig_token_set: false };
+      }
+      return json({ models: MODELS, mode, authenticated, user: id, username, gateway });
     }
     if (url.pathname === "/api/prefs" && request.method === "GET") {
       return handlePrefsGet(request, env);

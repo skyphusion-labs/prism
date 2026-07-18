@@ -61,15 +61,15 @@ export async function resolveIdentity(request: Request, env: Env): Promise<strin
 
 // ---------- validation ----------
 
-const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,32}$/;
-const PASSWORD_MIN = 8;
-const PASSWORD_MAX = 200;
+const USERNAME_RE = /^[a-zA-Z0-9_-]{3,32}$/;
+const PASSWORD_MIN = 10;
+const PASSWORD_MAX = 1024;
 
 export function validateUsername(username: unknown): string | null {
   if (typeof username !== "string") return "Username is required.";
   const trimmed = username.trim();
   if (!USERNAME_RE.test(trimmed)) {
-    return "Username must be 3-32 characters: letters, digits, dot, dash, underscore.";
+    return "Username must be 3-32 characters: letters, digits, dash, underscore.";
   }
   return null;
 }
@@ -107,25 +107,6 @@ const SIGNUP_LIMIT = 10;
 const SIGNUP_WINDOW = 60 * 60; // 10 signups per hour per ip
 
 // ---------- routes ----------
-
-// GET /api/session (unauthenticated, both modes). Joan's boot gate: the SPA
-// calls this first to decide whether to render the app or the signup screen.
-// In access mode authenticated is always true (Access gates upstream), so the
-// signup screen never shows on a private deploy.
-export async function handleSession(request: Request, env: Env): Promise<Response> {
-  const mode = authMode(env);
-  if (mode === "access") {
-    const email = request.headers.get("cf-access-authenticated-user-email") ?? ANON;
-    return json({ mode, authenticated: true, user: { username: email } });
-  }
-  const id = await resolveIdentity(request, env);
-  if (!id) return json({ mode, authenticated: false });
-  const row = await env.DB.prepare(`SELECT username FROM users WHERE id = ?`)
-    .bind(id)
-    .first<{ username: string }>();
-  if (!row) return json({ mode, authenticated: false });
-  return json({ mode, authenticated: true, user: { username: row.username } });
-}
 
 // POST /api/auth/signup {username, password}. Public mode only. Creates the
 // account, opens a session, sets the cookie. Email is deferred from v0.167.0:
@@ -231,7 +212,7 @@ export async function handleAccountDelete(request: Request, env: Env): Promise<R
     return json({ error: "Account deletion is only available on the public deployment." }, { status: 403 });
   }
   const id = await resolveIdentity(request, env);
-  if (!id) return json({ error: "auth_required" }, { status: 401 });
+  if (!id) return json({ error: "Authentication required.", code: "unauthenticated" }, { status: 401 });
 
   let body: { password?: unknown };
   try {

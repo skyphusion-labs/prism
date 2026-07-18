@@ -30,10 +30,11 @@ Why this shape:
   mistakenly-present worker secret cannot bill the host. Prefs unset returns the existing 412, now
   with a machine-readable `code` (`gateway_not_configured` / `cf_aig_token_required`) so the
   frontend can route the user into the gateway modal.
-- **Boot + gate.** `GET /api/session` (unauthenticated, both modes) reports
-  `{ mode, authenticated, user? }` as the SPA boot gate; in access mode `authenticated` is always
-  true so the signup screen never shows on a private deploy. Every other `/api/*` in public mode
-  requires a session and otherwise returns a uniform `401 { error: "auth_required" }`.
+- **Boot + gate.** `GET /api/models` is the unauthenticated boot probe: it carries
+  `{ mode, authenticated, user, username, gateway }` so the SPA decides app vs signup in one call
+  (no separate endpoint). In access mode `authenticated` is always true so the signup screen never
+  shows on a private deploy. Every other `/api/*` in public mode requires a session and otherwise
+  returns a uniform `401 { code: "unauthenticated" }`.
 - **Rate limiting + deletion.** Signup/login are throttled by a D1 counter keyed on
   `CF-Connecting-IP` (plus username for login). `DELETE /api/account` re-verifies the password, then
   cascades every owned R2 object, Vectorize embedding, and D1 row before dropping the account (the
@@ -68,9 +69,10 @@ npx wrangler d1 execute skyphusion-llm --remote --file=./migrate-v0.167.0.sql
 - `src/env.ts`: add `AUTH_MODE?: string`.
 - `src/gateway-credentials.ts`: mode-aware fail-closed resolution (ignore worker secrets in public
   mode).
-- `src/index.ts`: `getUserEmail` becomes async via `resolveIdentity`; new `/api/session`,
-  `/api/auth/signup|login|logout`, `DELETE /api/account` routes; public-mode 401 gate; `code` on the
-  412 gateway responses.
+- `src/index.ts`: `getUserEmail` becomes async via `resolveIdentity`; `GET /api/models` extended to
+  the boot envelope (`mode` + `authenticated` + `user` + `username`); new
+  `/api/auth/signup|login|logout` and `DELETE /api/account` routes; public-mode 401 gate
+  (`code: "unauthenticated"`, `GET /api/models` exempt); `code` on the 412 gateway responses.
 - `src/stt-session.ts`: identity read site swapped to `resolveIdentity` (lockstep with `index.ts`).
 - `schema.sql`: append `users`, `sessions`, `auth_attempts`. `migrate-v0.167.0.sql` (new): the
   standalone delta.
