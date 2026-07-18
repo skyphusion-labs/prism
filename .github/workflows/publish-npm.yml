@@ -1,0 +1,71 @@
+name: publish-npm
+
+# Publish @skyphusion/create-prism to npm when a GitHub Release is published.
+# prism is PUBLIC, so this runs on GitHub-hosted ubuntu-latest (fork-safe), never
+# the self-hosted fleet pool. This workflow is a no-op-safe merge: it fires ONLY
+# on a published Release, and the repo has never cut one, so it stays inert until
+# we deliberately cut vX.Y.Z as a Release.
+on:
+  release:
+    types: [published]
+
+# Least privilege. id-token: write is required for npm provenance (the workflow
+# mints a short-lived OIDC token so npm can attest the build); contents: read to
+# check out the tagged tree. No other scopes.
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      # Guard: the Release tag version MUST exactly match the package version, so
+      # a mis-tagged Release can never publish the wrong version. Tag is vX.Y.Z;
+      # package.json version is X.Y.Z (no leading v).
+      - name: Verify release tag matches package version
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          tag_version="${tag#v}"
+          pkg_version="$(node -p "require(\"./packages/create-prism/package.json\").version")"
+          echo "Release tag:      $tag (version $tag_version)"
+          echo "package.json ver: $pkg_version"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::Release tag $tag (version $tag_version) does not match packages/create-prism/package.json version $pkg_version"
+            exit 1
+          fi
+
+      # Full gate before publishing: typecheck + both vitest projects at repo root.
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      # Install the package deps: prefer a reproducible npm ci when create-prism
+      # ships its own lockfile, else a no-save install so the working tree that
+      # gets published is unchanged.
+      - name: Install create-prism deps
+        working-directory: packages/create-prism
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install --no-save
+          fi
+
+      - name: Publish to npm
+        working-directory: packages/create-prism
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
