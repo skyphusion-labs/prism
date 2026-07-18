@@ -98,6 +98,17 @@ Prerequisites:
 - Node.js 20 or later (CI runs on 22; Node 18 is end-of-life)
 - Workers Paid plan if you plan to exceed the free Workers AI tier (10,000 neurons per day across all model usage), and required as of v0.11.0 for the `unpdf` bundle size
 
+**Option A: scaffold from npm (recommended for a new deployment).** Ships a fresh prism tree into a new directory, no clone required (Node 20 or later):
+
+```
+npm create @skyphusion/prism my-prism
+cd my-prism
+npm install
+npm run bootstrap
+```
+
+**Option B: clone the repo** (for contributors, or to track the source directly):
+
 ```
 git clone https://github.com/skyphusion-labs/prism.git
 cd prism
@@ -189,8 +200,6 @@ npm run deploy
 ```
 
 You will get a `*.workers.dev` URL.
-
-> Note: `wrangler.example.toml` declares a `[[services]]` binding named `EMAIL` that targets a separate `skyphusion-email` Worker ([its own repo](https://github.com/SkyPhusion/skyphusion-email)). Wrangler will not deploy a service binding whose target Worker is not in your account, so this first deploy fails until you either deploy `skyphusion-email` first or comment out the `[[services]]` block in your `wrangler.toml`. The Worker treats `env.EMAIL` as optional at runtime (transactional mail just no-ops without it), so commenting it out is safe.
 
 ### 6. Cloudflare Access (access mode only)
 
