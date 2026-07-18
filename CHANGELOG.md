@@ -1,5 +1,61 @@
 # Changelog
 
+## v0.168.1
+
+refactor(routes): split `src/index.ts` into route modules (v0.168.1)
+
+`src/index.ts` had grown to 4,149 lines, about 60% of `src/`, with every route
+handler and `run*` dispatcher inline in one file even though the parsers,
+providers, and helpers were already extracted. This is pure code motion: the
+inline handlers and dispatchers moved into one module per concern under
+`src/routes/`, and `index.ts` (now 257 lines) keeps the `fetch` route table plus
+the re-exports wrangler resolves against the main entry (`SttSession`,
+`LongRunWorkflow`). Zero behavior change: no route, response shape, or logic was
+touched, only the imports/exports the motion requires. The pool-workers
+integration suite (the real `fetch` handler over local Miniflare) is the behavior
+lock and is green before and after (230/230).
+
+Module map (module -> routes/responsibilities it owns):
+- `src/routes/shared.ts` -- shared primitives + types: `json`, `getUserEmail`,
+  `requireAiContext`, the R2 helpers (`r2Put`/`r2KeyToDataUri`/`resolveAttachmentKeys`/`r2DeleteSafe`),
+  `safeParseJson`, and the request/persisted-row/retrieval type shapes.
+- `src/routes/rag.ts` -- RAG engine (no routes): extraction, embedding,
+  ingestion (`ingestDocument`), retrieval (`retrieveContext`), and web search.
+- `src/routes/chat.ts` -- `POST /api/chat`, `POST /api/chat/stream`,
+  `POST /api/tts`, `GET /api/job/:id`; the `run*` dispatchers + `persistChat`.
+- `src/routes/history.ts` -- `GET /api/history`, `GET|DELETE /api/history/:id`.
+- `src/routes/conversations.ts` -- `GET /api/conversations`,
+  `GET|DELETE /api/conversations/:id`, `PATCH /api/conversations/:id/project`.
+- `src/routes/documents.ts` -- `GET|POST /api/documents`,
+  `GET|DELETE /api/documents/:id`, `GET /api/import/:id`.
+- `src/routes/projects.ts` -- `/api/projects*`, Discord import, and
+  `resolveProjectForChat` (used by the chat routes).
+- `src/routes/artifacts.ts` -- `GET /api/artifact/*`.
+- `src/routes/prefs.ts` -- `GET|PATCH /api/prefs`.
+- `src/routes/health.ts` -- `GET /health/deep`.
+- `src/routes/workflow.ts` -- the `LongRunWorkflow` class (re-exported by
+  `index.ts`).
+
+### Code
+- `src/index.ts` -- reduced from 4,180 to 257 lines: fresh router header, the
+  `fetch` route table, and the `SttSession` + `LongRunWorkflow` re-exports.
+- `src/routes/shared.ts` -- new (shared primitives + cross-cutting types).
+- `src/routes/rag.ts` -- new (RAG extraction/embed/ingest/retrieve/web-search).
+- `src/routes/chat.ts` -- new (generation routes + persistence).
+- `src/routes/history.ts` -- new.
+- `src/routes/conversations.ts` -- new.
+- `src/routes/documents.ts` -- new.
+- `src/routes/projects.ts` -- new.
+- `src/routes/artifacts.ts` -- new.
+- `src/routes/prefs.ts` -- new.
+- `src/routes/health.ts` -- new.
+- `src/routes/workflow.ts` -- new (`LongRunWorkflow`).
+- `CLAUDE.md` -- architecture intro now points at `src/routes/`.
+- `package.json` -- 0.168.0 -> 0.168.1.
+
+No schema, binding, or `wrangler.example.toml` changes. `npm run typecheck` clean;
+`npm test` 230/230 green (both vitest projects).
+
 ## v0.168.0
 
 feat(dist): npm scaffold, publish `@skyphusion/create-prism` (v0.168.0)

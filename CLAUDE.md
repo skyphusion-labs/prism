@@ -30,7 +30,7 @@ Debugging a deployed worker: `npx wrangler tail`. Inspecting a stuck long-runnin
 
 ## Architecture
 
-Everything lives in one Worker `fetch` handler in `src/index.ts`. Pure/reusable logic is extracted into modules so `index.ts` is the orchestrator:
+`src/index.ts` is the router + orchestrator: its `fetch` handler is the route table, and per-concern handlers live in `src/routes/*` (`chat`, `history`, `conversations`, `documents`, `projects`, `artifacts`, `prefs`, `health`, `workflow`) over the shared primitives in `src/routes/shared.ts` and the RAG engine in `src/routes/rag.ts` (split out in v0.168.1, prism#85). Other pure/reusable logic is extracted into modules so `index.ts` stays thin:
 
 - `src/models.ts` — **the model catalog**, single source of truth. Each entry's `id` is the routing key; `type` (`chat`|`image`|`tts`|`video`|`stt`|`music`|`voice`) picks the dispatcher, `provider` (default `workers-ai`) picks the code path, `capabilities`/`streaming` drive the UI. Adding an entry here flows automatically to `GET /api/models` and the frontend picker.
 - `src/providers/*.ts` -- per-provider dispatch helpers (`callAnthropic`, `callXai`, `callGemini`, `callWorkersAIStream`, `callOpenAIStream`). Anthropic, xAI, and Gemini hit AI Gateway provider endpoints with keyless Unified Billing auth (`cf-aig-authorization`). OpenAI chat and Workers AI use `env.AI.run`. Proxied image models (google/openai/recraft) go through `env.AI.run` on Unified Billing too; there is no BYOK path (the `openai-image.ts` direct call was retired in v0.166.0, prism#93).
