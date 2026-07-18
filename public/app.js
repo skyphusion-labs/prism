@@ -274,6 +274,10 @@ const state = {
   // null), persisted across reloads in localStorage.
   projects: [],
   activeProjectId: null,
+  // #80 public-mode auth state, seeded by the boot probe (GET /api/models).
+  authMode: "access",
+  authenticated: true,
+  displayName: null,
 };
 
 // ---------- API helpers ----------
@@ -285,7 +289,20 @@ async function api(path, opts = {}) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    // #80: public-mode session expiry. Any identity-required route answers 401
+    // when the session cookie is missing or stale; drop back to the auth gate
+    // so the user re-authenticates instead of hitting opaque failures. Access
+    // mode never 401s here (Cloudflare Access sits upstream), so this is inert
+    // for self-host deploys.
+    if (res.status === 401 && state.authMode === "public") {
+      showAuthScreen();
+    }
+    // Carry the status (and machine-readable code when present) on the thrown
+    // error so callers can pattern-match, e.g. the 412 fail-closed gateway gate.
+    const e = new Error(err.error || `HTTP ${res.status}`);
+    e.status = res.status;
+    e.code = err.code || null;
+    throw e;
   }
   return res.json();
 }
@@ -316,11 +333,15 @@ function fmtMeta(chat) {
 
 // ---------- Models ----------
 
-async function loadModels() {
-  const { models, user, gateway } = await api("/api/models");
+async function loadModels(prefetched) {
+  // #80: bootstrap() already fetched GET /api/models for the boot gate; accept
+  // that payload so the app hydrates from one call instead of refetching.
+  const { models, user, gateway } = prefetched || await api("/api/models");
   state.user = user;
   state.gateway = gateway || null;
-  if (accountEmail) accountEmail.textContent = user;
+  // #80: in public mode show the chosen username, not the opaque usr_<id>
+  // identity; access/self-host mode keeps the email identity unchanged.
+  if (accountEmail) accountEmail.textContent = state.displayName || user;
   renderGatewayBanner();
 
   state.modelsById = {};
@@ -1399,6 +1420,14 @@ async function run() {
       job_error: err.message,
     });
     renderTranscript(state.currentTurns);
+    // #80 fail-closed BYOK gate: a 412 means no AI Gateway is configured (or the
+    // Unified Billing token is missing). Route the user straight into the
+    // gateway modal so the fix is one screen away, not a dead-end error. The
+    // failed turn still shows the server message (which names Account > AI
+    // Gateway). Match on the status; the worker also sends a code field.
+    if (err.status === 412) {
+      openGatewayModal();
+    }
   } finally {
     runBtn.disabled = false;
     attachBtn.disabled = false;
@@ -1710,16 +1739,194 @@ userInput.addEventListener("keydown", (e) => {
   }
 });
 
-(async () => {
+// ---------- #80 public-mode first-party auth ----------
+//
+// The app boots through bootstrap(), which probes GET /api/models first. That
+// route is the single unauthenticated boot entry point (exempt from the public-
+// mode session gate, so it never 401s) and its envelope carries the deploy mode
+// and session state alongside the catalog:
+//   { models, mode: "public"|"access", authenticated, user, username, gateway }
+// Only mode=public AND authenticated=false raises the signup/login gate; every
+// other case (access mode, or an authenticated public session) boots the app
+// exactly as before. A probe failure fails OPEN to the app so self-host / access
+// deploys and older workers without the mode field keep working.
+const authScreen       = $("#auth-screen");
+const authForm         = $("#auth-form");
+const authTabLogin     = $("#auth-tab-login");
+const authTabSignup    = $("#auth-tab-signup");
+const authErrorBox     = $("#auth-error");
+const authUsername     = $("#auth-username");
+const authUsernameNote = $("#auth-username-note");
+const authUsernameErr  = $("#auth-username-err");
+const authPassword     = $("#auth-password");
+const authPasswordErr  = $("#auth-password-err");
+const authConfirmField = $("#auth-confirm-field");
+const authPassword2    = $("#auth-password2");
+const authPassword2Err = $("#auth-password2-err");
+const authSubmit       = $("#auth-submit");
+const accountLogout    = $("#account-logout");
+
+// Client-side validation mirrors the server rules as a UX nicety only; the
+// worker is the authority, so a 4xx from signup/login always shows the server
+// message verbatim. Keep these in step with the backend if it tightens them.
+const AUTH_USERNAME_RE = /^[A-Za-z0-9_-]{3,32}$/;
+const AUTH_PASSWORD_MIN = 10;
+let authTab = "signup"; // "signup" | "login"
+
+function showAuthScreen() {
+  if (!authScreen) return;
+  authScreen.hidden = false;
+  document.body.classList.add("auth-active");
+  setTimeout(() => { if (authUsername) authUsername.focus(); }, 0);
+}
+function hideAuthScreen() {
+  if (!authScreen) return;
+  authScreen.hidden = true;
+  document.body.classList.remove("auth-active");
+}
+function setAuthTab(tab) {
+  authTab = tab === "login" ? "login" : "signup";
+  const signup = authTab === "signup";
+  if (authTabSignup) authTabSignup.setAttribute("aria-selected", signup ? "true" : "false");
+  if (authTabLogin)  authTabLogin.setAttribute("aria-selected", signup ? "false" : "true");
+  if (authConfirmField) authConfirmField.hidden = !signup;
+  if (authUsernameNote) authUsernameNote.hidden = !signup;
+  if (authSubmit) authSubmit.textContent = signup ? "create account" : "log in";
+  if (authPassword) authPassword.setAttribute("autocomplete", signup ? "new-password" : "current-password");
+  if (authPassword2) authPassword2.value = "";
+  clearAuthErrors();
+}
+function clearAuthErrors() {
+  if (authErrorBox) { authErrorBox.hidden = true; authErrorBox.textContent = ""; }
+  const pairs = [[authUsername, authUsernameErr], [authPassword, authPasswordErr], [authPassword2, authPassword2Err]];
+  for (const [field, errEl] of pairs) {
+    if (errEl) { errEl.hidden = true; errEl.textContent = ""; }
+    if (field && field.parentElement) field.parentElement.classList.remove("invalid");
+  }
+}
+function setFieldError(field, errEl, msg) {
+  if (errEl) { errEl.textContent = msg; errEl.hidden = false; }
+  if (field && field.parentElement) field.parentElement.classList.add("invalid");
+}
+function showAuthError(msg) {
+  if (!authErrorBox) return;
+  authErrorBox.textContent = msg;
+  authErrorBox.hidden = false;
+}
+function validateAuth() {
+  clearAuthErrors();
+  let ok = true;
+  const username = (authUsername ? authUsername.value : "").trim();
+  const password = authPassword ? authPassword.value : "";
+  if (!AUTH_USERNAME_RE.test(username)) {
+    setFieldError(authUsername, authUsernameErr, "3 to 32 characters: letters, numbers, hyphen, underscore.");
+    ok = false;
+  }
+  if (authTab === "signup") {
+    if (password.length < AUTH_PASSWORD_MIN) {
+      setFieldError(authPassword, authPasswordErr, `at least ${AUTH_PASSWORD_MIN} characters.`);
+      ok = false;
+    }
+    const confirm = authPassword2 ? authPassword2.value : "";
+    if (confirm !== password) {
+      setFieldError(authPassword2, authPassword2Err, "passwords do not match.");
+      ok = false;
+    }
+  } else if (!password) {
+    setFieldError(authPassword, authPasswordErr, "enter your password.");
+    ok = false;
+  }
+  return ok ? { username, password } : null;
+}
+async function submitAuth(ev) {
+  if (ev) ev.preventDefault();
+  const creds = validateAuth();
+  if (!creds) return;
+  const path = authTab === "signup" ? "/api/auth/signup" : "/api/auth/login";
+  if (authSubmit) authSubmit.disabled = true;
   try {
-    await loadModels();
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(creds),
+    });
+    if (res.ok) {
+      // The server sets the session cookie on success. Reload so the boot probe
+      // renders the authenticated app with clean state (no partial-boot paths).
+      location.reload();
+      return;
+    }
+    const body = await res.json().catch(() => ({}));
+    showAuthError(body.error || (authTab === "signup" ? "could not create account." : "could not log in."));
+  } catch (err) {
+    showAuthError("network error, please try again.");
+  } finally {
+    if (authSubmit) authSubmit.disabled = false;
+  }
+}
+async function doLogout() {
+  try {
+    await fetch("/api/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" } });
+  } catch (err) { /* best-effort; the reload drops to the auth gate regardless */ }
+  location.reload();
+}
+if (authForm) authForm.addEventListener("submit", submitAuth);
+if (authTabSignup) authTabSignup.addEventListener("click", () => setAuthTab("signup"));
+if (authTabLogin)  authTabLogin.addEventListener("click", () => setAuthTab("login"));
+if (accountLogout) accountLogout.addEventListener("click", () => {
+  if (accountMenu) accountMenu.hidden = true;
+  if (accountToggle) accountToggle.setAttribute("aria-expanded", "false");
+  doLogout();
+});
+
+function applyAuthShell(displayName) {
+  // Public mode: show the username in the account chip and reveal the logout +
+  // delete-account rows. Access / self-host mode keeps the email identity and
+  // hides both (Cloudflare Access owns that lifecycle).
+  const isPublic = state.authMode === "public";
+  state.displayName = isPublic ? (displayName || null) : null;
+  if (accountLogout) accountLogout.hidden = !isPublic;
+  const delRow = document.getElementById("account-delete");
+  if (delRow) delRow.hidden = !isPublic;
+}
+
+async function bootApp(prefetchedModels) {
+  try {
+    await loadModels(prefetchedModels);
     await loadConversations();
     await loadDocuments();
     updateConvTitle();
   } catch (err) {
     transcriptEl.innerHTML = `<div class="turn turn-assistant"><div class="turn-role">error</div><div class="turn-body"><div class="turn-text error">Failed to initialize: ${escapeHtml(err.message)}</div></div></div>`;
   }
-})();
+}
+
+async function bootstrap() {
+  // #80 boot probe: GET /api/models is the single unauthenticated entry point.
+  // Reachable without a session in both modes, it carries mode + authenticated +
+  // username alongside the catalog, so one call gates the app AND hydrates the
+  // picker in a single unauthenticated call. Fail OPEN: no data, or an
+  // older worker with no mode field, behaves as access mode, so self-host and
+  // pre-#80 deploys keep working; the signup gate can only appear when the
+  // worker explicitly reports mode=public with no session.
+  let data = null;
+  try {
+    const res = await fetch("/api/models", { headers: { "Content-Type": "application/json" } });
+    if (res.ok) data = await res.json();
+  } catch (err) { /* fail open to app boot */ }
+  state.authMode = data && data.mode === "public" ? "public" : "access";
+  state.authenticated = !data || data.authenticated !== false;
+  if (state.authMode === "public" && !state.authenticated) {
+    setAuthTab("signup");
+    showAuthScreen();
+    return;
+  }
+  applyAuthShell(data ? data.username : null);
+  // Hand the already-fetched catalog to bootApp so loadModels does not refetch.
+  await bootApp(data);
+}
+
+bootstrap();
 
 // ---------- Documents (RAG Pass 1) ----------
 
@@ -2360,6 +2567,7 @@ document.addEventListener("click", (e) => {
   if (modalId === "project-modal") closeProjectModal();
   else if (modalId === "project-docs-modal") closeDocsPicker();
   else if (modalId === "gateway-modal") closeGatewayModal();
+  else if (modalId === "account-delete-modal") closeAccountDeleteModal();
 });
 
 // Escape key closes any open modal.
@@ -2368,6 +2576,7 @@ document.addEventListener("keydown", (e) => {
   if (!projectModal.hidden) closeProjectModal();
   else if (!projectDocsModal.hidden) closeDocsPicker();
   else if (gatewayModal && !gatewayModal.hidden) closeGatewayModal();
+  else if (accountDeleteModal && !accountDeleteModal.hidden) closeAccountDeleteModal();
 });
 
 // Submit project modal on Cmd/Ctrl+Enter inside any of its text inputs.
@@ -2506,3 +2715,64 @@ function onMoveMenuOutsideClick(e) {
 function onMoveMenuKeydown(e) {
   if (e.key === "Escape") closeMoveToProjectMenu();
 }
+
+// ---------- #80 in-app account deletion (DELETE /api/account) ----------
+//
+// The #82 requirement is IN-APP deletion; an API-only route is half-shipped, so
+// the account menu gets a Delete-account affordance (public mode only) that
+// opens a confirm modal requiring password re-entry, then calls DELETE
+// /api/account. On success the server clears the session cookie; a reload lands
+// on the signup gate.
+const accountDelete         = $("#account-delete");
+const accountDeleteModal    = $("#account-delete-modal");
+const accountDeletePassword = $("#account-delete-password");
+const accountDeleteError    = $("#account-delete-error");
+const accountDeleteConfirm  = $("#account-delete-confirm");
+const accountDeleteCancel   = $("#account-delete-cancel");
+
+function openAccountDeleteModal() {
+  if (!accountDeleteModal) return;
+  if (accountDeleteError) { accountDeleteError.hidden = true; accountDeleteError.textContent = ""; }
+  if (accountDeletePassword) accountDeletePassword.value = "";
+  accountDeleteModal.hidden = false;
+  if (accountDeletePassword) setTimeout(() => accountDeletePassword.focus(), 0);
+}
+function closeAccountDeleteModal() {
+  if (accountDeleteModal) accountDeleteModal.hidden = true;
+}
+async function submitAccountDelete() {
+  const password = accountDeletePassword ? accountDeletePassword.value : "";
+  if (!password) {
+    if (accountDeleteError) { accountDeleteError.textContent = "enter your password to confirm."; accountDeleteError.hidden = false; }
+    return;
+  }
+  if (accountDeleteConfirm) accountDeleteConfirm.disabled = true;
+  try {
+    const res = await fetch("/api/account", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    if (res.ok) {
+      // Session cookie cleared server-side; reload drops to the signup gate.
+      location.reload();
+      return;
+    }
+    const body = await res.json().catch(() => ({}));
+    if (accountDeleteError) {
+      accountDeleteError.textContent = body.error || (res.status === 403 ? "incorrect password." : "could not delete account.");
+      accountDeleteError.hidden = false;
+    }
+  } catch (err) {
+    if (accountDeleteError) { accountDeleteError.textContent = "network error, please try again."; accountDeleteError.hidden = false; }
+  } finally {
+    if (accountDeleteConfirm) accountDeleteConfirm.disabled = false;
+  }
+}
+if (accountDelete) accountDelete.addEventListener("click", () => {
+  if (accountMenu) accountMenu.hidden = true;
+  if (accountToggle) accountToggle.setAttribute("aria-expanded", "false");
+  openAccountDeleteModal();
+});
+if (accountDeleteConfirm) accountDeleteConfirm.addEventListener("click", submitAccountDelete);
+if (accountDeleteCancel) accountDeleteCancel.addEventListener("click", closeAccountDeleteModal);

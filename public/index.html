@@ -13,6 +13,53 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <!-- #80 public-mode first-party auth. Hidden by default; the boot probe
+       (GET /api/session) reveals it only when mode=public and no session.
+       Access / self-host deploys report mode=access and never show it. -->
+  <div id="auth-screen" class="auth-screen" hidden>
+    <form id="auth-form" class="auth-card" novalidate>
+      <div class="auth-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">skyphusion</span>
+      </div>
+      <p class="auth-sub">multimodal AI playground</p>
+
+      <div class="auth-tabs" role="tablist" aria-label="log in or sign up">
+        <button type="button" id="auth-tab-login" class="auth-tab" role="tab" aria-selected="false">log in</button>
+        <button type="button" id="auth-tab-signup" class="auth-tab" role="tab" aria-selected="true">sign up</button>
+      </div>
+
+      <div id="auth-error" class="modal-error auth-error" role="alert" hidden></div>
+
+      <div class="auth-field">
+        <label for="auth-username">username</label>
+        <input id="auth-username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32">
+        <div id="auth-username-note" class="auth-note">3 to 32 characters: letters, numbers, hyphen, underscore.</div>
+        <div id="auth-username-err" class="auth-field-err" hidden></div>
+      </div>
+
+      <div class="auth-field">
+        <label for="auth-password">password</label>
+        <input id="auth-password" type="password" autocomplete="new-password" maxlength="200">
+        <div id="auth-password-err" class="auth-field-err" hidden></div>
+      </div>
+
+      <div id="auth-confirm-field" class="auth-field">
+        <label for="auth-password2">confirm password</label>
+        <input id="auth-password2" type="password" autocomplete="new-password" maxlength="200">
+        <div id="auth-password2-err" class="auth-field-err" hidden></div>
+      </div>
+
+      <button type="submit" id="auth-submit" class="auth-submit">create account</button>
+
+      <p class="auth-foot">
+        Inference runs on your own Cloudflare account: after you sign in, configure
+        an AI Gateway (slug plus a Unified Billing token) under Account. Workers,
+        storage, and retrieval are hosted; model spend is yours.
+      </p>
+    </form>
+  </div>
+
   <div class="layout">
     <!-- backdrop for the slide-in sidebar (focus mode: sidebar is an overlay) -->
     <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
@@ -77,6 +124,18 @@
               <span class="account-name">Acceptable use</span>
               <span class="account-sub">Good-faith use policy for play.skyphusion.org</span>
             </a>
+            <a class="account-row account-link" href="https://github.com/skyphusion-labs/prism" role="menuitem" target="_blank" rel="noopener">
+              <span class="account-name">Source code</span>
+              <span class="account-sub">AGPL-3.0; view or self-host this instance</span>
+            </a>
+            <button id="account-logout" class="account-row account-link account-logout" type="button" role="menuitem" hidden>
+              <span class="account-name">Log out</span>
+              <span class="account-sub">End this session</span>
+            </button>
+            <button id="account-delete" class="account-row account-link account-delete" type="button" role="menuitem" hidden>
+              <span class="account-name">Delete account</span>
+              <span class="account-sub">Permanently erase your account and data</span>
+            </button>
           </div>
         </div>
       </header>
@@ -150,6 +209,28 @@
           <span id="attach-hint" class="hint"></span>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div id="account-delete-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-modal-close="account-delete-modal"></div>
+    <div class="modal-panel" role="dialog" aria-labelledby="account-delete-title" aria-modal="true">
+      <header class="modal-header">
+        <h2 id="account-delete-title">delete account</h2>
+        <button class="modal-close" data-modal-close="account-delete-modal" type="button" title="close">&#x2715;</button>
+      </header>
+      <div class="modal-body">
+        <p class="modal-hint account-delete-warning">This permanently erases your account and everything tied to it: chats, projects, uploaded documents, generated artifacts, and saved AI Gateway settings. This cannot be undone.</p>
+        <label class="modal-field">
+          <span>confirm your password</span>
+          <input id="account-delete-password" type="password" autocomplete="current-password" placeholder="enter your password to confirm">
+        </label>
+        <div id="account-delete-error" class="modal-error" hidden></div>
+      </div>
+      <footer class="modal-actions">
+        <button id="account-delete-cancel" type="button">cancel</button>
+        <button id="account-delete-confirm" type="button" class="modal-danger-primary">delete my account</button>
+      </footer>
     </div>
   </div>
 

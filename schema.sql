@@ -247,3 +247,37 @@ CREATE TABLE IF NOT EXISTS user_prefs (
   prefs_json  TEXT NOT NULL DEFAULT '{}',
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ---------- First-party auth plane (v0.167.0, issue #80) ----------
+--
+-- Public-deployment accounts. In public mode (AUTH_MODE=public) the ownership
+-- columns above (chats.user_email, documents.user_email, projects.user_email,
+-- chunks.user_email, project_messages.user_email, user_prefs.user_email) hold
+-- the opaque users.id string rather than a Cloudflare Access email; the column
+-- name stays legacy and no existing row is migrated. See migrate-v0.167.0.sql
+-- for the standalone delta and src/auth.ts / src/session.ts / src/rate-limit.ts
+-- for the code that uses these.
+
+CREATE TABLE IF NOT EXISTS users (
+  id            TEXT PRIMARY KEY,
+  username      TEXT NOT NULL,
+  username_lc   TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  email         TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS auth_attempts (
+  bucket_key   TEXT PRIMARY KEY,
+  count        INTEGER NOT NULL DEFAULT 0,
+  window_start TEXT NOT NULL DEFAULT (datetime('now'))
+);

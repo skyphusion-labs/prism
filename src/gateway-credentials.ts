@@ -7,6 +7,11 @@
 //
 // Resolution merges user prefs over worker secrets field-by-field so a partial
 // override still falls back to deployer defaults where unset.
+//
+// v0.167.0 (issue #80): when AUTH_MODE=public the worker secrets are ignored
+// entirely (fail closed). A public deploy must never bill the host for visitor
+// inference, so even a mistakenly-present GATEWAY_ID / CF_AIG_TOKEN is treated
+// as absent: source is only ever "user" or "none", never "worker"/"mixed".
 
 import type { Env } from "./env";
 import { loadUserPrefs, type UserPrefsJson } from "./user-prefs";
@@ -31,12 +36,21 @@ export const GATEWAY_NOT_CONFIGURED_MSG =
 export const CF_AIG_TOKEN_REQUIRED_MSG =
   "This model requires a Cloudflare API token with AI Gateway Run permission. Add it under Account > AI Gateway.";
 
+// True when this deployment is the public product; worker gateway secrets are
+// then off-limits for billing resolution.
+function isPublic(env: Env): boolean {
+  return env.AUTH_MODE === "public";
+}
+
 export function resolveGatewayFromParts(
   prefs: UserPrefsJson | null,
   env: Env,
 ): GatewayCredentials | null {
-  const gatewayId = (prefs?.gateway_id?.trim() || env.GATEWAY_ID?.trim() || "");
-  const cfAigToken = (prefs?.cf_aig_token?.trim() || env.CF_AIG_TOKEN?.trim() || "");
+  // Public mode: user prefs only, no worker-secret fallback (fail closed).
+  const workerGateway = isPublic(env) ? "" : (env.GATEWAY_ID?.trim() || "");
+  const workerToken = isPublic(env) ? "" : (env.CF_AIG_TOKEN?.trim() || "");
+  const gatewayId = (prefs?.gateway_id?.trim() || workerGateway);
+  const cfAigToken = (prefs?.cf_aig_token?.trim() || workerToken);
   if (!gatewayId) return null;
   return { gatewayId, cfAigToken };
 }
@@ -44,8 +58,10 @@ export function resolveGatewayFromParts(
 export function gatewaySource(prefs: UserPrefsJson | null, env: Env): GatewaySource {
   const hasUserGateway = !!prefs?.gateway_id?.trim();
   const hasUserToken = !!prefs?.cf_aig_token?.trim();
-  const hasWorkerGateway = !!env.GATEWAY_ID?.trim();
-  const hasWorkerToken = !!env.CF_AIG_TOKEN?.trim();
+  // Public mode never counts worker secrets: a public deploy resolves to
+  // "user" or "none" only, so a stray worker secret cannot read as "worker".
+  const hasWorkerGateway = !isPublic(env) && !!env.GATEWAY_ID?.trim();
+  const hasWorkerToken = !isPublic(env) && !!env.CF_AIG_TOKEN?.trim();
 
   if (hasUserGateway && hasUserToken && !hasWorkerGateway && !hasWorkerToken) return "user";
   if (!hasUserGateway && !hasUserToken && hasWorkerGateway) return "worker";

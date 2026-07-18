@@ -4,7 +4,7 @@
 [![Typecheck](https://github.com/skyphusion-labs/prism/actions/workflows/typecheck.yml/badge.svg)](https://github.com/skyphusion-labs/prism/actions/workflows/typecheck.yml)
 [![Voice chat](https://img.shields.io/badge/%F0%9F%8E%99%EF%B8%8F_voice_chat-speak_%26_hear_39_chat_models-6d8cff)](#voice-chat)
 
-A multimodal AI playground deployed as a single Cloudflare Worker. **Live demo:** https://play.skyphusion.org (Cloudflare Access). 39 chat models across 5 providers, **hands-free voice chat** (talk to any model and hear it reply), image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via self-hosted SearXNG and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
+A multimodal AI playground deployed as a single Cloudflare Worker. **Live demo:** https://play.skyphusion.org (free signup, bring your own AI Gateway). 39 chat models across 5 providers, **hands-free voice chat** (talk to any model and hear it reply), image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via self-hosted SearXNG and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI with first-party accounts, per-user history, R2 for all binary artifacts.
 
 <p align="center">
   <img src="docs/screenshot-desktop.jpg" alt="Desktop UI: image generation with Nano Banana Pro" width="800"><br><br>
@@ -34,7 +34,7 @@ One Worker, no framework, no build step beyond TypeScript. The interesting parts
 - **AI Gateway** wraps every call for observability, caching, and rate-limiting.
 - **D1** holds chat metadata, multi-turn conversation history, and RAG chunk text. **R2** holds all binary artifacts. **Vectorize** holds RAG embeddings (768-dim BGE-base). The chat row references R2 keys; nothing binary touches D1.
 - **Cloudflare Workflows** owns long-running Unified Billing video and music generation (30s to 3min jobs). The `LongRunWorkflow` class holds the blocking `env.AI.run` call alive across step boundaries that `ctx.waitUntil` cannot.
-- **Cloudflare Access** gates the entire worker URL. The worker reads `Cf-Access-Authenticated-User-Email` to scope history per user; R2 objects carry `customMetadata.user_email` so cross-user access is impossible even if a UUID is guessed.
+- **Two auth modes, one identity seam.** An `AUTH_MODE` setting picks how the worker learns who you are: **public** mode (the hosted product) runs first-party username/password accounts behind an opaque server-side session cookie, while **access** mode (the default, for private self-host) trusts Cloudflare Access's `Cf-Access-Authenticated-User-Email`. Either way a single stable, opaque account id scopes history and R2 ownership (`customMetadata.user_email`), so cross-user access is impossible even if a UUID is guessed.
 - **Client-side video keyframe extraction** sends 8 evenly-spaced frames to vision-capable chat models instead of uploading the full video file.
 - **Searchable model picker** (v0.111.0) groups the ~80 catalog entries across 7 modalities with capability badges (vision, stream) inline; type to filter by name.
 
@@ -73,7 +73,7 @@ One Worker, no framework, no build step beyond TypeScript. The interesting parts
 
 **UI (focus-mode redesign, v0.110.0+):** a single centered conversation column with a floating composer; the sidebar (searchable history, projects, documents) is a slide-in overlay; a searchable model picker (type to filter, v0.111.0); a ⚙ popover for the system prompt + retrieval toggles and an account menu in the top bar; a paperclip attach button and a voice-chat mic. Capability-aware mode switching (vision-only attachment types; image-mode re-skins to "negative prompt"; TTS / STT / video / music / voice hide irrelevant inputs), FLUX.2 reference-image attach UI (v0.16.0), per-turn web-search toggle (v0.17.0), per-user replay-able history with attachments and generated artifacts, Enter to send / Shift+Enter for newline. Mobile-optimized (safe-area insets, touch targets, no iOS zoom).
 
-**Auth:** Cloudflare Access on the worker URL. Per-user history and R2 ownership checks via `Cf-Access-Authenticated-User-Email`. Free up to 50 seats on Zero Trust.
+**Auth (two modes via `AUTH_MODE`):** **public** (the hosted product) is first-party username/password signup with an opaque session cookie and mandatory per-user BYOK: each user brings their own AI Gateway, the worker holds no gateway secrets, and inference bills the user, never the host. **access** (the default, for private self-host) puts Cloudflare Access on the worker URL and scopes per-user history and R2 ownership via `Cf-Access-Authenticated-User-Email` (free up to 50 seats on Zero Trust). See [Running the public service](#running-the-public-service).
 
 ## Stack
 
@@ -84,11 +84,13 @@ One Worker, no framework, no build step beyond TypeScript. The interesting parts
 - Vectorize for RAG embeddings (768-dim, cosine)
 - Cloudflare Workflows for long-running Unified Billing video and music generation
 - Static frontend served via Workers Assets
-- Cloudflare Access in front for auth
+- Auth: first-party username/password accounts (public mode) or Cloudflare Access (private self-host mode)
 
 Roughly 7800 LOC TypeScript in `src/index.ts` plus ~9000 LOC across the extracted modules (`src/providers/`, `src/parsers/`, `src/discord.ts`, `chunking.ts`, and friends), plus ~17,000 LOC vanilla JS / CSS / HTML in `public/`, plus schema.sql.
 
 ## Quickstart
+
+> This quickstart sets up the **private, Access-gated self-host** (the default `AUTH_MODE=access`, where the deployer's own AI Gateway pays for inference). To run the **public, first-party-signup service** instead, see [Running the public service](#running-the-public-service): it turns Access off and has every user bring their own AI Gateway.
 
 Prerequisites:
 
@@ -139,7 +141,7 @@ Then enable Unified Billing for each provider you plan to use: Dashboard > AI > 
 
 There is **no** deployer BYOK secret: the last one, `OPENAI_API_KEY` for `openai/gpt-image-1.5` transparent PNG output, was retired in v0.166.0 (prism#93). OpenAI chat has never used it.
 
-> **Public demo:** to run a separate try-it-yourself instance (no worker gateway secrets; visitors bring their own), see [Deploying a public demo (separate worker)](#deploying-a-public-demo-separate-worker). Skip steps 1 and 1b for that path.
+> **Public service:** to run the open, first-party-signup instance instead (no worker gateway secrets; every user brings their own AI Gateway), see [Running the public service](#running-the-public-service), and skip steps 1, 1b, and 6.
 
 ### 2. Create the D1 database
 
@@ -190,7 +192,9 @@ You will get a `*.workers.dev` URL.
 
 > Note: `wrangler.example.toml` declares a `[[services]]` binding named `EMAIL` that targets a separate `skyphusion-email` Worker ([its own repo](https://github.com/SkyPhusion/skyphusion-email)). Wrangler will not deploy a service binding whose target Worker is not in your account, so this first deploy fails until you either deploy `skyphusion-email` first or comment out the `[[services]]` block in your `wrangler.toml`. The Worker treats `env.EMAIL` as optional at runtime (transactional mail just no-ops without it), so commenting it out is safe.
 
-### 6. Cloudflare Access
+### 6. Cloudflare Access (access mode only)
+
+This step applies to the default `AUTH_MODE=access` (private self-host). For the public, first-party-signup service, skip it entirely and follow [Running the public service](#running-the-public-service).
 
 Cloudflare Access sits in front of the worker URL. Authenticated requests reach the worker with `Cf-Access-Authenticated-User-Email`, which scopes history, R2 artifacts, and per-user gateway prefs.
 
@@ -205,7 +209,7 @@ Dashboard > Zero Trust > Access > Applications > Add an application > Self-hoste
 
 Add your address and anyone else who should have access. Cloudflare Zero Trust is free up to 50 users; see [pricing](https://developers.cloudflare.com/cloudflare-one/) if you need more.
 
-**Public demo install:** use a different policy (Allow + Everyone). Full steps are in [Deploying a public demo (separate worker)](#deploying-a-public-demo-separate-worker).
+For an open, self-serve **public service**, do not use Cloudflare Access at all: run the worker in public mode and let users sign up in-app. See [Running the public service](#running-the-public-service).
 
 Do **not** use a **Bypass** policy on the main app URL. Bypass skips login, so the worker never receives a user email and everyone shares the `anonymous` bucket.
 
@@ -234,65 +238,40 @@ Without `SEARXNG_URL`, the SearXNG source is silently skipped. Wikipedia always 
 npm run dev
 ```
 
-## Deploying a public demo (separate worker)
+## Running the public service
 
-Run a **second deployment** alongside your private instance. Same codebase, **separate** Worker name, D1 database, R2 bucket, Vectorize index, and Access application. Do not reuse the private install's bindings or secrets; visitors store their own AI Gateway slug and API token under **Account > AI Gateway**, and Unified Billing charges **their** Cloudflare account.
+Run Prism as an open, self-serve service: anyone signs up with a username and password, and each user
+brings their own Cloudflare AI Gateway so their model usage bills their own account, never yours. This
+is how play.skyphusion.org runs. It is a **mode of the same worker** (`AUTH_MODE=public`), not a second
+deployment.
 
-### Why a separate worker
+### What changes vs the private install
 
-| | Private instance | Public demo instance |
+| | Private install (access mode) | Public service (public mode) |
 |---|---|---|
-| Worker secrets | `GATEWAY_ID` + `CF_AIG_TOKEN` (yours) | None (omit both) |
-| D1 / R2 / Vectorize | Your data | Empty, isolated per deploy |
-| Access policy | Email allowlist | **Allow + Everyone** |
-| Who pays for models | You | Each signed-in visitor |
+| `AUTH_MODE` | `access` (default; may be unset) | `public` |
+| Sign-in | Cloudflare Access (email OTP / OAuth) | First-party username + password signup |
+| Worker gateway secrets | `GATEWAY_ID` + `CF_AIG_TOKEN` (yours; you pay inference) | **None** (omit both; ignored even if set) |
+| Who pays for inference | You (the deployer) | Each user, via their own AI Gateway |
+| Cloudflare Access app | Required | **Not used** |
 
-### 1. Bootstrap a separate config
+Everything else (D1, R2, Vectorize, deploy) is the same as the [Quickstart](#quickstart): do steps 2 to
+5, then the changes below in place of steps 1, 1b, and 6.
 
-Use a second checkout or a copy of the repo so `wrangler.toml` does not collide with your private deploy:
+### 1. Turn on public mode
 
-```
-git clone https://github.com/skyphusion-labs/prism.git prism-demo
-cd prism-demo
-npm install
-npm run bootstrap
-```
-
-Edit `wrangler.toml` and rename **every** deployer-specific resource so nothing points at the private instance:
+`AUTH_MODE` is a plain var (not a secret). Set it in `wrangler.toml`:
 
 ```toml
-name = "skyphusion-llm-demo"          # was skyphusion-llm
-
-[[d1_databases]]
-database_name = "skyphusion-llm-demo" # new D1; paste a new database_id
-
-[[r2_buckets]]
-bucket_name = "skyphusion-llm-demo"
-
-[[vectorize]]
-index_name = "skyphusion-llm-demo-vec"
-
-[[workflows]]
-name = "skyphusion-longrun-demo"      # workflow name is per-worker
+[vars]
+AUTH_MODE = "public"
 ```
 
-Create the backing resources with the new names:
+In public mode the worker runs its own username/password accounts and reads identity from an opaque
+session cookie. It never reads `GATEWAY_ID` / `CF_AIG_TOKEN`, so a stray gateway secret cannot make the
+host pay for a visitor's inference; gateway credentials come only from each user's own settings.
 
-```
-npx wrangler d1 create skyphusion-llm-demo
-npx wrangler r2 bucket create skyphusion-llm-demo
-npx wrangler vectorize create skyphusion-llm-demo-vec --dimensions=768 --metric=cosine
-```
-
-Paste the new `database_id` into `wrangler.toml`, then apply schema:
-
-```
-npm run db:migrate:remote
-```
-
-Fresh installs include `user_prefs` from `schema.sql`. Upgrading an older demo DB uses `migrate-v0.164.0.sql` (see [MIGRATIONS.md](MIGRATIONS.md)).
-
-### 2. Skip deployer gateway secrets
+### 2. Do not set worker gateway secrets, and do not put Access in front
 
 Do **not** run:
 
@@ -303,78 +282,31 @@ npx wrangler secret put CF_AIG_TOKEN
 
 For local dev, leave those keys out of `.dev.vars` as well. The optional web-search config (`SEARXNG_URL`, plus `SEARXNG_ACCESS_CLIENT_ID` / `SEARXNG_ACCESS_CLIENT_SECRET` for a gated instance) still works if you want global features, but most public demos omit it so visitors rely on their own gateway for paid models.
 
+Do **not** create a Cloudflare Access application for a public-mode worker: the app has its own signup, and an Access gate in front would add a second login before it.
+
 ### 3. Deploy
 
 ```
 npm run deploy
 ```
 
-Note the `*.workers.dev` hostname (or attach a custom domain first, e.g. `demo.example.com`).
+### How users get set up (mandatory BYOK)
 
-### Cloudflare Access (public sign-in)
+1. Open the URL and **sign up** with a username and password (no email, no Access login).
+2. Open **Account > AI Gateway**; create a Cloudflare AI Gateway in the [Cloudflare dashboard](https://developers.cloudflare.com/ai-gateway/) if needed, and enable Unified Billing for the providers you want.
+3. Paste the gateway **slug** and a Cloudflare API token with **AI Gateway Run** permission.
+4. Run models. Until a user configures their gateway, paid and proxied models fail closed with a clear "configure your AI Gateway" prompt (HTTP 412), so no call ever bills the host.
 
-Access means **sign-in required**, not anonymous traffic. Each visitor gets a unique email identity; the worker uses that for history, R2 ownership, and `user_prefs`. Use **Allow**, not **Bypass**.
+### Who pays for what
 
-**Step A: enable login methods**
+- **You (the host)** pay Cloudflare for Workers, D1, R2, and Vectorize: the storage and compute for the service itself.
+- **Each user** pays for their own model inference through Unified Billing on the AI Gateway they configured.
 
-Zero Trust > **Settings** > **Authentication** > **Login methods**. Enable at least one:
+### Abuse controls and policies
 
-- **One-Time PIN** (email OTP; good default for a public demo; no OAuth app setup)
-- **Google** and/or **GitHub** (optional; familiar for technical users)
-
-**Step B: create a dedicated Access application**
-
-Zero Trust > **Access** > **Applications** > **Add an application** > **Self-hosted**
-
-| Field | Value |
-|---|---|
-| Application name | e.g. `skyphusion demo` |
-| Subdomain / domain | The **demo** worker hostname only (not your private worker URL) |
-| Session duration | Your choice (e.g. 24 hours) |
-
-**Step C: public Allow policy**
-
-Under **Policies** on that application:
-
-| Field | Value |
-|---|---|
-| Action | **Allow** |
-| Include | **Everyone** |
-
-Remove any email-only Allow policies on this app, or they will block users not on the list.
-
-**Step D: verify**
-
-1. Open the demo URL in a private/incognito window.
-2. You should see the Cloudflare Access login page (OTP or OAuth).
-3. After login, the app loads; **Account** shows your email.
-4. Open **Account > AI Gateway**, enter your gateway slug and a Cloudflare API token with **AI Gateway Run** permission.
-5. Run a model; usage bills the visitor's Unified Billing account.
-
-### Visitor flow (what you tell users)
-
-1. Sign in at your demo URL (email OTP or social login).
-2. Open **Account > AI Gateway**.
-3. Create an AI Gateway in the [Cloudflare dashboard](https://developers.cloudflare.com/ai-gateway/) if needed; enable Unified Billing for the providers you want.
-4. Paste the gateway **slug** and an API token with **AI Gateway Run** permission.
-5. Use the playground; history and uploads are scoped to your login email.
-
-### Limits and abuse
-
-- **Zero Trust free tier** covers roughly 50 users; a widely public demo may need a paid plan.
-- **Your Cloudflare bill** still includes Workers, D1, R2, and Vectorize for the demo worker. Model inference cost is on each visitor once they configure gateway creds.
-- Access gives you identity (email), not rate limits. Consider WAF rules, geographic restrictions, or a landing page with terms if you open the URL broadly.
-
-### Keeping private and public separate
-
-| Resource | Private | Public demo |
-|---|---|---|
-| `wrangler.toml` `name` | e.g. `skyphusion-llm` | e.g. `skyphusion-llm-demo` |
-| Access application | Email allowlist | Allow + Everyone |
-| Worker secrets | `GATEWAY_ID`, `CF_AIG_TOKEN` | (none) |
-| Deploy command | `npm run deploy` from private dir | `npm run deploy` from demo dir |
-
-Pulling upstream releases: update both checkouts independently; diff each `wrangler.toml` against `wrangler.example.toml` for new bindings.
+- Signup and login are rate-limited per IP (and per username on login) to blunt automated abuse; add Cloudflare Turnstile or WAF rules if you open the URL widely.
+- Account deletion is in-app and cascades every trace of the account (chats, artifacts, documents, vectors, projects, prefs, sessions).
+- If you operate a public instance, publish instance policies. Ours are [INSTANCE-PRIVACY.md](docs/legal/INSTANCE-PRIVACY.md) and [INSTANCE-ACCEPTABLE-USE.md](docs/legal/INSTANCE-ACCEPTABLE-USE.md); adapt them to your operation. Under AGPL-3.0 you must also offer your users the source of your running instance (see [License](#license)).
 
 ## Upgrading across versions
 
@@ -391,7 +323,7 @@ For D1 **schema** changes, see [Migrating an existing deployment](#migrating-an-
 ## Architecture
 
 ```
-                  Browser (Cloudflare Access login)
+                  Browser (first-party login / CF Access)
                               |
                               v
                   Worker (single fetch handler)
@@ -410,7 +342,11 @@ The worker is the only public surface. R2 is private; the worker streams objects
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET    | `/api/models`             | List available models with capability flags (`streaming`, `vision`, `group`) |
+| GET    | `/api/models`             | List available models with capability flags (`streaming`, `vision`, `group`); in public mode the envelope also carries `mode`, `authenticated`, and `user` for the signup gate |
+| POST   | `/api/auth/signup`        | Public mode: create a username/password account and open a session |
+| POST   | `/api/auth/login`         | Public mode: authenticate and set the session cookie |
+| POST   | `/api/auth/logout`        | Public mode: revoke the current session |
+| DELETE | `/api/account`            | Public mode: delete the account and cascade all its data (password re-entry required) |
 | POST   | `/api/chat`               | Run a model. Dispatches by model type. |
 | POST   | `/api/chat/stream`        | SSE streaming variant for chat models flagged `streaming: true` |
 | GET/WS | `/api/stt/stream`         | WebSocket for conversational STT (Deepgram Flux via the `SttSession` DO); persists the transcript to history on close |
@@ -913,7 +849,7 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## License
 
-[AGPL-3.0-only](LICENSE). If you run this as a network service for users, you must offer them the source code under the same license.
+[AGPL-3.0-only](LICENSE). If you run this as a network service for users, AGPL-3.0 section 13 requires you to offer them the Corresponding Source of your running instance under the same license. The hosted instance at play.skyphusion.org satisfies this with a **Source code** link to this repository in the in-app account menu; if you run your own public instance, do the same (a visible in-app link to your source, plus this repository).
 
 ## Acknowledgements
 
