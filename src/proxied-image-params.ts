@@ -11,12 +11,11 @@
 // ChatRequest objects, keeping it free of any Workers-runtime import.
 //
 //   google   (nano-banana family): { prompt, output_format } -> PNG URL
-//   openai   (gpt-image-1.5):       transparent PNG. CF's catalog routes
-//                                   transparency here. background:"transparent"
-//                                   + output_format:"png". The underlying OpenAI
-//                                   model supports both; whether the proxy
-//                                   forwards them is the live-verify item in the
-//                                   v0.22.0 CHANGELOG entry.
+//   openai   (gpt-image-1.5):       opaque. The CF proxy schema is strictly
+//                                   { prompt, images, quality, size, style } and
+//                                   7003-rejects background/output_format, so no
+//                                   alpha channel is reachable. (v0.166.0 retired
+//                                   the OPENAI_API_KEY BYOK transparent path.)
 //   recraft  (recraftv4):           opaque, art-directed. No alpha flag exists
 //                                   on the CF proxy schema (only an opaque
 //                                   background_color). Returns webp.
@@ -30,12 +29,11 @@ export function buildProxiedImageParams(
     case "google":
       return { prompt, output_format: "png" };
     case "openai":
-      // gpt-image-1.5 via the CF proxy. The proxy's schema is strictly
-      // { prompt, images, quality, size, style } and 7003-rejects anything
-      // else, so background/output_format CANNOT be requested here despite
-      // CF's catalog note. This path is therefore OPAQUE. Transparent PNG
-      // needs the OpenAI direct (BYOK) endpoint, which forwards `background`
-      // (see CHANGELOG v0.22.1 / proposed openai-image BYOK path).
+      // gpt-image-1.5 / gpt-image-2 via the CF proxy. The proxy's schema is
+      // strictly { prompt, images, quality, size, style } and 7003-rejects
+      // anything else, so background/output_format CANNOT be requested here.
+      // This path is therefore OPAQUE; v0.166.0 retired the OPENAI_API_KEY
+      // BYOK transparent-PNG path (prism#93), so this is the only image path.
       return { prompt, quality: "high", size: "1024x1024" };
     case "recraft":
       return { prompt, size: "1024x1024", style: "digital_illustration" };

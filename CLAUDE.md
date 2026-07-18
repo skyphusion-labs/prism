@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This repo is **prism** (renamed from `skyphusion-llm-public`), deployed at **play.skyphusion.org** behind Cloudflare Access. Only the repo was renamed: the deployed Worker, D1, R2, and Vectorize keep their original `skyphusion-llm` names, so binding/resource names in this file and `wrangler.example.toml` still read `skyphusion-llm` on purpose.
 
-A multimodal AI playground deployed as a **single Cloudflare Worker** (no framework, no build step beyond TypeScript). One web UI behind Cloudflare Access exposes chat (39 models / 5 providers), image / TTS / STT / video / music generation, and RAG over files of any type. The interesting part is the patterns, not the model count: every modality funnels through `env.AI.run()` (the unified AI binding) or gateway provider endpoints with **Cloudflare Unified Billing**. The one deployer BYOK escape hatch is optional `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs, because the Unified Billing proxy rejects `background`/`output_format`.
+A multimodal AI playground deployed as a **single Cloudflare Worker** (no framework, no build step beyond TypeScript). One web UI behind Cloudflare Access exposes chat (39 models / 5 providers), image / TTS / STT / video / music generation, and RAG over files of any type. The interesting part is the patterns, not the model count: every modality funnels through `env.AI.run()` (the unified AI binding) or gateway provider endpoints with **Cloudflare Unified Billing**. There is no deployer BYOK inference path (the last one, `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs, was retired in v0.166.0 under prism#93). Opt-in web search retrieves from self-hosted SearXNG (`SEARXNG_URL`) plus keyless Wikipedia.
 
 ## Commands
 
@@ -33,7 +33,7 @@ Debugging a deployed worker: `npx wrangler tail`. Inspecting a stuck long-runnin
 Everything lives in one Worker `fetch` handler in `src/index.ts`. Pure/reusable logic is extracted into modules so `index.ts` is the orchestrator:
 
 - `src/models.ts` — **the model catalog**, single source of truth. Each entry's `id` is the routing key; `type` (`chat`|`image`|`tts`|`video`|`stt`|`music`|`voice`) picks the dispatcher, `provider` (default `workers-ai`) picks the code path, `capabilities`/`streaming` drive the UI. Adding an entry here flows automatically to `GET /api/models` and the frontend picker.
-- `src/providers/*.ts` — per-provider dispatch helpers (`callAnthropic`, `callXai`, `callGemini`, `callWorkersAIStream`, `callOpenAIStream`, `openai-image`). Anthropic, xAI, and Gemini hit AI Gateway provider endpoints with keyless Unified Billing auth (`cf-aig-authorization`). OpenAI chat and Workers AI use `env.AI.run`. `openai-image.ts` is the sole BYOK path (direct `api.openai.com` when `OPENAI_API_KEY` is set).
+- `src/providers/*.ts` -- per-provider dispatch helpers (`callAnthropic`, `callXai`, `callGemini`, `callWorkersAIStream`, `callOpenAIStream`). Anthropic, xAI, and Gemini hit AI Gateway provider endpoints with keyless Unified Billing auth (`cf-aig-authorization`). OpenAI chat and Workers AI use `env.AI.run`. Proxied image models (google/openai/recraft) go through `env.AI.run` on Unified Billing too; there is no BYOK path (the `openai-image.ts` direct call was retired in v0.166.0, prism#93).
 - `src/parsers/*.ts` — streaming adapters, one per wire format (Anthropic native SSE, OpenAI-compatible SSE for xAI/OpenAI, Workers AI SSE, Gemini SSE), all normalized to a common `ProviderStreamEvent` envelope (`parsers/types.ts`). `sse-framer.ts` is the shared line framer. **These are the bulk of the unit tests.**
 - `src/ai-binding.ts` — `aiRun()` wraps `env.AI.run` with the gateway opt; `aiLogId()` reads the AI Gateway log ID after a call.
 - `src/output-extract.ts` — normalizes wildly different provider response shapes into output text/usage; `detectProviderFailure`, `extractProxiedImageUrl`.
@@ -86,9 +86,8 @@ Also: `[observability] enabled = true` (dashboard log tailing). `compatibility_d
 |---|---|---|
 | `GATEWAY_ID` | Yes (private install) / No (public demo) | AI Gateway slug passed to every `env.AI.run` call. In public demo mode (v0.164.0+), omit on the worker; users set their own slug via `/api/prefs`. |
 | `CF_AIG_TOKEN` | Yes for paid third-party models (private) / per-user (public demo) | Unified Billing auth for Anthropic, xAI, OpenAI chat, Google, and proxied image/video/music. Bearer token sent as `cf-aig-authorization`. Users can store their own token in D1 `user_prefs`. |
-| `OPENAI_API_KEY` | Optional | v0.22.1; **image only** — direct call for `gpt-image-1.5` transparent PNG. Without it, that model falls back to opaque via Unified Billing. OpenAI chat does NOT use it. **This is the only deployer BYOK secret.** |
-| `TAVILY_API_KEY` | Optional | v0.17.0; Tavily web-search retrieval. Silently skipped when unset. |
-| `BRAVE_API_KEY` | Optional | v0.164.0; Brave Search web-search retrieval. Silently skipped when unset. |
+| `SEARXNG_URL` | Optional | v0.166.0; base URL of a self-hosted SearXNG instance for opt-in web search (our deploy: `https://search.skyphusion.org`). May be a `[vars]` entry or a secret. Silently skipped when unset; Wikipedia still runs keyless. |
+| `SEARXNG_ACCESS_CLIENT_ID` / `SEARXNG_ACCESS_CLIENT_SECRET` | Optional | v0.166.0; Cloudflare Access service-token halves for a gated SearXNG instance. Sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret` only when both are set (leave unset for an un-gated instance). |
 
 ## Routes reference
 
@@ -124,7 +123,7 @@ All matched in the single `fetch` handler in `src/index.ts` (see the one-line po
 - **No em-dashes (U+2014) or en-dashes (U+2013) anywhere in source.** Use commas, semicolons, or parentheses.
 - **No build step, no framework, no CSS preprocessor.** Vanilla JS/HTML/CSS frontend is deliberate; framework-migration PRs are rejected.
 - **Minimal runtime deps.** Only `unpdf` (PDF RAG) and `xlsx` (spreadsheet RAG). New runtime deps need justification.
-- **Prefer Unified Billing over BYOK** for new providers (no extra deployer key, native AI Gateway, less code). Add deployer BYOK only when Unified Billing lacks a capability the playground needs. The current example is `OPENAI_API_KEY` for transparent PNG on `gpt-image-1.5`.
+- **Unified Billing only, no BYOK** (prism#93, 2026-07-18): new inference paths must be reachable through Cloudflare Workers AI / AI Gateway (Unified Billing). The former `OPENAI_API_KEY` transparent-PNG BYOK exception was retired in v0.166.0; `gpt-image-*` now render opaque through the proxy.
 - **`wrangler.toml` is gitignored.** All config/binding changes go in `wrangler.example.toml` (the committed template); document new bindings as a copy-paste TOML block in the CHANGELOG entry so existing deployers can apply them by hand.
 - After adding a binding, mirror it in the hand-authored `Env` interface (`src/env.ts`). Runtime types come from the pinned `@cloudflare/workers-types` devDep + `src/env.ts`; do not generate `worker-configuration.d.ts` (it is unreferenced here and gitignored).
 - Adding a Workers AI model: verify the model ID and response shape against `developers.cloudflare.com/workers-ai/models/`.

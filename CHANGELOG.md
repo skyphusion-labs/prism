@@ -1,5 +1,59 @@
 # Changelog
 
+## v0.166.0
+
+feat(search): self-hosted SearXNG web search; retire Tavily/Brave and the OpenAI transparent-PNG BYOK path (v0.166.0)
+
+Executes prism#93 (Conrad's unified-infra ruling, 2026-07-18): prism stays on the Cloudflare Workers AI /
+AI Gateway (Unified Billing) plane, so the two remaining one-off provider paths are removed.
+
+Web search now retrieves from a self-hosted **SearXNG** instance (our deploy: `https://search.skyphusion.org`,
+a fleet service behind Cloudflare Access, fleet-chezmoi#795) alongside the keyless Wikipedia source,
+preserving the retrieve-then-feed-context pattern for every model. The SearXNG source is queried via its
+JSON API (`GET {SEARXNG_URL}/search?q=...&format=json`) and is silently skipped when `SEARXNG_URL` is unset,
+exactly as Tavily/Brave were. When the instance is gated by Cloudflare Access, the worker sends a service
+token as `CF-Access-Client-Id` / `CF-Access-Client-Secret` (only when both halves are set, so a self-hoster
+may run an un-gated instance). The retired **Tavily** and **Brave** SaaS retrievers and their
+`TAVILY_API_KEY` / `BRAVE_API_KEY` secrets are gone.
+
+The last deployer BYOK path is also retired: `src/providers/openai-image.ts` (the direct `api.openai.com`
+call that produced transparent PNGs for `gpt-image-1.5`) is deleted, the `runImage` BYOK split is removed,
+and `OPENAI_API_KEY` is dropped. `gpt-image-1.5` / `gpt-image-2` now render **opaque** through the Unified
+Billing proxy like every other proxied image model. There is no deployer BYOK path left in the playground.
+
+### Code
+- `src/searxng.ts` (new): SearXNG JSON retriever; pure `mapSearxngResults` parser + `searchSearxngWeb` fetch (Access headers sent only when both halves are set)
+- `src/brave-search.ts` (deleted): Brave retriever retired
+- `src/providers/openai-image.ts` (deleted): OpenAI transparent-PNG BYOK path retired
+- `src/index.ts`: `searchWeb` now runs SearXNG + Wikipedia (was Tavily + Brave + Wikipedia); `searchSearxng` replaces `searchBrave`/`searchTavily`; `RetrievedWebResult.source` is `"searxng" | "wikipedia"`; `webSourceSystemLabel` updated; `runImage` BYOK split removed (`needsProxiedGateway = !!model.provider`); `SEARXNG_MAX_RESULTS` replaces `TAVILY_MAX_RESULTS`/`BRAVE_MAX_RESULTS`
+- `src/env.ts`: drop `OPENAI_API_KEY` / `TAVILY_API_KEY` / `BRAVE_API_KEY`; add `SEARXNG_URL` / `SEARXNG_ACCESS_CLIENT_ID` / `SEARXNG_ACCESS_CLIENT_SECRET` (all optional)
+- `src/models.ts`: `gpt-image-1.5` label + comments now opaque-only
+- `src/proxied-image-params.ts`: comments now opaque-only (BYOK transparent path retired)
+- `public/app.js`: retrieved-chunk source label renders `searxng` -> "web"; drop tavily/brave branches
+- `tests/searxng.test.ts` (new): 4 pure-function tests for `mapSearxngResults`
+- `tests/brave-search.test.ts` (deleted)
+- `wrangler.example.toml`, `README.md`, `CLAUDE.md`, `CONTRIBUTING.md`: secrets tables + web-search + image-gen docs updated for SearXNG and the BYOK retirement
+- `package.json`: 0.165.1 -> 0.166.0
+
+**Existing deployers, apply by hand.** Delete the retired worker secrets and set the new ones:
+
+```
+# retire
+npx wrangler secret delete OPENAI_API_KEY
+npx wrangler secret delete TAVILY_API_KEY
+npx wrangler secret delete BRAVE_API_KEY
+
+# add (SEARXNG_URL may instead be a [vars] entry; the two Access secrets are
+# only needed when the SearXNG instance is behind Cloudflare Access)
+npx wrangler secret put SEARXNG_URL
+npx wrangler secret put SEARXNG_ACCESS_CLIENT_ID
+npx wrangler secret put SEARXNG_ACCESS_CLIENT_SECRET
+```
+
+No schema or binding changes. `gpt-image-1.5` keeps working (opaque) with no key.
+
+typecheck green; vitest green (187 tests: 170 node + 17 workers).
+
 ## v0.165.1
 
 test(harness): Workers-runtime integration suite (pool-workers) for routing, auth, ownership (v0.165.1)

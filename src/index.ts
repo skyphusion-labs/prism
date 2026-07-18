@@ -36,8 +36,7 @@ import { callOpenAIStream } from "./providers/openai";
 import { callGemini, callGeminiStream } from "./providers/google";
 import { buildGenParams } from "./longrun-params";
 import { buildProxiedImageParams } from "./proxied-image-params";
-import { searchBraveWeb } from "./brave-search";
-import { generateOpenAIImage } from "./providers/openai-image";
+import { searchSearxngWeb } from "./searxng";
 import type {
   InputImageAttachment,
   InputAudioAttachment,
@@ -104,7 +103,7 @@ interface ChatRequest {
   image_url?: string;   // v0.21.5: source image for image-to-video models (hh1-i2v); a fetchable URL
   image_key?: string;   // v0.21.6: source image as an R2 key (e.g. a prior nano-banana output) for image-to-video chaining
   use_docs?: boolean;   // Pass 2: when true, retrieve top-K chunks from Vectorize and inject as context
-  use_web_search?: boolean;  // v0.17.0: when true, query Tavily + Brave + Wikipedia and inject snippets as context
+  use_web_search?: boolean;  // v0.17.0: when true, query SearXNG + Wikipedia and inject snippets as context
   conversation_id?: string;  // Multi-turn: when present, continue an existing conversation
   project_id?: number;  // v0.20.0: when present, scope RAG retrieval to the project's docs
                         // and apply the project's system_prompt as default if system_prompt is empty
@@ -127,11 +126,11 @@ interface RetrievedChunk {
 // retrieved_context column. The frontend renders branches on source_type.
 interface RetrievedWebResult {
   source_type: "web";
-  source: "tavily" | "brave" | "wikipedia";
+  source: "searxng" | "wikipedia";
   url: string;
   title: string;
   snippet: string;          // already HTML-stripped
-  score?: number;           // Tavily provides a relevance score; Wikipedia does not
+  score?: number;           // kept for back-compat with pre-v0.166.0 rows (Tavily scores); unset now
 }
 
 type RetrievedItem = RetrievedChunk | RetrievedWebResult;
@@ -843,7 +842,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
 async function runImage(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
   const userEmail = getUserEmail(request);
   let aiCtx: AiContext | null = null;
-  const needsProxiedGateway = !!model.provider && !(model.provider === "openai" && env.OPENAI_API_KEY);
+  const needsProxiedGateway = !!model.provider;
   if (needsProxiedGateway) {
     const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: true });
     if (ctxOrErr instanceof Response) return ctxOrErr;
@@ -864,24 +863,17 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
   const start = Date.now();
   try {
     if (model.provider) {
-      if (model.provider === "openai" && env.OPENAI_API_KEY) {
-        // BYOK direct: the only path that yields a transparent PNG (the proxy
-        // rejects background/output_format). Returns base64, decoded in the
-        // helper; no gateway log id since this bypasses the AI Gateway.
-        ({ bytes, mime } = await generateOpenAIImage(env.OPENAI_API_KEY, model.id, body.user_input));
-        logId = null;
-      } else {
       // Proxied image (Unified Billing via the gateway): nano-banana (google),
-      // recraftv4 (recraft, opaque), and gpt-image-1.5 (openai) ONLY as the
-      // opaque fallback when no OPENAI_API_KEY is set (the transparent path is
-      // the BYOK branch above).
+      // recraftv4 (recraft), and gpt-image-1.5 / gpt-image-2 (openai). All are
+      // opaque; v0.166.0 retired the OPENAI_API_KEY BYOK transparent-PNG path
+      // (prism#93), so gpt-image-* now ride the proxy like the others.
       // The @cf models carry no `provider`, so this branch is exactly the
       // proxied set. Per-provider request shape comes from buildProxiedImageParams
       // because each upstream schema is additionalProperties:false and rejects
       // the @cf { width, height, steps, negative_prompt } shape; system_prompt
       // has no negative_prompt slot on any of them and is ignored.
       //
-      // All three return a URL (not base64) in the { state, result } envelope:
+      // They return a URL (not base64) in the { state, result } envelope:
       //   { state: "Completed", result: { image: "<url>" } }
       // so we fetch the URL and store the bytes, like the video path does. mime
       // comes from the response content-type (recraftv4 returns webp, the
@@ -905,7 +897,6 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
       }
       bytes = new Uint8Array(await aresp.arrayBuffer());
       mime = aresp.headers.get("content-type") || "image/png";
-      }
     } else {
     // Two Cloudflare-side complications for Workers AI image gen as of
     // 2026-Q1, both manifesting as either:
@@ -2296,10 +2287,10 @@ function mimeFromName(name: string): string {
 }
 
 // v0.17.0: web-search retrieval limits and timeouts. Each upstream is
-// time-bounded per source so a slow Tavily doesn't block Brave or Wikipedia.
+// time-bounded per source so a slow SearXNG doesn't block Wikipedia.
 // Counts kept small to bound context-token spend when the toggle is on.
-const TAVILY_MAX_RESULTS    = 5;
-const BRAVE_MAX_RESULTS     = 5;
+// v0.166.0: SearXNG replaced the retired Tavily + Brave SaaS sources.
+const SEARXNG_MAX_RESULTS   = 5;
 const WIKIPEDIA_MAX_RESULTS = 3;
 const WEB_SEARCH_TIMEOUT_MS = 8000;
 
@@ -2636,13 +2627,14 @@ function formatRetrievalForSystemPrompt(chunks: RetrievedChunk[]): string {
 
 // ---------- Web search (v0.17.0) ----------
 //
-// Optional retrieval source: Tavily and Brave for general web, Wikipedia for
-// lore / reference. All three run in parallel; failure of one doesn't kill
-// the others. Per-source timeouts (WEB_SEARCH_TIMEOUT_MS) prevent a slow
+// Optional retrieval source: SearXNG (self-hosted metasearch) for general web,
+// Wikipedia for lore / reference. Both run in parallel; failure of one doesn't
+// kill the other. Per-source timeouts (WEB_SEARCH_TIMEOUT_MS) prevent a slow
 // upstream from blocking the whole turn.
 //
-// Tavily requires TAVILY_API_KEY; Brave requires BRAVE_API_KEY. When either
-// key is unset, that source is silently skipped. Wikipedia needs no key.
+// SearXNG requires SEARXNG_URL; when unset, that source is silently skipped.
+// Wikipedia needs no config. (v0.166.0: SearXNG replaced the retired Tavily +
+// Brave SaaS sources; see prism#93.)
 //
 // Results are persisted to the existing retrieved_context column alongside
 // RAG chunks, with source_type discriminator. The frontend renders branches
@@ -2656,71 +2648,37 @@ async function searchWeb(
   if (!q) return { results: [], error: null };
 
   // Each upstream is wrapped in its own timeout + catch so a single failure
-  // doesn't abort the others. Partial results are better than nothing.
-  const tavilyPromise: Promise<RetrievedWebResult[]> = env.TAVILY_API_KEY
-    ? searchTavily(env.TAVILY_API_KEY, q).catch(() => [])
-    : Promise.resolve([]);
-  const bravePromise: Promise<RetrievedWebResult[]> = env.BRAVE_API_KEY
-    ? searchBrave(env.BRAVE_API_KEY, q).catch(() => [])
+  // doesn't abort the other. Partial results are better than nothing.
+  const searxngPromise: Promise<RetrievedWebResult[]> = env.SEARXNG_URL
+    ? searchSearxng(env, q).catch(() => [])
     : Promise.resolve([]);
   const wikipediaPromise: Promise<RetrievedWebResult[]> = searchWikipedia(q).catch(() => []);
 
-  const [tavily, brave, wikipedia] = await Promise.all([tavilyPromise, bravePromise, wikipediaPromise]);
-  const results = [...tavily, ...brave, ...wikipedia];
+  const [searxng, wikipedia] = await Promise.all([searxngPromise, wikipediaPromise]);
+  const results = [...searxng, ...wikipedia];
 
   // Empty results is fine; it just means the query didn't match anything in
   // any source. Real per-source failures are swallowed by the .catch above
-  // so the other sources can still return their hits.
+  // so the other source can still return its hits.
   return { results, error: null };
 }
 
-async function searchBrave(apiKey: string, query: string): Promise<RetrievedWebResult[]> {
-  const hits = await searchBraveWeb(apiKey, query, {
-    maxResults: BRAVE_MAX_RESULTS,
+async function searchSearxng(env: Env, query: string): Promise<RetrievedWebResult[]> {
+  // Access service-token headers are sent only when both halves are set, so an
+  // un-gated self-hosted instance is reached with no headers.
+  const hits = await searchSearxngWeb(env.SEARXNG_URL!, query, {
+    maxResults: SEARXNG_MAX_RESULTS,
     timeoutMs: WEB_SEARCH_TIMEOUT_MS,
+    accessClientId: env.SEARXNG_ACCESS_CLIENT_ID,
+    accessClientSecret: env.SEARXNG_ACCESS_CLIENT_SECRET,
   });
   return hits.map((r): RetrievedWebResult => ({
     source_type: "web",
-    source: "brave",
+    source: "searxng",
     url: r.url,
     title: r.title,
     snippet: r.snippet,
   }));
-}
-
-async function searchTavily(apiKey: string, query: string): Promise<RetrievedWebResult[]> {
-  const body = {
-    api_key: apiKey,
-    query,
-    search_depth: "basic",
-    include_answer: false,           // we want raw snippets, not Tavily's pre-summary
-    include_raw_content: false,      // snippets only; full pages blow up token budget
-    max_results: TAVILY_MAX_RESULTS,
-  };
-
-  const resp = await fetch("https://api.tavily.com/search", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(WEB_SEARCH_TIMEOUT_MS),
-  });
-  if (!resp.ok) {
-    throw new Error(`Tavily ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
-  }
-  const data = await resp.json() as {
-    results?: Array<{ title?: string; url?: string; content?: string; score?: number }>;
-  };
-  const items = data.results ?? [];
-  return items
-    .filter((r) => r.url && r.title)
-    .map((r): RetrievedWebResult => ({
-      source_type: "web",
-      source: "tavily",
-      url: r.url!,
-      title: r.title!,
-      snippet: (r.content ?? "").trim(),
-      score: typeof r.score === "number" ? r.score : undefined,
-    }));
 }
 
 async function searchWikipedia(query: string): Promise<RetrievedWebResult[]> {
@@ -2791,8 +2749,7 @@ function stripWikipediaSnippet(html: string): string {
 
 function webSourceSystemLabel(source: RetrievedWebResult["source"]): string {
   switch (source) {
-    case "tavily": return "Web";
-    case "brave": return "Brave";
+    case "searxng": return "Web";
     case "wikipedia": return "Wikipedia";
   }
 }

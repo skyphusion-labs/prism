@@ -129,10 +129,11 @@ enabled = true
 #                 image/video/music on Unified Billing when using worker-level
 #                 credentials; optional in public demo mode where users supply
 #                 their own token via /api/prefs; v0.93.0+),
-#   OPENAI_API_KEY (optional, v0.22.1; ONLY for openai/gpt-image-1.5 transparent
-#                   image output via a direct OpenAI call. Without it that model
-#                   falls back to opaque via Unified Billing. OpenAI chat does
-#                   NOT use this; it rides Unified Billing. This is the only
-#                   deployer BYOK secret.),
-#   TAVILY_API_KEY (optional, v0.17.0; Tavily web-search source. Skipped when unset),
-#   BRAVE_API_KEY (optional, v0.164.0; Brave Search web-search source. Skipped when unset).
+#   SEARXNG_URL (optional, v0.166.0; base URL of a self-hosted SearXNG instance
+#                for the opt-in web-search source, e.g. https://search.skyphusion.org.
+#                May be a plain [vars] entry instead of a secret. Skipped when
+#                unset; Wikipedia still runs keyless),
+#   SEARXNG_ACCESS_CLIENT_ID / SEARXNG_ACCESS_CLIENT_SECRET (optional, v0.166.0;
+#                Cloudflare Access service-token halves for a gated SearXNG
+#                instance. Sent as CF-Access-Client-Id / CF-Access-Client-Secret
+#                only when BOTH are set; leave unset for an un-gated instance).

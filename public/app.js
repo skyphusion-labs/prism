@@ -848,8 +848,7 @@ function renderRetrievedChunksHTML(chunks) {
       if (c.source_type === "web") {
         const score = (typeof c.score === "number") ? ` \u00b7 score ${c.score.toFixed(3)}` : "";
         const sourceLabel =
-          c.source === "tavily" ? "tavily" :
-          c.source === "brave" ? "brave" :
+          c.source === "searxng" ? "web" :
           c.source === "wikipedia" ? "wikipedia" : "web";
         return `
         <details class="retrieved-chunk retrieved-web">
@@ -1326,7 +1325,7 @@ async function run() {
     if (m.type === "chat" && useDocsCheckbox.checked && state.documentCount > 0) {
       requestBody.use_docs = true;
     }
-    // v0.17.0: web search. Chat models only; Tavily + Brave + Wikipedia when toggled.
+    // v0.17.0: web search. Chat models only; SearXNG + Wikipedia when toggled (v0.166.0).
     if (m.type === "chat" && useWebSearchCheckbox.checked) {
       requestBody.use_web_search = true;
     }
