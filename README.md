@@ -849,7 +849,7 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## License
 
-[AGPL-3.0-only](LICENSE). If you run this as a network service for users, you must offer them the source code under the same license.
+[AGPL-3.0-only](LICENSE). If you run this as a network service for users, AGPL-3.0 section 13 requires you to offer them the Corresponding Source of your running instance under the same license. The hosted instance at play.skyphusion.org satisfies this with a **Source code** link to this repository in the in-app account menu; if you run your own public instance, do the same (a visible in-app link to your source, plus this repository).
 
 ## Acknowledgements
 
