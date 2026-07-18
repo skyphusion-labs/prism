@@ -16,6 +16,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./env";
 import { buildTranscript, sanitizeCloseCode } from "./stt-util";
+import { resolveIdentity } from "./auth";
 
 export const FLUX_STT_MODEL = "@cf/deepgram/flux";
 
@@ -40,7 +41,10 @@ export class SttSession extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
-    const userEmail = request.headers.get("cf-access-authenticated-user-email") ?? "anonymous";
+    // Identity read site #2 (WebSocket), in lockstep with getUserEmail in
+    // src/index.ts. The session cookie rides the same-origin WS upgrade, so
+    // resolveIdentity derives the owner the same way as every HTTP route.
+    const userEmail = (await resolveIdentity(request, this.env)) ?? "anonymous";
     this.ctx.storage.sql.exec(
       `INSERT OR REPLACE INTO meta (k, v) VALUES ('user', ?), ('model', ?), ('started_at', ?)`,
       userEmail,

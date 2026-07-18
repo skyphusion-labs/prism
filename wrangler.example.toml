@@ -113,6 +113,18 @@ tag = "v6"
 [observability]
 enabled = true
 
+# Deployment auth plane (v0.167.0, issue #80). A plain var, not a secret.
+#   AUTH_MODE = "public"  -> first-party username/password accounts + session
+#     cookies; identity is the opaque account id; per-user AI Gateway credentials
+#     ONLY (worker GATEWAY_ID / CF_AIG_TOKEN are ignored so visitor inference
+#     never bills the host). Do NOT set GATEWAY_ID / CF_AIG_TOKEN on a public
+#     worker. No Cloudflare Access needed.
+#   unset or "access"     -> Cloudflare Access in front, identity from the
+#     Cf-Access-Authenticated-User-Email header (private self-host). Worker-secret
+#     gateway fallback stays available. This is the default (back-compat).
+# [vars]
+# AUTH_MODE = "public"
+
 # Note: GATEWAY_ID is set as a worker secret rather than a var in this file
 # (v0.12.0+). This keeps deployer-specific values out of the committed template.
 # Set it once after first deploy:

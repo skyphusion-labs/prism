@@ -24,6 +24,15 @@ import {
   maskSecret,
 } from "./gateway-credentials";
 import { loadUserPrefs, saveUserPrefs } from "./user-prefs";
+import {
+  resolveIdentity,
+  authMode,
+  handleSession,
+  handleSignup,
+  handleLogin,
+  handleLogout,
+  handleAccountDelete,
+} from "./auth";
 import { probeD1Schema } from "./health-schema";
 import { extractOutput, extractUsage, detectProviderFailure, extractProxiedImageUrl } from "./output-extract";
 import { chunkText } from "./chunking";
@@ -190,8 +199,15 @@ function json(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), { ...init, headers });
 }
 
-function getUserEmail(request: Request): string {
-  return request.headers.get("cf-access-authenticated-user-email") ?? "anonymous";
+// Identity read site #1 (HTTP). Delegates to resolveIdentity so access-mode and
+// public-mode derivation stay in one place. In access mode this is never null.
+// In public mode the router gate rejects unauthenticated /api/* with 401 before
+// any handler runs, so a null here is an unreachable, fail-closed error rather
+// than a silent anonymous cross-attribution.
+async function getUserEmail(request: Request, env: Env): Promise<string> {
+  const id = await resolveIdentity(request, env);
+  if (id === null) throw new Error("unauthenticated request reached an owned handler");
+  return id;
 }
 
 function modelNeedsCfAigToken(model: ModelEntry): boolean {
@@ -205,16 +221,16 @@ async function requireAiContext(
 ): Promise<AiContext | Response> {
   const gateway = await loadGatewayCredentials(env, userEmail);
   if (!gateway?.gatewayId) {
-    return json({ error: GATEWAY_NOT_CONFIGURED_MSG }, { status: 412 });
+    return json({ error: GATEWAY_NOT_CONFIGURED_MSG, code: "gateway_not_configured" }, { status: 412 });
   }
   if (opts?.requireCfToken && !gateway.cfAigToken) {
-    return json({ error: CF_AIG_TOKEN_REQUIRED_MSG }, { status: 412 });
+    return json({ error: CF_AIG_TOKEN_REQUIRED_MSG, code: "cf_aig_token_required" }, { status: 412 });
   }
   return { env, gateway };
 }
 
 async function handlePrefsGet(request: Request, env: Env): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const prefs = await loadUserPrefs(env.DB, userEmail);
   const status = await loadGatewayStatus(env, userEmail);
   return json({
@@ -227,7 +243,7 @@ async function handlePrefsGet(request: Request, env: Env): Promise<Response> {
 }
 
 async function handlePrefsPatch(request: Request, env: Env): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   let body: { gateway_id?: string; cf_aig_token?: string; clear_cf_aig_token?: boolean };
   try {
     body = await request.json();
@@ -323,8 +339,43 @@ export default {
       return handleHealthDeep(env);
     }
 
+    // ---- Auth plane (v0.167.0, issue #80) ----
+    // Boot gate: the SPA calls GET /api/session first to decide app vs signup.
+    // Unauthenticated in both modes; in access mode authenticated is always true
+    // so a private deploy never shows the signup screen.
+    if (url.pathname === "/api/session" && request.method === "GET") {
+      return handleSession(request, env);
+    }
+    // Signup/login/logout are the only /api/* routes reachable without a session
+    // in public mode; they are disabled (403) in access mode.
+    if (url.pathname === "/api/auth/signup" && request.method === "POST") {
+      return handleSignup(request, env);
+    }
+    if (url.pathname === "/api/auth/login" && request.method === "POST") {
+      return handleLogin(request, env);
+    }
+    if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+      return handleLogout(request, env);
+    }
+
+    // Public-mode gate: every other /api/* route requires a valid session.
+    // Uniform 401 { error: "auth_required" } so the frontend routes the user to
+    // the login screen. Access mode skips this (Access gates upstream).
+    if (
+      authMode(env) === "public" &&
+      url.pathname.startsWith("/api/") &&
+      (await resolveIdentity(request, env)) === null
+    ) {
+      return json({ error: "auth_required" }, { status: 401 });
+    }
+
+    // Session-authed account deletion (password re-entry enforced in handler).
+    if (url.pathname === "/api/account" && request.method === "DELETE") {
+      return handleAccountDelete(request, env);
+    }
+
     if (url.pathname === "/api/models" && request.method === "GET") {
-      const userEmail = getUserEmail(request);
+      const userEmail = await getUserEmail(request, env);
       const gateway = await loadGatewayStatus(env, userEmail);
       return json({ models: MODELS, user: userEmail, gateway });
     }
@@ -463,7 +514,7 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Pr
   // key instead of inline data) before routing, so every handler sees ready
   // attachments. v0.21.7: cross-model artifact reuse within a conversation.
   if (body.attachments?.length) {
-    body.attachments = await resolveAttachmentKeys(env, body.attachments, getUserEmail(request));
+    body.attachments = await resolveAttachmentKeys(env, body.attachments, await getUserEmail(request, env));
   }
 
   if (model.type === "chat") return runChat(request, env, model, body);
@@ -534,7 +585,7 @@ async function handleChatStream(request: Request, env: Env, ctx: ExecutionContex
 // ---------- Chat (text generation, multimodal in) ----------
 
 async function runChat(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: modelNeedsCfAigToken(model) });
   if (ctxOrErr instanceof Response) return ctxOrErr;
   const aiCtx = ctxOrErr;
@@ -840,7 +891,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
 // ---------- Image generation ----------
 
 async function runImage(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   let aiCtx: AiContext | null = null;
   const needsProxiedGateway = !!model.provider;
   if (needsProxiedGateway) {
@@ -1086,7 +1137,7 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
 // two Aura-2 catalog entries.
 const TTS_VOICES = new Set(["@cf/deepgram/aura-2-en", "@cf/deepgram/aura-2-es"]);
 async function handleTtsSpeak(request: Request, env: Env): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: false });
   if (ctxOrErr instanceof Response) return ctxOrErr;
   const aiCtx = ctxOrErr;
@@ -1114,7 +1165,7 @@ async function handleTtsSpeak(request: Request, env: Env): Promise<Response> {
 }
 
 async function runTts(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: false });
   if (ctxOrErr instanceof Response) return ctxOrErr;
   const aiCtx = ctxOrErr;
@@ -1202,7 +1253,7 @@ function extractDeepgramTranscript(result: unknown): string {
 }
 
 async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: false });
   if (ctxOrErr instanceof Response) return ctxOrErr;
   const aiCtx = ctxOrErr;
@@ -1302,7 +1353,7 @@ async function runMusic(
   // ctx unused now that we no longer schedule a waitUntil task; the workflow
   // owns the long-running work. Kept in signature for router compatibility.
   void ctx;
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: modelNeedsCfAigToken(model) });
   if (ctxOrErr instanceof Response) return ctxOrErr;
   void ctxOrErr; // credentials validated; workflow loads them from D1 by userEmail
@@ -1491,7 +1542,7 @@ async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; crea
 // bounded and easier to read than a parameterized abstraction.
 
 async function runChatStream(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: modelNeedsCfAigToken(model) });
   if (ctxOrErr instanceof Response) return ctxOrErr;
   const aiCtx = ctxOrErr;
@@ -1795,7 +1846,7 @@ async function runVideo(
   body: ChatRequest
 ): Promise<Response> {
   void ctx;
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: modelNeedsCfAigToken(model) });
   if (ctxOrErr instanceof Response) return ctxOrErr;
   void ctxOrErr; // credentials validated; workflow loads them from D1 by userEmail
@@ -1897,7 +1948,7 @@ async function runVideo(
 // by LongRunWorkflow instances, which update the row when they finish.
 
 async function handleJobPoll(request: Request, env: Env, id: number): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
 
   const row = await env.DB.prepare(
     `SELECT id, status, job_error, job_started_at, output_artifact, latency_ms,
@@ -1946,7 +1997,7 @@ async function handleJobPoll(request: Request, env: Env, id: number): Promise<Re
 // ---------- History ----------
 
 async function handleHistoryList(request: Request, env: Env): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const url = new URL(request.url);
   const limit = Math.min(Number(url.searchParams.get("limit") ?? 50), 200);
 
@@ -1967,7 +2018,7 @@ async function handleHistoryList(request: Request, env: Env): Promise<Response> 
 }
 
 async function handleHistoryGet(request: Request, env: Env, id: number): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const row = await env.DB.prepare(
     `SELECT * FROM chats WHERE id = ? AND user_email = ?`
   )
@@ -2004,7 +2055,7 @@ function safeParseJson<T>(s: string): T | null {
 // Used when the user clicks a conversation to view the full transcript.
 
 async function handleConversationList(request: Request, env: Env): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
 
   // Group by conversation_id. For each, give:
   //   - turn_count, first/last timestamps
@@ -2058,7 +2109,7 @@ async function handleConversationList(request: Request, env: Env): Promise<Respo
 }
 
 async function handleConversationGet(request: Request, env: Env, id: string): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const rows = await env.DB.prepare(
     `SELECT * FROM chats
       WHERE conversation_id = ? AND user_email = ?
@@ -2087,7 +2138,7 @@ async function handleConversationGet(request: Request, env: Env, id: string): Pr
 }
 
 async function handleConversationDelete(request: Request, env: Env, id: string): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
 
   // Pull all R2 keys across all turns before deleting D1 rows.
   const rows = await env.DB.prepare(
@@ -2132,7 +2183,7 @@ async function handleConversationDelete(request: Request, env: Env, id: string):
 }
 
 async function handleHistoryDelete(request: Request, env: Env, id: number): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
 
   // Pull keys first so we can clean up R2.
   const row = await env.DB.prepare(
@@ -2187,7 +2238,7 @@ async function handleConversationMoveToProject(
   env: Env,
   conversationId: string,
 ): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
 
   let body: { project_id?: number | null };
   try {
@@ -2773,7 +2824,7 @@ function formatWebForSystemPrompt(results: RetrievedWebResult[]): string {
 }
 
 async function handleDocumentList(request: Request, env: Env): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const url = new URL(request.url);
   const projectIdParam = url.searchParams.get("project_id");
 
@@ -2835,7 +2886,7 @@ async function handleDocumentList(request: Request, env: Env): Promise<Response>
 }
 
 async function handleDocumentGet(request: Request, env: Env, id: number): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const doc = await env.DB.prepare(
     `SELECT id, created_at, filename, mime, size_bytes, total_chars, chunk_count
        FROM documents
@@ -3020,7 +3071,7 @@ async function handleZipImport(env: Env, userEmail: string, zipBytes: Uint8Array
 // records userEmail in its output), so a guessed instance id can't read another
 // user's result.
 async function handleImportStatus(request: Request, env: Env, id: string): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   let status: { status: string; output?: unknown; error?: unknown };
   try {
     const instance = await env.LONGRUN.get(id);
@@ -3053,7 +3104,7 @@ async function handleImportStatus(request: Request, env: Env, id: string): Promi
 }
 
 async function handleDocumentUpload(request: Request, env: Env): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
 
   // Accept JSON { filename, mime, data: base64 } - matches the existing
   // attachment-upload convention used by the chat path.
@@ -3104,7 +3155,7 @@ async function handleDocumentUpload(request: Request, env: Env): Promise<Respons
 }
 
 async function handleDocumentDelete(request: Request, env: Env, id: number): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
 
   const doc = await env.DB.prepare(
     `SELECT r2_key FROM documents WHERE id = ? AND user_email = ?`
@@ -3256,7 +3307,7 @@ async function resolveProjectForChat(
 }
 
 async function handleProjectList(request: Request, env: Env): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   // LEFT JOIN to count document memberships per project. COUNT(pd.document_id)
   // returns 0 for projects with no members (because of LEFT JOIN), rather
   // than 1 which COUNT(*) would return.
@@ -3280,7 +3331,7 @@ async function handleProjectList(request: Request, env: Env): Promise<Response> 
 }
 
 async function handleProjectGet(request: Request, env: Env, id: number): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const proj = await env.DB.prepare(
     `SELECT id, name, slug, description, system_prompt, created_at, updated_at
        FROM projects WHERE id = ? AND user_email = ?`
@@ -3309,7 +3360,7 @@ async function handleProjectGet(request: Request, env: Env, id: number): Promise
 }
 
 async function handleProjectCreate(request: Request, env: Env): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   let body: { name?: string; description?: string; system_prompt?: string };
   try {
     body = await request.json();
@@ -3339,7 +3390,7 @@ async function handleProjectCreate(request: Request, env: Env): Promise<Response
 }
 
 async function handleProjectUpdate(request: Request, env: Env, id: number): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   // Confirm ownership before any write.
   const existing = await env.DB.prepare(
     `SELECT id FROM projects WHERE id = ? AND user_email = ?`
@@ -3404,7 +3455,7 @@ async function handleProjectUpdate(request: Request, env: Env, id: number): Prom
 }
 
 async function handleProjectDelete(request: Request, env: Env, id: number): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const existing = await env.DB.prepare(
     `SELECT id FROM projects WHERE id = ? AND user_email = ?`
   )
@@ -3426,7 +3477,7 @@ async function handleProjectDelete(request: Request, env: Env, id: number): Prom
 }
 
 async function handleProjectDocAdd(request: Request, env: Env, projectId: number, docId: number): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   // Confirm both project and document belong to the user. Cross-user
   // attachment is rejected here.
   const proj = await env.DB.prepare(
@@ -3455,7 +3506,7 @@ async function handleProjectDocAdd(request: Request, env: Env, projectId: number
 }
 
 async function handleProjectDocRemove(request: Request, env: Env, projectId: number, docId: number): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   const proj = await env.DB.prepare(
     `SELECT id FROM projects WHERE id = ? AND user_email = ?`
   )
@@ -3495,7 +3546,7 @@ async function handleProjectDocRemove(request: Request, env: Env, projectId: num
 // Consolidation is a candidate for a later cleanup release once integration
 // tests exist.
 async function handleDiscordImport(request: Request, env: Env, projectId: number): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
 
   const proj = await env.DB.prepare(
     `SELECT id FROM projects WHERE id = ? AND user_email = ?`
@@ -3692,7 +3743,7 @@ async function handleDiscordImport(request: Request, env: Env, projectId: number
 // ---------- Artifact serving ----------
 
 async function handleArtifact(request: Request, env: Env, key: string): Promise<Response> {
-  const userEmail = getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   // Artifacts (chat input + output) all live on env.R2.
   const bucket = env.R2;
   // v0.142.0: forward the request's conditional headers (If-None-Match) to R2.

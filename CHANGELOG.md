@@ -1,5 +1,86 @@
 # Changelog
 
+## v0.167.0
+
+feat(auth): public signup + mandatory BYOK, drop CF Access on public deploy (v0.167.0)
+
+Backend core of #80: turn the public Prism instance into a real public service. A new
+`AUTH_MODE` deploy switch selects between the existing Cloudflare Access path (private self-host,
+the default when unset) and a first-party username/password auth plane for the public product. In
+public mode visitors sign up with a username and password, identity comes from an httpOnly session
+cookie, and AI Gateway credentials are per-user only (fail closed) so visitor inference never bills
+the host.
+
+Why this shape:
+- **Identity in one place.** Derivation lives in a single `resolveIdentity()` that both read sites
+  call (`getUserEmail` in `src/index.ts` and the WebSocket read in `src/stt-session.ts`), so the two
+  can never drift. The resolved string is the ownership key written to every existing
+  `user_email`-keyed row and R2 `customMetadata`; in public mode it is the opaque `users.id`, in
+  access mode the Access email, in dev `anonymous`. No ownership column is renamed and no existing
+  row is migrated: only three new tables are added.
+- **Sessions.** Opaque 256-bit token in a `__Host-prism_session` cookie (Secure, HttpOnly,
+  SameSite=Lax, Path=/). D1 stores only `SHA-256(token)`, never the raw value, giving instant
+  server-side revocation (logout, account delete) with no JWT signing-key custody and no new runtime
+  dependency. The cookie rides the same-origin STT WebSocket upgrade automatically.
+- **Password KDF.** PBKDF2-HMAC-SHA-256 via WebCrypto, 600000 iterations (OWASP 2023 floor), stored
+  as a self-describing PHC string so the cost is per-user and upgradeable (e.g. to Argon2-WASM) with
+  no migration. scrypt/argon2 were rejected for the first cut because each needs a new runtime dep.
+- **Fail-closed billing.** In public mode gateway resolution ignores worker `GATEWAY_ID` /
+  `CF_AIG_TOKEN` entirely, so `source` is only ever `user` or `none`, never `worker`/`mixed`; a
+  mistakenly-present worker secret cannot bill the host. Prefs unset returns the existing 412, now
+  with a machine-readable `code` (`gateway_not_configured` / `cf_aig_token_required`) so the
+  frontend can route the user into the gateway modal.
+- **Boot + gate.** `GET /api/session` (unauthenticated, both modes) reports
+  `{ mode, authenticated, user? }` as the SPA boot gate; in access mode `authenticated` is always
+  true so the signup screen never shows on a private deploy. Every other `/api/*` in public mode
+  requires a session and otherwise returns a uniform `401 { error: "auth_required" }`.
+- **Rate limiting + deletion.** Signup/login are throttled by a D1 counter keyed on
+  `CF-Connecting-IP` (plus username for login). `DELETE /api/account` re-verifies the password, then
+  cascades every owned R2 object, Vectorize embedding, and D1 row before dropping the account (the
+  standing #82 requirement).
+
+Access remains fully supported for private self-host; the existing 186-test suite runs unchanged in
+the default access mode.
+
+New binding to apply (public deploy). Add to `wrangler.toml`:
+
+```toml
+[vars]
+AUTH_MODE = "public"
+```
+
+On a public deploy, do NOT set `GATEWAY_ID` / `CF_AIG_TOKEN` on the worker (they are ignored in
+public mode regardless). Private self-host: leave `AUTH_MODE` unset (or `"access"`) and keep
+Cloudflare Access in front as before.
+
+Schema (apply to an existing DB before deploying public mode):
+
+```bash
+npx wrangler d1 execute skyphusion-llm --remote --file=./migrate-v0.167.0.sql
+```
+
+### Code
+- `src/auth.ts` (new): `resolveIdentity` (single derivation), `authMode`, validation, and the
+  signup / login / logout / session / account-delete handlers plus the cascade.
+- `src/auth-kdf.ts` (new): PBKDF2 `hashPassword` / `verifyPassword`, PHC parse, constant-time compare.
+- `src/session.ts` (new): token gen, `SHA-256` hashing, cookie build/parse, D1 session CRUD.
+- `src/rate-limit.ts` (new): pure window decision + D1-backed `checkRateLimit`.
+- `src/env.ts`: add `AUTH_MODE?: string`.
+- `src/gateway-credentials.ts`: mode-aware fail-closed resolution (ignore worker secrets in public
+  mode).
+- `src/index.ts`: `getUserEmail` becomes async via `resolveIdentity`; new `/api/session`,
+  `/api/auth/signup|login|logout`, `DELETE /api/account` routes; public-mode 401 gate; `code` on the
+  412 gateway responses.
+- `src/stt-session.ts`: identity read site swapped to `resolveIdentity` (lockstep with `index.ts`).
+- `schema.sql`: append `users`, `sessions`, `auth_attempts`. `migrate-v0.167.0.sql` (new): the
+  standalone delta.
+- `wrangler.example.toml`: document the `AUTH_MODE` var.
+- Tests: `tests/auth-kdf.test.ts`, `tests/rate-limit.test.ts`, `tests/auth-unit.test.ts` (pure);
+  `tests-integration/auth.test.ts` (signup/login/logout/session/gate/fail-closed/account-delete/
+  rate-limit, public mode).
+- `package.json`: 0.165.1 -> 0.167.0.
+- `npm run typecheck` clean; `npm test` green (224 tests: 186 existing unchanged + 38 new).
+
 ## v0.166.0
 
 feat(search): self-hosted SearXNG web search; retire Tavily/Brave and the OpenAI transparent-PNG BYOK path (v0.166.0)

@@ -18,6 +18,13 @@ export interface Env {
   R2: R2Bucket;
   VEC: VectorizeIndex;
   ASSETS: Fetcher;
+  // v0.167.0 (issue #80): deployment auth plane. "public" = first-party
+  // username/password accounts, session cookie identity, and fail-closed
+  // per-user gateway credentials (visitor inference never bills the host).
+  // Unset or "access" = trust Cloudflare Access (Cf-Access-Authenticated-User-
+  // Email) and keep worker-secret gateway fallback for private self-host.
+  // A var, not a secret; set it in wrangler.toml [vars].
+  AUTH_MODE?: string;
   GATEWAY_ID?: string;
   // v0.164.0: optional on the worker when running in public demo mode; each
   // user may store their own gateway slug in D1 user_prefs instead.
