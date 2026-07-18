@@ -1,5 +1,77 @@
 # Changelog
 
+## v0.169.0
+
+feat(models): re-add claude-fable-5 via AI binding dispatch (v0.169.0)
+
+`anthropic/claude-fable-5` was pulled in v0.167.1 (PR #96) after live smoke hit a
+credentials-shaped ~3.5s 502 on it. Root cause, verified today via gateway logs
+and direct probes: Cloudflare moved Unified Billing model onboarding to the new
+AI REST surface (the `env.AI.run` binding catalog). New models only land there.
+The legacy `gateway.ai.cloudflare.com/{acct}/{gw}/anthropic` path our
+`src/providers/anthropic.ts` fetches has a FROZEN credential-injection allowlist:
+an id it does not recognize is forwarded to Anthropic keyless, the provider
+answers 401 ("x-api-key header is required"), and the worker surfaced that as a
+502. On the legacy path `claude-sonnet-4-5` returns 200 while `claude-fable-5`
+401s keyless; through the same `skyphusion-llm` gateway on the new surface,
+`env.AI.run("anthropic/claude-fable-5", ...)` returns 200 with keySource
+"Unified". So the fix is not to wait for a docs page, it is dispatching this
+model through the binding.
+
+This adds an opt-in `binding: true` flag on `ModelEntry`. When set,
+`callAnthropic` / `callAnthropicStream` route through the `env.AI.run` binding
+(the `aiRun` wrapper in `src/ai-binding.ts`) instead of the legacy provider
+fetch; every other Anthropic model keeps the legacy path unchanged (they work,
+so they were not migrated). The binding body is Anthropic-shaped, exactly what
+the existing `transformToAnthropic` produces (system pulled top-level, image_url
+rewritten to base64 image blocks), and unlike the legacy path the FULL prefixed
+id (`anthropic/claude-fable-5`) is passed to the binding since the catalog id
+carries the vendor prefix. Non-stream returns native Anthropic message JSON,
+consumed by the existing `output-extract`; stream returns native Anthropic SSE
+(`message_start` / `content_block_delta` / `message_delta`), consumed by the
+existing `interpretAnthropicSSEFrame` through the shared `sse-framer`, with the
+same `AbortSignal`-to-`reader.cancel()` bridge `callWorkersAIStream` uses (the
+binding takes no signal).
+
+fable-5 emits thinking blocks by default, even unprompted: non-stream `content`
+carries a `{type:"thinking", signature}` block before the text block, and the
+stream opens a thinking content-block (with `thinking_delta` / `signature_delta`
+deltas) at index 0 before the text block at index 1. Both existing consumers are
+already tolerant: `extractOutput` filters the content array to `type === "text"`
+blocks, and `interpretAnthropicSSEFrame` only emits text for
+`delta.type === "text_delta"` (thinking + signature deltas, and unknown
+content-block types, are ignored). The signature never reaches user-visible
+output. New tests pin this with the exact wire shapes.
+
+The two Grok removed-model comments in `src/models.ts` were rewritten to the same
+true diagnosis: they are blocked because xAI is absent from the new CF Unified
+Billing catalog while the legacy allowlist is frozen, so the re-add trigger is
+`env.AI.run("xai/...")` resolving, not a docs-page update.
+
+### Code
+- `src/models.ts` -- added the optional `binding?: boolean` field to `ModelEntry`;
+  restored the `anthropic/claude-fable-5` entry (provider "anthropic",
+  streaming, vision) flagged `binding: true`, replacing its "removed v0.167.1"
+  comment with the root-cause note; rewrote the `xai/grok-4.5` and
+  `xai/grok-build-0.1` removed-comments to the frozen-allowlist diagnosis.
+- `src/providers/anthropic.ts` -- added `buildAnthropicBindingBody`,
+  `callAnthropicBinding` (non-stream), and `callAnthropicStreamBinding` (stream,
+  reusing the shared framer + `interpretAnthropicSSEFrame` with an AbortSignal
+  bridge); `callAnthropic` / `callAnthropicStream` short-circuit to them when
+  `model.binding` is set. Legacy fetch path untouched for all other models.
+- `tests/anthropic-binding.test.ts` -- new node suite (5 tests): catalog flag;
+  non-stream dispatch calls `env.AI.run` with the catalog id + Anthropic-shaped
+  body (image transform included) and returns raw + logId; negative control that
+  a non-binding anthropic model does NOT take the binding path; stream dispatch
+  drives native Anthropic SSE (with default thinking/signature blocks + trailing
+  whitespace on data lines) through the real framer and surfaces only text +
+  usage, with no signature leak; already-aborted signal yields nothing. Stubs
+  only `env.AI.run` (the un-stubbable seam); transform, framer, and interpreter
+  are the real shipped code.
+- `package.json` -- 0.168.1 -> 0.169.0.
+
+typecheck: clean. tests: 235 passed (230 baseline + 5 new).
+
 ## v0.168.1
 
 refactor(routes): split `src/index.ts` into route modules (v0.168.1)
