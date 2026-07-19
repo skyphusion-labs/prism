@@ -20,7 +20,7 @@ NCII bright line is the one stated exception.
 
 ## Why the pointer sits here, said plainly
 
-**Prism is one of the two products where "we hold nothing" is not literally true**, and the
+**Prism is the one product where "we hold nothing" is not literally true**, and the
 canonical document names it in bold rather than leaving a reader to discover it. We operate the
 public instance at `play.skyphusion.org`, and it holds an account (username, and a password stored
 as a one-way hash) plus the content you create with it.
