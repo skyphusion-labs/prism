@@ -1,0 +1,36 @@
+name: tag-version
+
+# fc#864: when a v* tag is pushed, assert it matches root package.json version.
+# Prism has no CI tag-deploy (manual wrangler); this still stops a lying /health
+# string from being implied by a mismatched SemVer tag. publish-npm.yml already
+# guards create-prism releases separately.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Verify tag matches package.json version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          tag_version="${tag#v}"
+          pkg_version="$(node -p "require('./package.json').version")"
+          echo "Tag:              $tag (version $tag_version)"
+          echo "package.json ver: $pkg_version"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::tag $tag (version $tag_version) does not match package.json version $pkg_version"
+            exit 1
+          fi
