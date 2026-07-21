@@ -1,3 +1,7 @@
+## v0.169.2
+
+Release sync bump (2026-07-21). No functional changes in this tag.
+
 # Changelog
 
 ## v0.169.1
