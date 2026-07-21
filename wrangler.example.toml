@@ -132,9 +132,9 @@ enabled = true
 # For local development, also add it to .dev.vars:
 #   GATEWAY_ID=your-gateway-slug
 #
-# Public demo mode (v0.164.0+): omit GATEWAY_ID and CF_AIG_TOKEN on the worker.
+# Public mode (v0.167.0+): omit GATEWAY_ID and CF_AIG_TOKEN on the worker.
 # Each visitor stores their own gateway slug + token via Account > AI Gateway
-# (/api/prefs in D1 user_prefs). You still need Cloudflare Access in front.
+# (/api/prefs in D1 user_prefs). No Cloudflare Access needed when AUTH_MODE=public.
 #
 # Other worker secrets (also set via `npx wrangler secret put <NAME>`):
 #   CF_AIG_TOKEN (required for Anthropic, xAI, OpenAI chat, Google, and proxied

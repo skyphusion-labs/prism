@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.169.1
+
+infra(deploy): public-mode cutover for play.skyphusion.org (prism#106, fleet#940)
+
+- CI deploy renders `AUTH_MODE=public` in prod `wrangler.toml` (hosted product).
+- D1 migration `0002_auth_public_mode.sql`: `users`, `sessions`, `auth_attempts` tables.
+- Retire CF Access on `play.skyphusion.org`; worker holds no `GATEWAY_ID` / `CF_AIG_TOKEN`.
+
 ## v0.169.0
 
 feat(models): re-add claude-fable-5 via AI binding dispatch (v0.169.0)

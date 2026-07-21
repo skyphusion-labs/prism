@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-This repo is **prism** (renamed from `skyphusion-llm-public`), deployed at **play.skyphusion.org** behind Cloudflare Access. Only the repo was renamed: the deployed Worker, D1, R2, and Vectorize keep their original `skyphusion-llm` names, so binding/resource names in this file and `wrangler.example.toml` still read `skyphusion-llm` on purpose.
+This repo is **prism** (renamed from `skyphusion-llm-public`), deployed at **play.skyphusion.org** in **public** auth mode (`AUTH_MODE=public`, first-party accounts, no CF Access). Only the repo was renamed: the deployed Worker, D1, R2, and Vectorize keep their original `skyphusion-llm` names, so binding/resource names in this file and `wrangler.example.toml` still read `skyphusion-llm` on purpose.
 
-A multimodal AI playground deployed as a **single Cloudflare Worker** (no framework, no build step beyond TypeScript). One web UI behind Cloudflare Access exposes chat (39 models / 5 providers), image / TTS / STT / video / music generation, and RAG over files of any type. The interesting part is the patterns, not the model count: every modality funnels through `env.AI.run()` (the unified AI binding) or gateway provider endpoints with **Cloudflare Unified Billing**. There is no deployer BYOK inference path (the last one, `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs, was retired in v0.166.0 under prism#93). Opt-in web search retrieves from self-hosted SearXNG (`SEARXNG_URL`) plus keyless Wikipedia.
+A multimodal AI playground deployed as a **single Cloudflare Worker** (no framework, no build step beyond TypeScript). One web UI exposes chat (39 models / 5 providers), image / TTS / STT / video / music generation, and RAG over files of any type. Private self-hosts use `AUTH_MODE=access` with Cloudflare Access instead. The interesting part is the patterns, not the model count: every modality funnels through `env.AI.run()` (the unified AI binding) or gateway provider endpoints with **Cloudflare Unified Billing**. There is no deployer BYOK inference path (the last one, `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs, was retired in v0.166.0 under prism#93). Opt-in web search retrieves from self-hosted SearXNG (`SEARXNG_URL`) plus keyless Wikipedia.
 
 ## Commands
 
