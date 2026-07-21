@@ -85,6 +85,9 @@ jobs:
         run: |
           cp wrangler.example.toml wrangler.toml
           sed -i "s/PLACEHOLDER_RUN_wrangler_d1_create_THEN_PASTE_HERE/${{ secrets.D1_DATABASE_ID }}/" wrangler.toml
+          # play.skyphusion.org prod: first-party auth, no CF Access (prism#106, fleet#940).
+          sed -i 's/# \[vars\]/[vars]/' wrangler.toml
+          sed -i 's/# AUTH_MODE = "public"/AUTH_MODE = "public"/' wrangler.toml
 
       # Apply D1 migrations BEFORE deploy so new code never runs against an old
       # schema. Idempotent: wrangler tracks applied files in d1_migrations and

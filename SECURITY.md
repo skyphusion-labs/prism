@@ -19,11 +19,16 @@ Reports will be acknowledged within a reasonable window (target: 5 business days
 
 ## Scope
 
-This project is a deployment template. The security boundary is:
+This project is a deployment template with two auth planes (`AUTH_MODE`):
 
-- Cloudflare Access protects the worker URL
-- The worker trusts `Cf-Access-Authenticated-User-Email` for per-user scoping
-- D1 history is scoped per user_email
+- **access** (default, private self-host): Cloudflare Access protects the worker URL;
+  the worker trusts `Cf-Access-Authenticated-User-Email` for per-user scoping.
+- **public** (hosted play.skyphusion.org): first-party username/password accounts with
+  opaque session cookies; no CF Access; per-user BYOK only (worker gateway secrets ignored).
+
+In both modes:
+
+- D1 history is scoped per user identity (Access email or opaque account id)
 - R2 objects carry `customMetadata.user_email` for ownership checks
 
 In-scope vulnerabilities include:
