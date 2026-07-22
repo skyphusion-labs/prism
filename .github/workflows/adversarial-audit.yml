@@ -9,8 +9,8 @@ name: Adversarial audit
 # Org vars:    CLOUDFLARE_ACCOUNT_ID, AI_GATEWAY_ID
 # Org secret:  RUNNER_GROUP_ADMIN_TOKEN (clone private fleet-chezmoi script pin)
 #
-# Do NOT use secrets.CLOUDFLARE_API_TOKEN here: prism keeps a repo-level deploy token for
-# wrangler (ci.yml) that shadows the org audit token and lacks Workers AI Read (401 on /ai/run).
+# Use ADVERSARIAL_AUDIT_CF_API_TOKEN, not secrets.CLOUDFLARE_API_TOKEN: repos with a
+# repo-level deploy token for wrangler shadow the org name and lack Workers AI Read.
 
 on:
   pull_request:
@@ -52,7 +52,7 @@ jobs:
         with:
           repository: skyphusion-labs/fleet-chezmoi
           # Pinned merge SHA; bump via fleet-chezmoi system/ci/adversarial-audit-public.yml
-          ref: 4468d411cd5eede3875cdb4c0d6388302b16076d
+          ref: 008798c3b3b80c2307f02a5d098161af9f92b516
           path: fleet-chezmoi
           token: ${{ secrets.RUNNER_GROUP_ADMIN_TOKEN }}
 
