@@ -1,3 +1,9 @@
+## v0.169.3
+
+fix(security): access mode fails closed without Access header (prism#112, #113)
+
+- `AUTH_MODE=access` rejects requests missing CF Access JWT instead of falling through to public mode.
+
 ## v0.169.2
 
 Release sync bump (2026-07-21). No functional changes in this tag.
