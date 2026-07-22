@@ -129,6 +129,13 @@ export async function unzip(bytes: Uint8Array, limits: UnzipLimits): Promise<Unz
       continue;
     }
 
+    if (out.length > limits.maxFileBytes) {
+      skipped.push({ name, reason: `inflated size ${out.length} over per-file limit` }); continue;
+    }
+    if (total + out.length > limits.maxTotalBytes) {
+      skipped.push({ name, reason: "cumulative inflated size limit reached" }); continue;
+    }
+
     total += out.length;
     entries.push({ name, bytes: out });
   }
