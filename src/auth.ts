@@ -12,7 +12,8 @@
 // sites call (src/index.ts getUserEmail and src/stt-session.ts), so the two can
 // never diverge. The returned string is the ownership key written to every
 // user_email-keyed row and R2 customMetadata; in public mode it is the opaque
-// users.id, in access mode the Access email, in local dev "anonymous".
+// users.id, in access mode the Access email. Anonymous access mode identity
+// requires ACCESS_ALLOW_ANONYMOUS=1 (local dev only); production fails closed.
 
 import type { Env } from "./env";
 import { hashPassword, verifyPassword, PBKDF2_ITERATIONS } from "./auth-kdf";
@@ -50,7 +51,14 @@ export async function resolveIdentity(request: Request, env: Env): Promise<strin
 
   let result: string | null;
   if (authMode(env) === "access") {
-    result = request.headers.get("cf-access-authenticated-user-email") ?? ANON;
+    const email = request.headers.get("cf-access-authenticated-user-email");
+    if (email) {
+      result = email;
+    } else if (env.ACCESS_ALLOW_ANONYMOUS === "1") {
+      result = ANON;
+    } else {
+      result = null;
+    }
   } else {
     const token = parseSessionCookie(request);
     result = token ? await lookupSession(env.DB, token) : null;
