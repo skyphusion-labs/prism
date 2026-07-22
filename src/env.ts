@@ -25,6 +25,8 @@ export interface Env {
   // Email) and keep worker-secret gateway fallback for private self-host.
   // A var, not a secret; set it in wrangler.toml [vars].
   AUTH_MODE?: string;
+  /** access mode only: set to "1" to allow anonymous when Access header is absent (local dev). */
+  ACCESS_ALLOW_ANONYMOUS?: string;
   GATEWAY_ID?: string;
   // v0.164.0: optional on the worker when running in public demo mode; each
   // user may store their own gateway slug in D1 user_prefs instead.

@@ -143,6 +143,10 @@ describe("routing + 404 fallthrough", () => {
 });
 
 describe("getUserEmail header / anonymous fallback (src/index.ts:204)", () => {
+  beforeEach(() => {
+    (env as unknown as { ACCESS_ALLOW_ANONYMOUS?: string }).ACCESS_ALLOW_ANONYMOUS = "1";
+  });
+
   it("falls back to anonymous when the Access header is absent", async () => {
     const res = await req("/api/models");
     const body = (await res.json()) as { user: string };

@@ -121,8 +121,7 @@ export default {
     if (url.pathname === "/api/models" && request.method === "GET") {
       // Boot probe: reachable without a session. Carries mode + authenticated so
       // the SPA gates itself in one call (no separate /api/session endpoint).
-      // In access mode resolveIdentity never returns null, so authenticated is
-      // always true and the signup screen never shows on a private deploy.
+      // Access mode fails closed unless ACCESS_ALLOW_ANONYMOUS=1 (local dev only).
       const mode = authMode(env);
       const id = await resolveIdentity(request, env);
       const authenticated = id !== null;
