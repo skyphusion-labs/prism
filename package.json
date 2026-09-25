@@ -36,16 +36,16 @@
     "db:migrate:remote": "wrangler d1 execute skyphusion-llm --remote --file=schema.sql"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.20.3",
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^5.20260816.1",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.6.2",
     "@vitest/coverage-v8": "^4.1.11",
     "typescript": "^7.0.2",
     "vitest": "^4.1.8",
     "wrangler": "^4.123.0"
   },
   "dependencies": {
-    "unpdf": "^1.8.0",
+    "unpdf": "^1.8.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "overrides": {
