@@ -59,7 +59,7 @@ Debugging a deployed worker: `npx wrangler tail`. Inspecting a stuck long-runnin
 - `src/models.ts` -- **the model catalog**, single source of truth. Each entry's `id` is the routing key; `type` (`chat`|`image`|`tts`|`video`|`stt`|`music`|`voice`) picks the dispatcher, `provider` (default `workers-ai`) picks the code path, `capabilities`/`streaming` drive the UI. Adding an entry here flows automatically to `GET /api/models` and the frontend picker.
 - `src/providers/*.ts` -- per-provider dispatch helpers (`callAnthropic`, `callXai`, `callGemini`, `callWorkersAIStream`, `callOpenAIStream`, plus `openai-image.ts` for the transparent-PNG carve-out). Anthropic, xAI, and Gemini hit AI Gateway provider endpoints with keyless Unified Billing auth (`cf-aig-authorization`). OpenAI chat and Workers AI use `env.AI.run`. Proxied image models (google/openai/recraft/xai/bytedance) go through `env.AI.run` on Unified Billing; when `OPENAI_API_KEY` is set, `openai/gpt-image-*` may call `api.openai.com` for transparent PNG instead.
 - `src/parsers/*.ts` -- streaming adapters, one per wire format (Anthropic native SSE, OpenAI-compatible SSE for xAI/OpenAI, Workers AI SSE, Gemini SSE), all normalized to a common `ProviderStreamEvent` envelope (`parsers/types.ts`). `sse-framer.ts` is the shared line framer. **These are the bulk of the unit tests.**
-- `src/ai-binding.ts` -- `aiRun()` wraps `env.AI.run` with the gateway opt; `aiLogId()` reads the AI Gateway log ID after a call.
+- `src/ai-binding.ts` -- `aiRun()` wraps `env.AI.run` with the gateway opt, or (v1.1.0, when the credentials carry an `accountId`) calls the REST API on the user's account; `gatewayProviderUrl()` does the same split for provider-native endpoints; `aiLogId()` reads the AI Gateway log ID after a call. Never call `env.AI.gateway(...)` or `env.AI.run` with a user's gateway directly: the binding only addresses the worker's account.
 - `src/output-extract.ts` -- normalizes wildly different provider response shapes into output text/usage; `detectProviderFailure`, `extractProxiedImageAsset` (URL or inline base64).
 - `src/env.ts` -- hand-authored `Env` binding interface (mirror of `wrangler.toml` bindings). `src/types.ts` -- the `InputAttachment` discriminated union (request boundary).
 - `src/chunking.ts` / `src/discord.ts` -- RAG chunking and DiscordChatExporter ingestion.
@@ -81,7 +81,7 @@ Debugging a deployed worker: `npx wrangler tail`. Inspecting a stuck long-runnin
 
 Two modes via `AUTH_MODE` (see README):
 
-- **`public` (play.skyphusion.org):** first-party username/password + opaque session cookie. No CF Access on the worker URL. Per-user AI Gateway prefs in D1; worker `GATEWAY_ID` / `CF_AIG_TOKEN` / `OPENAI_API_KEY` are ignored (the last from v1.0.5, prism#193). Workers AI (`@cf/*`) calls still run on the host's `AI` binding and bill the host.
+- **`public` (play.skyphusion.org):** first-party username/password + opaque session cookie. No CF Access on the worker URL. Per-user AI Gateway prefs in D1 (`account_id` + `gateway_id` + `cf_aig_token`, all three required from v1.1.0); worker `GATEWAY_ID` / `CF_AIG_TOKEN` / `OPENAI_API_KEY` are ignored (the last from v1.0.5, prism#193). The `AI` binding can only reach the worker's own account, so account-scoped credentials swap `aiRun` to the REST API (`api.cloudflare.com/.../accounts/{account_id}/ai/run`) and build provider-native URLs from the user's account id (`gatewayProviderUrl`); credentials without an account id 412 `gateway_account_id_required`, never fall back to the binding. Only the direct `env.AI.run` gateway-bypass calls (six `@cf` image models, Deepgram STT, the Flux voice DO) still bill the host.
 - **`access` (private self-host default):** Cloudflare Access on the worker URL; identity from `Cf-Access-Authenticated-User-Email`. Deployer may set `GATEWAY_ID` + `CF_AIG_TOKEN` for shared billing.
 
 `resolveIdentity` in `src/auth.ts` is the single seam either way. `wrangler dev` has no Access and no session by default; do not expose a local dev port publicly.
@@ -113,8 +113,8 @@ Also: `[observability] enabled = true` (dashboard log tailing). `compatibility_d
 
 | Secret | Required? | Purpose |
 |---|---|---|
-| `GATEWAY_ID` | Yes (private install) / No (public demo) | AI Gateway slug passed to every `env.AI.run` call. In public demo mode (v0.164.0+), omit on the worker; users set their own slug via `/api/prefs`. |
-| `CF_AIG_TOKEN` | Yes for paid third-party models (private) / per-user (public demo) | Unified Billing auth for Anthropic, xAI, OpenAI chat, Google, and proxied image/video/music. Bearer token sent as `cf-aig-authorization`. Users can store their own token in D1 `user_prefs`. |
+| `GATEWAY_ID` | Yes (private install) / No (public demo) | AI Gateway slug passed to every `env.AI.run` call. In public demo mode (v0.164.0+), omit on the worker; users set their own account id + slug via `/api/prefs` (v1.1.0: account id required). |
+| `CF_AIG_TOKEN` | Yes for paid third-party models (private) / per-user (public demo) | Unified Billing auth for Anthropic, xAI, OpenAI chat, Google, and proxied image/video/music. Bearer token sent as `cf-aig-authorization`. Users store their own token in D1 `user_prefs`; an account-scoped user token needs Workers AI Read (REST) + AI Gateway Run (provider-native). |
 | `OPENAI_API_KEY` | Optional | v0.174.0 sole BYOK carve-out: when set, `openai/gpt-image-*` call `api.openai.com` for transparent PNG. Leave unset on public play; opaque proxy otherwise. |
 | `SEARXNG_URL` | Optional | v0.166.0; base URL of a self-hosted SearXNG instance for opt-in web search (our deploy: `https://search.skyphusion.org`). May be a `[vars]` entry or a secret. Silently skipped when unset; Wikipedia still runs keyless. |
 | `SEARXNG_ACCESS_CLIENT_ID` / `SEARXNG_ACCESS_CLIENT_SECRET` | Optional | v0.166.0; Cloudflare Access service-token halves for a gated SearXNG instance. Sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret` only when both are set (leave unset for an un-gated instance). |
@@ -131,7 +131,7 @@ All matched in the single `fetch` handler in `src/index.ts` (see the one-line po
 | GET | `/health` | Liveness probe; no binding access, always 200. |
 | GET | `/health/deep` | Deep check: D1, D1 schema tables, R2, Vectorize, AI Gateway config (50-200ms). |
 | GET | `/api/models` | List models with `type` + capability flags; returns caller email + `gateway` status. |
-| GET / PATCH | `/api/prefs` | Per-user AI Gateway settings (slug + token); v0.164.0 public demo mode. |
+| GET / PATCH | `/api/prefs` | Per-user AI Gateway settings (account id + slug + token; account id v1.1.0); v0.164.0 public demo mode. |
 | POST | `/api/chat` | Run a model; dispatches by `model.type`. Persists a row. |
 | POST | `/api/chat/stream` | SSE variant, only for catalog entries flagged `streaming: true`. |
 | POST | `/api/tts` | Dedicated TTS path (same catalog `tts` models as `/api/chat`). |

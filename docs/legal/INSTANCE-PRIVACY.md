@@ -51,16 +51,28 @@ reference R2 keys.
 
 ## How model inference is billed and routed (bring your own gateway)
 
-The hosted instance does **not** pay for your model inference. Before you can run a paid or proxied
-model you enter your own **Cloudflare AI Gateway** slug and an AI Gateway token in Account settings.
-The instance stores those in its D1 database and uses them to send your model requests through **your**
-AI Gateway, so inference is billed to **your** Cloudflare Unified Billing account, not ours. The
-hosted worker has no gateway credentials of its own; with your settings unset, paid model calls fail
-closed with a clear prompt to configure your gateway, rather than silently billing anyone else.
+Before you can run a model you enter three things in Account settings: your **Cloudflare account ID**,
+your **AI Gateway** slug, and a Cloudflare API token for that account. The instance stores them in its D1
+database and uses them to send your model requests to **your** Cloudflare account and gateway, so that
+inference is billed to **your** Cloudflare account, not ours. With any of the three missing, model calls
+fail closed with a prompt naming what is missing, rather than running on our account.
 
-Treat the AI Gateway token you enter as you would any API credential. It is held in the instance
-database solely to authorize your model calls, and deleting your account (below) removes it along with
-everything else.
+**One exception: a few models run on our Cloudflare account.** Some Workers AI models cannot be routed
+through an AI Gateway at all, so the instance runs them on its own Cloudflare account: live voice chat,
+Deepgram file transcription, and six image models (FLUX.2 Klein 9B / Klein 4B / Dev, Leonardo Phoenix
+1.0, Dreamshaper 8 LCM, Stable Diffusion XL). For those, your prompt or audio goes to Cloudflare Workers
+AI under our account rather than yours, and we pay for them.
+
+**Correction (v1.1.0).** Earlier versions of this notice said your requests went through your gateway
+whenever you entered a slug and token. That was not true: without an account ID the instance could only
+address gateways on our own Cloudflare account, so those requests never reached your gateway. The
+instance now requires the account ID and routes to your account; settings saved without one are refused
+until you add it.
+
+Treat the API token you enter as you would any API credential. It is held in the instance database
+solely to authorize your model calls, and deleting your account (below) removes it along with
+everything else. Your account ID is not a secret (it appears in every gateway URL) but is stored and
+deleted the same way.
 
 ## Abuse controls (transient IP processing)
 
@@ -80,7 +92,8 @@ not sell your data and we do not share it, with the single exception of the abus
 The hosted instance runs on Cloudflare (Workers, D1, R2, Vectorize). Your model requests are sent
 through the AI Gateway **you** configure, on your own Cloudflare account; the model providers reachable
 through that gateway receive your prompt content in order to return a result, and handle it under their
-own and your gateway's terms rather than ours.
+own and your gateway's terms rather than ours. The exception is the short list of models above that run
+on our Cloudflare account, which Cloudflare Workers AI processes under our account.
 
 **Web search is opt-in and does not use any third-party search API.** Prism has a per-turn web search
 toggle. When you switch it on for a turn, the text of that one query is sent to the instance's own

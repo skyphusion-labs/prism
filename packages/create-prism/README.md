@@ -79,10 +79,13 @@ The scaffolded worker learns who a caller is one of two ways, chosen by the
   Inference bills the deployer, through the worker gateway secrets `GATEWAY_ID` and
   `CF_AIG_TOKEN`.
 - **`public` (the open, first-party-signup service).** First-party username/password
-  accounts behind an opaque server-side session cookie. Every user brings their own AI
-  Gateway credentials (mandatory BYOK), so **the worker holds no gateway secrets and
-  visitor inference never bills the host**. Do not set `GATEWAY_ID` / `CF_AIG_TOKEN` on
-  a public worker; they are ignored in this mode. No Cloudflare Access needed.
+  accounts behind an opaque server-side session cookie. Every user brings their own
+  Cloudflare account ID, AI Gateway slug, and API token (mandatory BYOK), so the worker
+  holds no gateway secrets and gateway-routed inference bills the visitor's account.
+  The exception is the few Workers AI paths AI Gateway cannot proxy (live voice,
+  Deepgram STT, six image models), which run on the host's `AI` binding and bill the
+  host. Do not set `GATEWAY_ID` / `CF_AIG_TOKEN` on a public worker; they are ignored in
+  this mode. No Cloudflare Access needed.
 
 Either way, one stable opaque account id scopes history and R2 ownership, so cross-user
 access is impossible even if an id is guessed.

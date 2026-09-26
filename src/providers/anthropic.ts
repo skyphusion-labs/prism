@@ -18,7 +18,7 @@
 // blocks with base64 source.
 
 import type { AiContext } from "../ai-binding";
-import { aiRun, aiLogId } from "../ai-binding";
+import { aiRun, aiLogId, gatewayProviderUrl } from "../ai-binding";
 import type { ModelEntry } from "../models";
 import type { ProviderStreamEvent } from "../parsers/types";
 import { CF_AIG_TOKEN_REQUIRED_MSG } from "../gateway-credentials";
@@ -92,9 +92,9 @@ async function prepareAnthropicRequest(
 ): Promise<{ url: string; headers: Record<string, string>; body: string }> {
   const { system, messages: aMessages } = transformToAnthropic(messages, systemPrompt);
 
-  const baseUrl = await (ctx.env.AI as unknown as {
-    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(ctx.gateway.gatewayId).getUrl("anthropic");
+  // v1.1.0: built from the caller's own account when the credentials carry
+  // one; the binding's getUrl would always name this worker's account.
+  const baseUrl = await gatewayProviderUrl(ctx, "anthropic");
 
   // Strip the "anthropic/" prefix we use in our internal IDs; Anthropic's API
   // expects just the model name (e.g. "claude-opus-4-6").

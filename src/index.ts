@@ -169,6 +169,8 @@ export default {
           source: "none" as const,
           gateway_id: null,
           cf_aig_token_set: false,
+          account_id: null,
+          account_id_required: false,
           control_plane_configured: false,
           control_plane_key_set: false,
         };

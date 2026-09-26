@@ -1,10 +1,16 @@
 // Per-user preferences stored in D1 (v0.164.0).
 //
-// JSON blob keyed by Cloudflare Access email. Gateway fields are the first
-// use case for a public demo deployment where each visitor brings their own
-// AI Gateway slug and CF_AIG_TOKEN.
+// JSON blob keyed by the caller's identity (Access email or public account
+// id). Gateway fields are the first use case for a public demo deployment
+// where each visitor brings their own AI Gateway.
+//
+// v1.1.0: account_id added. Being a key in the JSON blob, it needs no DDL;
+// pre-v1.1.0 rows simply lack it and resolve as "account id required" in
+// public mode (see resolveGateway in gateway-credentials.ts).
 
 export interface UserPrefsJson {
+  /** v1.1.0: Cloudflare account id (32 hex) that owns gateway_id. */
+  account_id?: string;
   gateway_id?: string;
   cf_aig_token?: string;
   /**
@@ -43,6 +49,13 @@ export async function saveUserPrefs(
   const existing = (await loadUserPrefs(db, userEmail)) ?? {};
   const merged: UserPrefsJson = { ...existing };
 
+  if (patch.account_id !== undefined) {
+    // Callers validate before saving; stored lowercase so comparisons and
+    // the URL builder see one canonical form.
+    const trimmed = patch.account_id.trim().toLowerCase();
+    if (trimmed) merged.account_id = trimmed;
+    else delete merged.account_id;
+  }
   if (patch.gateway_id !== undefined) {
     const trimmed = patch.gateway_id.trim();
     if (trimmed) merged.gateway_id = trimmed;
