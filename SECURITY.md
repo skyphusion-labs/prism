@@ -25,6 +25,9 @@ This project is a deployment template with two auth planes (`AUTH_MODE`):
   the worker trusts `Cf-Access-Authenticated-User-Email` for per-user scoping.
 - **public** (hosted play.skyphusion.org): first-party username/password accounts with
   opaque session cookies; no CF Access; per-user BYOK only (worker gateway secrets ignored).
+  BYOK is account-scoped (v1.1.0): calls go to the user's own Cloudflare account ID over
+  HTTP, because the `AI` binding can only reach the worker's account. Credentials without
+  an account ID are refused (412), never resolved on the host binding.
 
 In both modes:
 

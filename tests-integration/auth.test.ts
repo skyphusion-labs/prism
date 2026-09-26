@@ -61,6 +61,9 @@ afterEach(() => {
   delete anyEnv.CF_AIG_TOKEN;
 });
 
+// v1.1.0: a user's Cloudflare account id (any 32 hex will do under the stubs).
+const USER_ACCT = "0123456789abcdef0123456789abcdef";
+
 const WORKERS_AI_CHAT = MODELS.find((m) => m.type === "chat" && !m.provider)!.id;
 const STREAM_CHAT = MODELS.find((m) => m.type === "chat" && m.streaming && !m.provider)?.id
   ?? MODELS.find((m) => m.type === "chat" && m.streaming)!.id;
@@ -259,9 +262,13 @@ describe("fail-closed gateway in public mode", () => {
     expect(b.gateway.configured).toBe(false);
   });
 
-  it("positive control: once the user sets a gateway, the 412 no longer fires", async () => {
+  it("positive control: once the user sets account id + gateway + token, the 412 no longer fires", async () => {
     const cookie = await signup("liam", "password123");
-    await req("/api/prefs", { method: "PATCH", cookie, body: { gateway_id: "liam-gw" } });
+    await req("/api/prefs", {
+      method: "PATCH",
+      cookie,
+      body: { account_id: USER_ACCT, gateway_id: "liam-gw", cf_aig_token: "liam-token" },
+    });
     let status: number;
     try {
       status = (
@@ -293,6 +300,14 @@ describe("OPENAI_API_KEY is ignored in public mode (prism#193)", () => {
         openaiCalls.push(url);
         return new Response(JSON.stringify({ error: { message: "stubbed" } }), { status: 500 });
       }
+      // v1.1.0: an account-scoped user dispatches over REST to their own
+      // account; answer it locally so the test never leaves the sandbox.
+      if (url.startsWith("https://api.cloudflare.com/")) {
+        return new Response(JSON.stringify({ success: false, errors: [{ message: "stubbed" }] }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
       return realFetch(input, init);
     }) as typeof fetch;
   });
@@ -307,7 +322,9 @@ describe("OPENAI_API_KEY is ignored in public mode (prism#193)", () => {
     await SELF.fetch("https://prism.test/api/prefs", {
       method: "PATCH",
       headers: h,
-      body: JSON.stringify({ gateway_id: "user-gw", cf_aig_token: "user-token" }),
+      // v1.1.0: account id included, or public mode would 412 before the
+      // image branch and this test would pass without testing anything.
+      body: JSON.stringify({ account_id: USER_ACCT, gateway_id: "user-gw", cf_aig_token: "user-token" }),
     });
     try {
       await SELF.fetch("https://prism.test/api/chat", {
@@ -331,6 +348,136 @@ describe("OPENAI_API_KEY is ignored in public mode (prism#193)", () => {
     anyEnv.AUTH_MODE = "access";
     await runGptImage({ "cf-access-authenticated-user-email": "owner@example.com" });
     expect(openaiCalls.length).toBe(1);
+  });
+});
+
+// v1.1.0: BYOK must reach the user's own Cloudflare account. The AI binding is
+// pinned to the worker's account, so these assert (1) the pre-v1.1.0 shape is
+// refused with its own code rather than resolved on our binding, and (2) a
+// fully configured user is dispatched over HTTP to THEIR account id. The AI
+// stub here is an inert {}: any path that touched the host binding would throw,
+// so a 200 with stubbed fetch proves the binding was never used.
+describe("account-scoped BYOK (v1.1.0)", () => {
+  const LEGACY_ANTHROPIC = MODELS.find((m) => m.provider === "anthropic" && !m.binding)!.id;
+  const BINDING_ANTHROPIC = MODELS.find((m) => m.provider === "anthropic" && m.binding)!.id;
+  const realFetch = globalThis.fetch;
+  let calls: Array<{ url: string; headers: Headers; body: string }>;
+
+  const anthropicMessage = {
+    id: "msg_1",
+    type: "message",
+    role: "assistant",
+    model: "stub",
+    content: [{ type: "text", text: "hello from your account" }],
+    stop_reason: "end_turn",
+    usage: { input_tokens: 3, output_tokens: 5 },
+  };
+
+  beforeEach(() => {
+    calls = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.startsWith("https://gateway.ai.cloudflare.com/") || url.startsWith("https://api.cloudflare.com/")) {
+        calls.push({ url, headers: new Headers(init?.headers), body: String(init?.body ?? "") });
+        const payload = url.startsWith("https://api.cloudflare.com/")
+          ? { success: true, errors: [], result: anthropicMessage }
+          : anthropicMessage;
+        return new Response(JSON.stringify(payload), {
+          headers: { "content-type": "application/json", "cf-aig-log-id": "user-log-1" },
+        });
+      }
+      return realFetch(input, init);
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  async function configure(cookie: string, body: Record<string, unknown>): Promise<Response> {
+    return req("/api/prefs", { method: "PATCH", cookie, body });
+  }
+
+  it("pre-v1.1.0 shape (slug + token, no account id): 412 gateway_account_id_required, nothing dialed", async () => {
+    const cookie = await signup("petra", "password123");
+    await configure(cookie, { gateway_id: "petra-gw", cf_aig_token: "petra-token" });
+    for (const model of [LEGACY_ANTHROPIC, BINDING_ANTHROPIC, WORKERS_AI_CHAT]) {
+      const res = await req("/api/chat", { method: "POST", cookie, body: { model, user_input: "hi" } });
+      expect(res.status).toBe(412);
+      const body = (await res.json()) as { code: string; error: string };
+      expect(body.code).toBe("gateway_account_id_required");
+      expect(body.error).toMatch(/account ID/);
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it("boot and prefs flag the pre-v1.1.0 user and keep their saved slug", async () => {
+    const cookie = await signup("quinn", "password123");
+    await configure(cookie, { gateway_id: "quinn-gw", cf_aig_token: "quinn-token" });
+    const b = (await boot(cookie)) as BootEnvelope & {
+      gateway: { account_id_required: boolean; gateway_id: string | null };
+    };
+    expect(b.gateway.configured).toBe(false);
+    expect(b.gateway.account_id_required).toBe(true);
+    expect(b.gateway.gateway_id).toBe("quinn-gw");
+
+    // Adding only the account id completes the migration.
+    const res = await configure(cookie, { account_id: USER_ACCT.toUpperCase() });
+    expect(res.status).toBe(200);
+    const prefs = (await res.json()) as { configured: boolean; account_id: string; account_id_required: boolean };
+    expect(prefs.configured).toBe(true);
+    expect(prefs.account_id).toBe(USER_ACCT); // normalized to lowercase
+    expect(prefs.account_id_required).toBe(false);
+  });
+
+  it("rejects a malformed account id or gateway slug with 400", async () => {
+    const cookie = await signup("rhea", "password123");
+    const badAcct = await configure(cookie, { account_id: "not-an-account" });
+    expect(badAcct.status).toBe(400);
+    expect(((await badAcct.json()) as { code: string }).code).toBe("invalid_account_id");
+    const badGw = await configure(cookie, { gateway_id: "../other-gw" });
+    expect(badGw.status).toBe(400);
+    expect(((await badGw.json()) as { code: string }).code).toBe("invalid_gateway_id");
+  });
+
+  it("account id without a token: 412 cf_aig_token_required", async () => {
+    const cookie = await signup("sven", "password123");
+    await configure(cookie, { account_id: USER_ACCT, gateway_id: "sven-gw" });
+    const res = await req("/api/chat", { method: "POST", cookie, body: { model: WORKERS_AI_CHAT, user_input: "hi" } });
+    expect(res.status).toBe(412);
+    expect(((await res.json()) as { code: string }).code).toBe("cf_aig_token_required");
+  });
+
+  it("legacy provider path dials gateway.ai.cloudflare.com under the USER's account id", async () => {
+    const cookie = await signup("tara", "password123");
+    await configure(cookie, { account_id: USER_ACCT, gateway_id: "tara-gw", cf_aig_token: "tara-token" });
+    const res = await req("/api/chat", { method: "POST", cookie, body: { model: LEGACY_ANTHROPIC, user_input: "hi" } });
+    expect(res.status).toBe(200);
+    expect(calls.length).toBe(1);
+    expect(calls[0].url).toBe(`https://gateway.ai.cloudflare.com/v1/${USER_ACCT}/tara-gw/anthropic/v1/messages`);
+    expect(calls[0].headers.get("cf-aig-authorization")).toBe("Bearer tara-token");
+    expect(calls[0].headers.get("x-api-key")).toBeNull();
+  });
+
+  it("binding-catalog path goes to the USER's account over REST, never the host binding", async () => {
+    const cookie = await signup("uma", "password123");
+    await configure(cookie, { account_id: USER_ACCT, gateway_id: "uma-gw", cf_aig_token: "uma-token" });
+    const res = await req("/api/chat", { method: "POST", cookie, body: { model: BINDING_ANTHROPIC, user_input: "hi" } });
+    expect(res.status).toBe(200);
+    expect(calls.length).toBe(1);
+    expect(calls[0].url).toBe(`https://api.cloudflare.com/client/v4/accounts/${USER_ACCT}/ai/run`);
+    expect(calls[0].headers.get("authorization")).toBe("Bearer uma-token");
+    expect(calls[0].headers.get("cf-aig-gateway-id")).toBe("uma-gw");
+    expect((JSON.parse(calls[0].body) as { model: string }).model).toBe(BINDING_ANTHROPIC);
+  });
+
+  it("Workers AI chat through aiRun also bills the USER's account (model-in-path)", async () => {
+    const cookie = await signup("vera", "password123");
+    await configure(cookie, { account_id: USER_ACCT, gateway_id: "vera-gw", cf_aig_token: "vera-token" });
+    await req("/api/chat", { method: "POST", cookie, body: { model: WORKERS_AI_CHAT, user_input: "hi" } });
+    expect(calls.length).toBe(1);
+    expect(calls[0].url).toBe(`https://api.cloudflare.com/client/v4/accounts/${USER_ACCT}/ai/run/${WORKERS_AI_CHAT}`);
+    expect(calls[0].headers.get("cf-aig-gateway-id")).toBe("vera-gw");
   });
 });
 

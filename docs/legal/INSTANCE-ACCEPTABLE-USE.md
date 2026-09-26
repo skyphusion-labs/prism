@@ -27,8 +27,11 @@ The hosted instance is offered freely so people can try the Cloudflare AI stack.
 
 ## You pay for your own model inference
 
-The hosted instance does not pay for the models you run. You configure your own Cloudflare AI Gateway,
-and model inference is billed to **your** Cloudflare Unified Billing account. That means:
+The hosted instance does not pay for the models you run, with one narrow exception below. You configure
+your own Cloudflare account ID, AI Gateway, and API token, and model inference is billed to **your**
+Cloudflare account. The exception: live voice chat, Deepgram file transcription, and six image models
+cannot be routed through an AI Gateway, so they run on our Cloudflare account (the privacy notice lists
+them). Using those does not bill you. Otherwise:
 
 - **Your gateway spend is yours.** You are solely responsible for the cost of the model calls you make
   and for keeping your own AI Gateway credentials and billing in order. Skyphusion Labs does not
