@@ -44,7 +44,13 @@
   </script>
 </head>
 <body>
-  <a class="seo-skip" href="#auth-screen">Prism multimodal AI playground: sign up or log in</a>
+  <!-- fc#1700 skip link (WCAG 2.4.1 bypass blocks). Was an offscreen anchor
+       named seo-skip pointing at the conditionally-hidden auth panel, with no
+       :focus reveal anywhere: the first Tab on the page moved focus to an
+       element that stayed at x = -9999 and whose target was hidden. It now
+       names what it does, reveals itself on focus, and targets the main
+       content landmark. Kept first in the body; that position is the point. -->
+  <a class="skip-link" href="#main-content">Skip to main content</a>
   <!-- #80 public-mode first-party auth. Hidden by default; the boot probe
        (GET /api/session) reveals it only when mode=public and no session.
        Access / self-host deploys report mode=access and never show it. -->
@@ -198,7 +204,7 @@
         </label>
       </div>
 
-      <main class="conversation">
+      <main class="conversation" id="main-content" tabindex="-1">
         <header class="conv-head">
           <span id="conv-title">new conversation</span>
           <span id="conv-compact-badge" class="conv-compact-badge" hidden title="Older turns are summarized for the model; full transcript still shown below">compacted</span>
