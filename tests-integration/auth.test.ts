@@ -212,6 +212,29 @@ describe("public-mode gate: uniform 401 unauthenticated", () => {
     expect(Array.isArray(((await res.json()) as { chats: unknown[] }).chats)).toBe(true);
   });
 
+  // The saved slug becomes a path segment in a gateway.ai.cloudflare.com URL and a
+  // request header value. Before this was validated, .trim() was the only transform,
+  // so an arbitrary string reached the binding as a gateway id.
+  it("rejects a gateway_id that is not a slug, and stores nothing", async () => {
+    const cookie = await signup("nadia", "password123", "203.0.113.50");
+    for (const bad of ["not a slug", "has/slash", "a".repeat(65), "semi;colon", "../traverse"]) {
+      const res = await req("/api/prefs", { method: "PATCH", cookie, body: { gateway_id: bad } });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code?: string }).code).toBe("invalid_gateway_id");
+    }
+    // Nothing was written by any of the rejected attempts.
+    const prefs = (await (await req("/api/prefs", { cookie })).json()) as { gateway_id: string | null };
+    expect(prefs.gateway_id).toBeNull();
+  });
+
+  it("still accepts a well-formed slug", async () => {
+    const cookie = await signup("omar", "password123", "203.0.113.51");
+    const res = await req("/api/prefs", { method: "PATCH", cookie, body: { gateway_id: "my-gw_1" } });
+    expect(res.status).not.toBe(400);
+    const prefs = (await (await req("/api/prefs", { cookie })).json()) as { gateway_id: string | null };
+    expect(prefs.gateway_id).toBe("my-gw_1");
+  });
+
   it("isolates prefs between two accounts", async () => {
     const aCookie = await signup("hank", "password123", "203.0.113.10");
     const bCookie = await signup("iris", "password123", "203.0.113.11");
