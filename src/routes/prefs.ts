@@ -24,6 +24,12 @@ function controlPlaneStatus(prefs: UserPrefsJson | null, env: Env) {
   };
 }
 
+// The saved slug becomes a path segment in a gateway.ai.cloudflare.com URL and a
+// request header value, so it is validated on WRITE rather than at every read.
+// Same shape prism-control-plane already enforces on its own slug field; prism
+// applied only .trim(), which is not a constraint on a value used that way.
+const GATEWAY_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
 export async function handlePrefsGet(request: Request, env: Env): Promise<Response> {
   const userEmail = await getUserEmail(request, env);
   const prefs = await loadUserPrefs(env.DB, userEmail);
@@ -54,7 +60,20 @@ export async function handlePrefsPatch(request: Request, env: Env): Promise<Resp
   }
 
   const patch: UserPrefsJson = {};
-  if (body.gateway_id !== undefined) patch.gateway_id = body.gateway_id;
+  if (body.gateway_id !== undefined) {
+    const g = String(body.gateway_id).trim();
+    if (g && !GATEWAY_ID_RE.test(g)) {
+      return json(
+        {
+          error:
+            "gateway_id must be 1 to 64 characters of letters, digits, hyphen or underscore.",
+          code: "invalid_gateway_id",
+        },
+        { status: 400 },
+      );
+    }
+    patch.gateway_id = g;
+  }
   if (body.cf_aig_token !== undefined) patch.cf_aig_token = body.cf_aig_token;
   if (body.clear_cf_aig_token) patch.cf_aig_token = "";
   if (body.control_plane_key !== undefined) {
