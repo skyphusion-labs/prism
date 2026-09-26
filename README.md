@@ -71,7 +71,7 @@ A working template for the Cloudflare AI stack and a self-hosted multimodal play
 One Worker, no framework, no build step beyond TypeScript. The interesting parts are the patterns, not the model count:
 
 - **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, conversational STT + voice chat (Flux over a WebSocket), video gen, and music gen. Paid third-party models bill through **Cloudflare Unified Billing** on your AI Gateway.
-- **Per-provider dispatch helpers** for Anthropic Claude, xAI Grok, and Google Gemini, each transforming our internal `messages` shape into the provider's native format while authorizing keylessly via `cf-aig-authorization`. OpenAI chat and Workers AI ride the `env.AI.run` binding directly. **Sole deployer BYOK carve-out (v0.174.0):** optional `OPENAI_API_KEY` lets `openai/gpt-image-*` call `api.openai.com` for transparent PNG (the CF proxy 7003-rejects `background`/`output_format`). When unset, those models stay opaque on Unified Billing. Do not set this key on public multi-tenant deploys.
+- **Per-provider dispatch helpers** for Anthropic Claude, xAI Grok, and Google Gemini, each transforming our internal `messages` shape into the provider's native format while authorizing keylessly via `cf-aig-authorization`. OpenAI chat and Workers AI ride the `env.AI.run` binding directly. **Sole deployer BYOK carve-out (v0.174.0):** optional `OPENAI_API_KEY` lets `openai/gpt-image-*` call `api.openai.com` for transparent PNG (the CF proxy 7003-rejects `background`/`output_format`). When unset, those models stay opaque on Unified Billing. Public mode (`AUTH_MODE=public`) ignores the key even if set (v1.0.5, prism#193).
 - **SSE streaming** (v0.13.0+) for chat models across providers: Anthropic native SSE, Workers AI / OpenAI-compatible SSE (incl. Moonshot K3), xAI, OpenAI Chat Completions and Responses API (v0.173.0), and Gemini.
 - **AI Gateway** wraps every call for observability, caching, and rate-limiting.
 - **D1** holds chat metadata, multi-turn conversation history, and RAG chunk text. **R2** holds all binary artifacts. **Vectorize** holds RAG embeddings (768-dim BGE-base). The chat row references R2 keys; nothing binary touches D1.
@@ -241,7 +241,7 @@ One Worker, no framework, no build step beyond TypeScript. The interesting parts
 
 **UI (focus-mode redesign, v0.110.0+):** a single centered conversation column with a floating composer; the sidebar (searchable history, projects, documents) is a slide-in overlay; a searchable model picker (type to filter, v0.111.0); a ⚙ popover for the system prompt + retrieval toggles and an account menu in the top bar; a paperclip attach button and a voice-chat mic; conversation header **compact** / **expand** when a thread has enough turns (v0.175.7). Capability-aware mode switching (vision-only attachment types; image-mode re-skins to "negative prompt"; TTS / STT / video / music / voice hide irrelevant inputs), FLUX.2 reference-image attach UI (v0.16.0), per-turn web-search toggle (v0.17.0), per-user replay-able history with attachments and generated artifacts, Enter to send / Shift+Enter for newline. Mobile-optimized (safe-area insets, touch targets, no iOS zoom).
 
-**Auth (two modes via `AUTH_MODE`):** **public** (the hosted product) is first-party username/password signup with an opaque session cookie and mandatory per-user BYOK: each user brings their own AI Gateway, the worker holds no gateway secrets, and inference bills the user, never the host. **access** (the default, for private self-host) puts Cloudflare Access on the worker URL and scopes per-user history and R2 ownership via `Cf-Access-Authenticated-User-Email` (free up to 50 seats on Zero Trust). See [Running the public service](#running-the-public-service).
+**Auth (two modes via `AUTH_MODE`):** **public** (the hosted product) is first-party username/password signup with an opaque session cookie and mandatory per-user BYOK: each user brings their own AI Gateway and the worker ignores its own gateway and OpenAI secrets. Workers AI (`@cf/*`) models still run on the host's `AI` binding and bill the host; see [Who pays for what](#who-pays-for-what). **access** (the default, for private self-host) puts Cloudflare Access on the worker URL and scopes per-user history and R2 ownership via `Cf-Access-Authenticated-User-Email` (free up to 50 seats on Zero Trust). See [Running the public service](#running-the-public-service).
 
 ## Stack
 
@@ -318,7 +318,7 @@ echo "CF_AIG_TOKEN=your-cloudflare-api-token" >> .dev.vars
 
 Then enable Unified Billing for each provider you plan to use: Dashboard > AI > AI Gateway > your gateway > Settings. Without credits, proxied models fail with `2021: Invalid User Credentials`.
 
-OpenAI chat never uses a deployer key. The **only** optional deployer secret is `OPENAI_API_KEY` (v0.174.0): when set, `openai/gpt-image-*` call `api.openai.com` for transparent PNG; when unset they stay opaque on Unified Billing. Leave it unset on public multi-tenant deploys so visitors cannot burn host credits.
+OpenAI chat never uses a deployer key. The **only** optional deployer secret is `OPENAI_API_KEY` (v0.174.0): when set, `openai/gpt-image-*` call `api.openai.com` for transparent PNG; when unset they stay opaque on Unified Billing. Public mode (`AUTH_MODE=public`) ignores the key even if set (v1.0.5, prism#193), so it cannot bill the host for a visitor's image.
 
 > **Public service:** to run the open, first-party-signup instance instead (no worker gateway secrets; every user brings their own AI Gateway), see [Running the public service](#running-the-public-service), and skip steps 1, 1b, and 6.
 
@@ -418,7 +418,8 @@ npm run dev
 ## Running the public service
 
 Run Prism as an open, self-serve service: anyone signs up with a username and password, and each user
-brings their own Cloudflare AI Gateway so their model usage bills their own account, never yours. This
+brings their own Cloudflare AI Gateway for partner-model inference. Workers AI (`@cf/*`) models still run on
+your `AI` binding and bill you; see [Who pays for what](#who-pays-for-what). This
 is how play.skyphusion.org runs. It is a **mode of the same worker** (`AUTH_MODE=public`), not a second
 deployment.
 
@@ -429,7 +430,7 @@ deployment.
 | `AUTH_MODE` | `access` (default; may be unset) | `public` |
 | Sign-in | Cloudflare Access (email OTP / OAuth) | First-party username + password signup |
 | Worker gateway secrets | `GATEWAY_ID` + `CF_AIG_TOKEN` (yours; you pay inference) | **None** (omit both; ignored even if set) |
-| Who pays for inference | You (the deployer) | Each user, via their own AI Gateway |
+| Who pays for inference | You (the deployer) | Partner models: each user, via their own AI Gateway. Workers AI (`@cf/*`): you |
 | Cloudflare Access app | Required | **Not used** |
 
 Everything else (D1, R2, Vectorize, deploy) is the same as the [Quickstart](#quickstart): do steps 2 to
@@ -445,8 +446,9 @@ AUTH_MODE = "public"
 ```
 
 In public mode the worker runs its own username/password accounts and reads identity from an opaque
-session cookie. It never reads `GATEWAY_ID` / `CF_AIG_TOKEN`, so a stray gateway secret cannot make the
-host pay for a visitor's inference; gateway credentials come only from each user's own settings.
+session cookie. It never reads `GATEWAY_ID` / `CF_AIG_TOKEN` / `OPENAI_API_KEY` (the last from v1.0.5), so a
+stray deployer secret cannot make the host pay for a visitor's partner-model inference; gateway credentials
+come only from each user's own settings.
 
 ### 2. Do not set worker gateway secrets, and do not put Access in front
 
@@ -472,12 +474,13 @@ npm run deploy
 1. Open the URL and **sign up** with a username and password (no email, no Access login).
 2. Open **Account > AI Gateway**; create a Cloudflare AI Gateway in the [Cloudflare dashboard](https://developers.cloudflare.com/ai-gateway/) if needed, and enable Unified Billing for the providers you want.
 3. Paste the gateway **slug** and a Cloudflare API token with **AI Gateway Run** permission.
-4. Run models. Until a user configures their gateway, paid and proxied models fail closed with a clear "configure your AI Gateway" prompt (HTTP 412), so no call ever bills the host.
+4. Run models. Until a user configures their gateway, every model fails closed with a clear "configure your AI Gateway" prompt (HTTP 412). The gate controls who may run inference; it does not change which account a Workers AI call bills (see below).
 
 ### Who pays for what
 
 - **You (the host)** pay Cloudflare for Workers, D1, R2, and Vectorize: the storage and compute for the service itself.
-- **Each user** pays for their own model inference through Unified Billing on the AI Gateway they configured.
+- **You (the host)** also pay for every **Workers AI** (`@cf/*`) call, because the worker's own `AI` binding runs them: Workers AI chat models, the FLUX / Leonardo / Lykon / Stability image models, TTS, Whisper and Deepgram STT (including live voice), and the RAG embeddings (`@cf/baai/bge-base-en-v1.5`) behind document upload and retrieval. Several of these call the binding with no gateway at all (stream-incompatible image models, Deepgram STT, the live-voice socket). Bound this with Workers AI limits on your account or remove those models from `src/models.ts` on your instance.
+- **Each user** pays for partner-model inference (Anthropic, xAI, Google, OpenAI, and the other Unified Billing providers) through the AI Gateway they configured.
 
 ### Abuse controls and policies
 
@@ -785,7 +788,7 @@ This is a Cloudflare-proxied (third-party) model, so it requires Unified Billing
 
 ## Image generation
 
-**21** image models in `src/models.ts` (or `GET /api/models?type=image`): Google Nano Banana Pro / 2 / Lite, Imagen 4, GPT Image 1.5 / 2, Recraft V4 / V4.1 / V4.1 Pro, xAI Grok Imagine Image (+ Quality), ByteDance Seedream 5 Pro / Lite, FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM, Stable Diffusion XL. The eight FLUX/Leonardo/Lykon/Stability models run through Workers AI (no Unified Billing required); the rest are proxied partner models on Unified Billing (need CF credits). GPT Image 1.5 / 2 are opaque on the proxy by default; **optional deployer BYOK (v0.174.0):** set `OPENAI_API_KEY` for transparent PNG via `api.openai.com` (leave unset on public multi-tenant play).
+**21** image models in `src/models.ts` (or `GET /api/models?type=image`): Google Nano Banana Pro / 2 / Lite, Imagen 4, GPT Image 1.5 / 2, Recraft V4 / V4.1 / V4.1 Pro, xAI Grok Imagine Image (+ Quality), ByteDance Seedream 5 Pro / Lite, FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM, Stable Diffusion XL. The eight FLUX/Leonardo/Lykon/Stability models run through Workers AI (no Unified Billing required); the rest are proxied partner models on Unified Billing (need CF credits). GPT Image 1.5 / 2 are opaque on the proxy by default; **optional deployer BYOK (v0.174.0):** set `OPENAI_API_KEY` for transparent PNG via `api.openai.com` (ignored in public mode, v1.0.5).
 
 ### Google Nano Banana Pro (Unified Billing, v0.21.2)
 
@@ -802,7 +805,7 @@ This is a Cloudflare-proxied (third-party) model, so it requires Unified Billing
 
 - **Recraft V4** (`recraft/recraftv4`, Unified Billing) is opaque and art-directed (strong composition and text rendering). The CF proxy exposes no alpha control, only an opaque `background_color`. It returns WebP; the worker stores it with the response content-type, so no format is hardcoded.
 
-- **GPT Image 1.5 / 2** (`openai/gpt-image-1.5`, `openai/gpt-image-2`) are opaque through the Unified Billing proxy by default (`{ prompt, quality, size }`; proxy 7003-rejects `background`/`output_format`). **Optional BYOK (v0.174.0):** when `OPENAI_API_KEY` is set, `runImage` calls `api.openai.com` via `src/providers/openai-image.ts` for transparent PNG. Leave the secret unset on public play.
+- **GPT Image 1.5 / 2** (`openai/gpt-image-1.5`, `openai/gpt-image-2`) are opaque through the Unified Billing proxy by default (`{ prompt, quality, size }`; proxy 7003-rejects `background`/`output_format`). **Optional BYOK (v0.174.0):** when `OPENAI_API_KEY` is set, `runImage` calls `api.openai.com` via `src/providers/openai-image.ts` for transparent PNG. Public mode ignores the secret (v1.0.5, prism#193).
 - **xAI Grok Imagine** (`xai/grok-imagine-image`, `-quality`): request `response_format: "b64_json"` on Unified Billing (CF-managed ZDR credentials reject URL format). `extractProxiedImageAsset` accepts URL or inline base64.
 - **Recraft** (`recraft/recraftv4*`): bare `{ prompt }` only (v0.174.1/v0.174.2); legacy `style` enums and Pro `1024x1024` size are rejected upstream.
 

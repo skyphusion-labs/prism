@@ -1,3 +1,42 @@
+## v1.0.5
+
+PATCH: public mode ignores `OPENAI_API_KEY`, and the README says who actually pays for what.
+
+prism#193. In `AUTH_MODE=public`, `runImage` (`src/routes/chat.ts`) still called `api.openai.com`
+with the deployer's `OPENAI_API_KEY` for `openai/gpt-image-*` whenever that secret was set. v0.167.0
+made public mode ignore `GATEWAY_ID` / `CF_AIG_TOKEN` so a stray host secret could not bill the host
+for a visitor, but the v0.174.0 transparent-PNG carve-out came later and never got the same rule. It
+was guarded only by README advice to leave the key unset. The key is now resolved through
+`resolveOpenAIImageKey`, which returns null in public mode, so public-mode `gpt-image-*` always takes
+the opaque Unified Billing proxy on the user's gateway. Access mode is unchanged.
+
+Tracing every public-mode call path for this fix also showed that the README overstated the BYOK
+guarantee. Workers AI (`@cf/*`) models run on the worker's own `AI` binding, so they bill the host
+whatever gateway slug the user configured (Workers AI chat, TTS, Whisper, the RAG embeddings), and
+several call the binding with no gateway at all (the stream-incompatible FLUX-2 / Phoenix /
+Dreamshaper / SDXL image models, Deepgram STT, and the live-voice socket). The per-user 412 gate
+controls who may run inference, not which account pays. The README ("Who pays for what", the
+public-mode table, and the setup steps) now says so instead of "no call ever bills the host".
+Behaviour for those paths is unchanged in this release; whether to restrict them on public deploys is
+a separate decision.
+
+### Code
+
+- `src/providers/openai-image.ts` -- `resolveOpenAIImageKey(env)`: null in public mode
+- `src/routes/chat.ts` -- `runImage` uses the resolver instead of reading `env.OPENAI_API_KEY`
+- `tests/openai-image.test.ts` -- resolver unit tests (public / access / unset / blank)
+- `tests-integration/auth.test.ts` -- public-mode `/api/chat` gpt-image request with a host key set
+  never dials `api.openai.com` (failed before the fix), plus an access-mode positive control
+- `README.md` -- `OPENAI_API_KEY` is ignored in public mode; host pays for Workers AI calls
+- `CLAUDE.md` -- same correction to the public-mode auth note
+- `src/version.ts` -- 1.0.4 -> 1.0.5
+- `package.json` -- 1.0.4 -> 1.0.5
+- `packages/create-prism/package.json` -- 1.0.4 -> 1.0.5
+- `package-lock.json` -- lock version
+- `CHANGELOG.md` -- this entry
+
+No binding, secret, or schema change. `npm run typecheck` clean; `npm test` green.
+
 ## v1.0.4
 
 PATCH: promote the Content-Security-Policy to enforcing, after the report-only

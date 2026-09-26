@@ -81,7 +81,7 @@ Debugging a deployed worker: `npx wrangler tail`. Inspecting a stuck long-runnin
 
 Two modes via `AUTH_MODE` (see README):
 
-- **`public` (play.skyphusion.org):** first-party username/password + opaque session cookie. No CF Access on the worker URL. Per-user AI Gateway prefs in D1 (worker gateway secrets ignored so visitors never bill the host).
+- **`public` (play.skyphusion.org):** first-party username/password + opaque session cookie. No CF Access on the worker URL. Per-user AI Gateway prefs in D1; worker `GATEWAY_ID` / `CF_AIG_TOKEN` / `OPENAI_API_KEY` are ignored (the last from v1.0.5, prism#193). Workers AI (`@cf/*`) calls still run on the host's `AI` binding and bill the host.
 - **`access` (private self-host default):** Cloudflare Access on the worker URL; identity from `Cf-Access-Authenticated-User-Email`. Deployer may set `GATEWAY_ID` + `CF_AIG_TOKEN` for shared billing.
 
 `resolveIdentity` in `src/auth.ts` is the single seam either way. `wrangler dev` has no Access and no session by default; do not expose a local dev port publicly.
