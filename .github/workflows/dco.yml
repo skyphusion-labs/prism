@@ -1,0 +1,81 @@
+name: dco
+
+# prism#194: CONTRIBUTING.md has required a DCO sign-off since 2026-06-26 but
+# nothing checked it, so 83 of the 96 human PRs merged after that date would
+# have failed. This job is the mechanism: every non-merge commit a PR adds must
+# carry a Signed-off-by trailer whose email matches the commit author email.
+#
+# Scope: PR commits only (base..head). History already on main is not
+# re-checked; a sign-off cannot be collected retroactively.
+# Exempt: GitHub App bot authors (dependabot signs off as support@github.com,
+# which never matches its noreply author email). Merge commits are skipped.
+# Fork-safe: pull_request event, read-only token, no secrets, no third-party
+# actions. The check only becomes blocking once "dco" is a required status
+# check on main (branch protection, a repo setting this file cannot set).
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dco-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dco:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Every PR commit is signed off by its author
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          bad=0
+          checked=0
+          for c in $(git rev-list --no-merges --reverse "$HEAD_SHA" "^$BASE_SHA"); do
+            author_email="$(git log -1 --format='%ae' "$c" | tr '[:upper:]' '[:lower:]')"
+            subject="$(git log -1 --format='%h %s' "$c")"
+            case "$author_email" in
+              *'[bot]@users.noreply.github.com')
+                echo "skip (bot author): $subject"
+                continue ;;
+            esac
+            checked=$((checked + 1))
+            signoffs="$(git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$c" | tr '[:upper:]' '[:lower:]')"
+            if printf '%s\n' "$signoffs" | grep -qF "<$author_email>"; then
+              echo "ok: $subject"
+            elif [ -n "$(printf '%s' "$signoffs" | tr -d '[:space:]')" ]; then
+              echo "::error::$subject: Signed-off-by email does not match author email <$author_email>"
+              bad=$((bad + 1))
+            else
+              echo "::error::$subject: missing Signed-off-by (author <$author_email>)"
+              bad=$((bad + 1))
+            fi
+          done
+          if [ "$bad" -ne 0 ]; then
+            # The fork point is in the contributor's local clone; the base tip may not be.
+            fork_point="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+            {
+              echo "## DCO sign-off missing on $bad of $checked commit(s)"
+              echo
+              echo "prism uses the [Developer Certificate of Origin](https://developercertificate.org/)."
+              echo "Sign off the commits on this branch and force-push:"
+              echo
+              echo '```bash'
+              echo "git rebase --signoff $fork_point"
+              echo "git push --force-with-lease"
+              echo '```'
+              echo
+              echo "The Signed-off-by email must match the commit author email. See CONTRIBUTING.md."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "DCO: $bad of $checked commit(s) not signed off; see the job summary for the fix."
+            exit 1
+          fi
+          echo "DCO: all $checked human commit(s) signed off."

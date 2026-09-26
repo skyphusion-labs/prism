@@ -79,6 +79,19 @@ By submitting a contribution, you agree that your work will be licensed under AG
 Sign off every commit with `git commit -s`. That appends a `Signed-off-by:` line certifying the
 [Developer Certificate of Origin](https://developercertificate.org/) (DCO): a lightweight,
 per-commit affirmation that you wrote the patch or otherwise have the right to submit it under the
-project's license. We use the DCO instead of a CLA. The name and email must be real and match the
-commit author; unsigned commits may be asked to amend with `git commit --amend -s` (or
-`git rebase --signoff` for a series) before merge.
+project's license. We use the DCO instead of a CLA. Use a real name and email.
+
+This is checked, not just asked for. The `dco` workflow (`.github/workflows/dco.yml`) runs on every
+pull request and fails if any non-merge commit in the PR lacks a `Signed-off-by:` trailer whose
+email matches the commit author email (case-insensitive). Commits by GitHub App bots such as
+Dependabot are exempt. It applies to everyone, maintainers included; history already on `main` is
+not re-checked.
+
+If the check fails, sign off the branch and force-push; the job summary prints the exact command:
+
+```bash
+git rebase --signoff <fork-point>   # or: git commit --amend -s --no-edit  (single commit)
+git push --force-with-lease
+```
+
+To stop forgetting, use an alias such as `git config --global alias.cs 'commit -s'`.
