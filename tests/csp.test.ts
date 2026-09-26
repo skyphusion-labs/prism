@@ -372,9 +372,12 @@ describe("the served documents carry no inline CSS", () => {
   });
 
   // index.html:47 was the collector's first genuine finding:
-  //   style-src-attr | inline | line 47. The offscreen positioning moved to
-  // the `.seo-skip` rule in styles.css; the element and its behaviour are
-  // unchanged, and it is still the first focusable element in the body.
+  //   style-src-attr | inline | line 47. The offscreen positioning moved to a
+  // stylesheet rule, where it stays. fc#1700 then renamed that rule from
+  // `.seo-skip` to `.skip-link` and gave it the `:focus` reveal it never had;
+  // the CSP invariant asserted here is unchanged by that, and the element is
+  // still the first focusable element in the body. The accessibility half is
+  // asserted in tests/skip-link.test.ts, not here.
   it("index.html has no inline style attribute", () => {
     expect(INLINE_STYLE_ATTR.test(pub("index.html"))).toBe(false);
   });
@@ -405,9 +408,11 @@ describe("the served documents carry no inline CSS", () => {
 
   it("the offscreen positioning the skip link lost is present in styles.css", () => {
     const css = pub("styles.css");
-    expect(css).toMatch(/\.seo-skip\s*\{[^}]*position:\s*absolute/);
-    expect(css).toMatch(/\.seo-skip\s*\{[^}]*left:\s*-9999px/);
-    expect(pub("index.html")).toContain('class="seo-skip"');
+    expect(css).toMatch(/\.skip-link\s*\{[^}]*position:\s*absolute/);
+    expect(css).toMatch(/\.skip-link\s*\{[^}]*left:\s*-9999px/);
+    expect(pub("index.html")).toContain('class="skip-link"');
+    // No inline style attribute crept back onto the element itself.
+    expect(pub("index.html")).not.toMatch(/<a class="skip-link"[^>]*\sstyle\s*=/);
   });
 });
 

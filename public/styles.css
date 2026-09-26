@@ -25,16 +25,54 @@
 
 * { box-sizing: border-box; }
 
-/* Offscreen SEO/skip anchor, first focusable element in the body.
-   The declarations below were an inline `style` attribute on the element
-   until fc#1646: a report-only CSP observed it as the collector's first
-   real finding (style-src-attr / blocked_uri inline), and an enforcing
-   policy would drop the positioning and render the link on the page.
-   Same two declarations, same computed result, no `unsafe-inline` needed. */
-.seo-skip {
+/* Skip link (WCAG 2.4.1 bypass blocks), first focusable element in the body.
+   Offscreen until focused, on-screen while focused.
+
+   The offscreen declarations live here rather than in an inline `style`
+   attribute because an enforcing CSP drops style-src-attr: fc#1646 / #177
+   moved them out, and they stay out.
+
+   fc#1700 added the half that makes this an accessibility feature instead of
+   an invisible focus stop. Measured before the fix: the element was the first
+   focusable node in the body, and its bounding box was still x = -9999 AFTER
+   .focus(), so a keyboard user's first Tab on the credential page landed on a
+   link they could not see. The `:focus` rule below is what that measurement
+   was missing, so do not drop it without re-measuring.
+
+   The target is the main content landmark, not the auth panel: `#auth-screen`
+   is `hidden` until the public-mode boot probe reveals it, so the old href
+   aimed focus at a hidden element on every signed-in page. And when the gate
+   IS up, `body.auth-active .layout` is display:none, so there is no sidebar
+   to bypass and no target to land on: the link leaves the tab order entirely
+   in that state, which puts the first Tab on the auth form itself. */
+.skip-link {
   position: absolute;
   left: -9999px;
+  top: 0;
+  z-index: 200; /* above .auth-screen (100) and the sidebar backdrop */
 }
+
+.skip-link:focus {
+  left: 8px;
+  top: 8px;
+  padding: 10px 16px;
+  background: var(--bg-elev2);
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow), var(--shadow-glow);
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 2px;
+  text-decoration: none;
+}
+
+/* No skip link while the auth gate is up: nothing to bypass, nowhere to go. */
+body.auth-active .skip-link { display: none; }
+
+/* The skip target takes programmatic focus (tabindex="-1") so the next Tab
+   continues from the main column instead of restarting at the top of the
+   document. It is not keyboard-reachable on its own, so it gets no ring. */
+#main-content:focus { outline: none; }
 
 html, body {
   margin: 0;
