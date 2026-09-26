@@ -49,3 +49,22 @@ that, stop and say so rather than editing the disclosure down.
   the issue already states publicly. The issue is already public, so matching its level is fine;
   do not add exploitability detail.
 - ONE PR, do not merge it, say FINAL when ready. `Refs #192`.
+
+## Standing instructions (added 2026-09-26, learned from the first two cloud runs)
+
+**If your reading of the code disagrees with this plan, STOP and report the disagreement rather than
+proceeding.** On the first run of this pattern the plan was wrong and the session was right: an issue
+had counted nine separate `tests/fixtures/live` directories as one corpus, so "seven blind gates" was
+really one. Executing as written would have produced seven green edits, a closed issue, and the defect
+still present. A plan is a brief, not a specification of the truth.
+
+**A name match is not a relationship.** Before concluding that two things are the same thing, check
+that the thing you matched on is load-bearing: a suite REFERENCING a path is not a suite whose
+ASSERTIONS depend on it. That distinction is what made the difference above.
+
+**When you are blocked on a human (a merge, a ruling, a credential), STAND DOWN. Do not poll.** Say
+what you are blocked on and stop. Re-checking a PR only the lead can merge spends credit to learn
+nothing.
+
+**Report a partial pass as partial.** A measured, honest, incomplete result is a success. A complete
+looking result with weak evidence is not.
