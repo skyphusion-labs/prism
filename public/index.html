@@ -52,8 +52,11 @@
        content landmark. Kept first in the body; that position is the point. -->
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <!-- #80 public-mode first-party auth. Hidden by default; the boot probe
-       (GET /api/session) reveals it only when mode=public and no session.
-       Access / self-host deploys report mode=access and never show it. -->
+       (GET /api/models, the single unauthenticated entry point, which carries
+       mode + authenticated alongside the catalog) reveals it only when
+       mode=public and no session. There is no GET /api/session route; this
+       comment named one until fc#1700. Access / self-host deploys report
+       mode=access and never show it. -->
   <div id="auth-screen" class="auth-screen" hidden>
     <form id="auth-form" class="auth-card" novalidate>
       <div class="auth-brand">
