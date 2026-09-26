@@ -17,7 +17,7 @@ import { callXai, callXaiStream } from "../providers/xai";
 import { callWorkersAIStream } from "../providers/workers-ai";
 import { callOpenAI, callOpenAIStream } from "../providers/openai";
 import { callGemini, callGeminiStream } from "../providers/google";
-import { generateOpenAIImage } from "../providers/openai-image";
+import { generateOpenAIImage, resolveOpenAIImageKey } from "../providers/openai-image";
 import { buildProxiedImageParams } from "../proxied-image-params";
 import {
   json,
@@ -566,14 +566,16 @@ export async function runImage(request: Request, env: Env, model: ModelEntry, bo
       // sole OpenAI transparent-PNG carve-out: when OPENAI_API_KEY is set on
       // openai/* image models, call api.openai.com directly (proxy rejects
       // background/output_format). No other provider uses a deployer key.
+      // Public mode ignores the key (prism#193, v1.0.5): see resolveOpenAIImageKey.
       //
       // Unified Billing response shapes:
       //   URL:     { state, result: { image: "https://..." } } or images[]
       //   inline:  { state, result: { image: "<b64|data-uri>" } }  // xAI Grok Imagine
       // xAI requires response_format:b64_json (ZDR-managed credentials reject
       // URL output). extractProxiedImageAsset normalizes both.
-      if (model.provider === "openai" && env.OPENAI_API_KEY) {
-        const gen = await generateOpenAIImage(env.OPENAI_API_KEY, model.id, body.user_input);
+      const openaiImageKey = model.provider === "openai" ? resolveOpenAIImageKey(env) : null;
+      if (openaiImageKey) {
+        const gen = await generateOpenAIImage(openaiImageKey, model.id, body.user_input);
         bytes = gen.bytes;
         mime = gen.mime;
         logId = null; // direct OpenAI; no AI Gateway log

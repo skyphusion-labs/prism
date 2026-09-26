@@ -274,6 +274,66 @@ describe("fail-closed gateway in public mode", () => {
   });
 });
 
+// prism#193: OPENAI_API_KEY is a deployer secret, so in public mode it must be
+// ignored exactly like GATEWAY_ID / CF_AIG_TOKEN. The user here has a fully
+// configured BYOK gateway so the credential gate passes and the request reaches
+// the image dispatch branch; the only question is which transport it picks.
+describe("OPENAI_API_KEY is ignored in public mode (prism#193)", () => {
+  const GPT_IMAGE = MODELS.find((m) => m.type === "image" && m.provider === "openai")!.id;
+  const keyEnv = env as unknown as { OPENAI_API_KEY?: string };
+  const realFetch = globalThis.fetch;
+  let openaiCalls: string[];
+
+  beforeEach(() => {
+    openaiCalls = [];
+    keyEnv.OPENAI_API_KEY = "sk-host-owned";
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.startsWith("https://api.openai.com/")) {
+        openaiCalls.push(url);
+        return new Response(JSON.stringify({ error: { message: "stubbed" } }), { status: 500 });
+      }
+      return realFetch(input, init);
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    delete keyEnv.OPENAI_API_KEY;
+    globalThis.fetch = realFetch;
+  });
+
+  async function runGptImage(headers: Record<string, string>): Promise<void> {
+    const h = new Headers({ "content-type": "application/json", "cf-connecting-ip": "203.0.113.40", ...headers });
+    await SELF.fetch("https://prism.test/api/prefs", {
+      method: "PATCH",
+      headers: h,
+      body: JSON.stringify({ gateway_id: "user-gw", cf_aig_token: "user-token" }),
+    });
+    try {
+      await SELF.fetch("https://prism.test/api/chat", {
+        method: "POST",
+        headers: h,
+        body: JSON.stringify({ model: GPT_IMAGE, user_input: "a red kite" }),
+      });
+    } catch {
+      // The inert AI stub makes the gateway path throw; that is fine, the
+      // assertion is only about whether api.openai.com was dialed.
+    }
+  }
+
+  it("public mode: a configured user's gpt-image request never dials api.openai.com with the host key", async () => {
+    const cookie = await signup("olga", "password123");
+    await runGptImage({ cookie });
+    expect(openaiCalls).toEqual([]);
+  });
+
+  it("positive control: access mode still uses the deployer key (the stub can see the call)", async () => {
+    anyEnv.AUTH_MODE = "access";
+    await runGptImage({ "cf-access-authenticated-user-email": "owner@example.com" });
+    expect(openaiCalls.length).toBe(1);
+  });
+});
+
 describe("DELETE /api/account cascade", () => {
   it("requires password re-entry and cascades the account's data", async () => {
     const cookie = await signup("mona", "password123");

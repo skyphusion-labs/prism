@@ -13,7 +13,17 @@
 // GPT image models ALWAYS return base64 (data[0].b64_json); the `url` response
 // format is unsupported for them. `background: "transparent"` with
 // `output_format: "png"` yields an RGBA PNG.
+import type { Env } from "../env";
 import { base64ToBytes } from "../utils";
+
+// The deployer key to use for transparent PNG, or null for the opaque proxy.
+// prism#193 (v1.0.5): AUTH_MODE=public ignores OPENAI_API_KEY entirely, the
+// same fail-closed rule gateway-credentials.ts applies to GATEWAY_ID /
+// CF_AIG_TOKEN, so a stray host secret cannot bill the host for a visitor.
+export function resolveOpenAIImageKey(env: Env): string | null {
+  if (env.AUTH_MODE === "public") return null;
+  return env.OPENAI_API_KEY?.trim() || null;
+}
 
 export interface GeneratedImage {
   bytes: Uint8Array;
