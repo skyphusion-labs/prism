@@ -1,3 +1,98 @@
+## v1.1.0
+
+MINOR, **BREAKING for existing BYOK users**: BYOK now reaches the user's own Cloudflare account. It never did before.
+
+### Breaking change (read before tagging)
+
+Every public-mode account saved the old way (gateway slug and token, no account id) is refused with
+**HTTP 412 `gateway_account_id_required`** on every inference route until the user adds their
+Cloudflare account id under Account > AI Gateway. Their Cloudflare API token must also gain
+**Workers AI Read** alongside the **AI Gateway Run** it already needed; without it their calls fail
+with a 401 from their own account. **A user who upgrades and does nothing loses inference.** Their slug
+and token are kept, so the fix on their side is one field plus one token permission. Users on a
+control-plane `pcp_` key keep chat. Access-mode installs running on worker secrets are unaffected.
+
+### Why
+
+A public-mode user stored only `gateway_id` and `cf_aig_token` (`src/user-prefs.ts`), and nothing in
+`src/` carried a Cloudflare account id. Every call then resolved the slug on the worker's own `AI`
+binding: `aiRun` passed only `{ gateway: { id } }`, and the legacy Anthropic / xAI paths built their
+URL with `env.AI.gateway(id).getUrl(provider)`. Cloudflare pins a binding's gateway to the worker's
+account ("Must be in the same account as your Worker") and pre-authenticates binding requests, and an
+AI Gateway URL is `.../v1/{account_id}/{gateway_id}/{provider}`, so the account was always ours.
+
+The larger finding: **on every `aiRun` path the user's token was never sent at all.** The binding
+authorized those calls with our account's credentials, whatever the user had saved. That is why an
+account id in the URL could not fix it: it would have covered only the two legacy provider-native
+paths, while everything else goes through `env.AI.run`, which cannot address another account whatever
+id it is handed. A user's own gateway was unreachable by construction; calls either failed or ran on our
+account, never the user's. The README, CLAUDE.md, the v1.0.5 entry below, and both instance policies said
+otherwise.
+
+The fix has two parts:
+
+- **Account id in prefs.** `account_id` (32 hex, normalized lowercase) is stored in the `user_prefs`
+  JSON, validated on `PATCH /api/prefs` (400 `invalid_account_id`), and required before user
+  credentials count as configured. `gateway_id` is now validated too (400 `invalid_gateway_id`),
+  since it becomes a URL segment and a header.
+- **Account-scoped transport.** When credentials carry an account id, `aiRun` calls
+  `POST https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run` with the user's token and
+  `cf-aig-gateway-id` (partner models use the `{ model, input }` envelope, `@cf/` models the
+  model-in-path endpoint) and normalizes the response to what the binding returned. The legacy
+  Anthropic / xAI paths build `gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/{provider}`
+  via the new `gatewayProviderUrl`. Credentials, not the model, pick the transport.
+
+**Migration (no DDL).** `user_prefs` is a JSON blob, so there is no schema change. A user saved under the
+old shape reports `configured: false` with `account_id_required: true` (boot and `/api/prefs`) and gets
+the targeted 412 above; nothing falls back to our binding. There is no automatic backfill: the account
+cannot be derived from a slug, and inferring it from the token would need extra token permissions.
+
+**Who pays now.** Everything through `aiRun` or a provider-native endpoint bills the user, including
+Workers AI chat, TTS, Whisper, FLUX.1 / Lucid Origin, and the RAG embeddings, which previously ran on
+the host. Still host-billed: the direct `env.AI.run` gateway-bypass calls (FLUX.2 Klein 9B / 4B / Dev,
+Phoenix, Dreamshaper, SDXL, Deepgram file STT, the Flux live-voice socket), because AI Gateway cannot
+proxy their stream inputs, stream outputs, or WebSocket. Access mode without a user account id is
+unchanged (host binding, deployer pays, by design).
+
+**Not verified against live Cloudflare.** The new REST route has never talked to a live Cloudflare
+account. The response handling follows Cloudflare's docs and is covered by mocked tests only. Before the
+tag, test on a real account: streaming chat, TTS audio, and whether a 1 to 3 minute video run holds the
+connection.
+
+### Code
+
+- `src/gateway-credentials.ts` -- `accountId` on `GatewayCredentials`; `resolveGateway` returns
+  `{ creds, problem }` (`gateway_not_configured` / `gateway_account_id_required` /
+  `cf_aig_token_required`); account-scoped creds are all-user (no worker-secret fallback);
+  `normalizeAccountId`, `isValidGatewayId`, `requireGatewayCredentials`, `gatewayProblemMessage`;
+  status gains `account_id`, `account_id_required`; unused `loadGatewayCredentials` removed
+- `src/ai-binding.ts` -- REST transport (`buildRestRunRequest`, `unwrapRestResponse`),
+  `gatewayProviderUrl`, per-context `lastLogId` so `aiLogId` never reads the host binding for a user call
+- `src/providers/anthropic.ts`, `src/providers/xai.ts` -- legacy URL via `gatewayProviderUrl`
+- `src/routes/shared.ts` -- `aiContextFromPrefs`; 412 carries the specific problem code; prefs loaded once
+- `src/routes/rag.ts`, `src/routes/workflow.ts` -- `requireGatewayCredentials`
+- `src/routes/prefs.ts` -- `account_id` read/write/validate; `gateway_id` validation
+- `src/user-prefs.ts` -- `account_id` field
+- `src/index.ts` -- unauthenticated boot status carries the new fields
+- `public/index.html`, `public/app.js` -- account id field, token-permission copy, targeted banner and
+  412 handling for `gateway_account_id_required`, corrected signup footnote
+- `tests/gateway-credentials.test.ts` -- account scoping, validation, status
+- `tests/ai-binding-rest.test.ts` -- new: request shapes, transport selection with a trap binding,
+  URL encoding, envelope / SSE / binary / 401 handling
+- `tests-integration/auth.test.ts` -- pre-v1.1.0 shape refused with nothing dialed; migration by adding
+  the id; 400s; token required; legacy and catalog paths dial the USER's account with an inert host
+  binding; prism#193 test given an account id so it still reaches dispatch
+- `README.md`, `CLAUDE.md`, `SECURITY.md`, `wrangler.example.toml`, `packages/create-prism/README.md`,
+  `docs/legal/INSTANCE-PRIVACY.md`, `docs/legal/INSTANCE-ACCEPTABLE-USE.md`, `MIGRATIONS.md` -- claims
+  corrected; privacy notice carries an explicit correction
+- `src/version.ts` -- 1.0.5 -> 1.1.0
+- `package.json` -- 1.0.5 -> 1.1.0
+- `packages/create-prism/package.json` -- 1.0.5 -> 1.1.0
+- `package-lock.json` -- lock version
+- `CHANGELOG.md` -- this entry
+
+No binding, secret, or schema change. `npm run typecheck` clean; `npm test` green (475).
+
 ## v1.0.5
 
 PATCH: public mode ignores `OPENAI_API_KEY`, and the README says who actually pays for what.

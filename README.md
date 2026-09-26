@@ -70,7 +70,7 @@ A working template for the Cloudflare AI stack and a self-hosted multimodal play
 
 One Worker, no framework, no build step beyond TypeScript. The interesting parts are the patterns, not the model count:
 
-- **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, conversational STT + voice chat (Flux over a WebSocket), video gen, and music gen. Paid third-party models bill through **Cloudflare Unified Billing** on your AI Gateway.
+- **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, conversational STT + voice chat (Flux over a WebSocket), video gen, and music gen. Paid third-party models bill through **Cloudflare Unified Billing** on your AI Gateway. The binding can only reach the worker's own Cloudflare account, so in public mode (v1.1.0) the same `aiRun` seam swaps to the Cloudflare REST API (`/accounts/{account_id}/ai/run`) on each user's own account; see [Who pays for what](#who-pays-for-what).
 - **Per-provider dispatch helpers** for Anthropic Claude, xAI Grok, and Google Gemini, each transforming our internal `messages` shape into the provider's native format while authorizing keylessly via `cf-aig-authorization`. OpenAI chat and Workers AI ride the `env.AI.run` binding directly. **Sole deployer BYOK carve-out (v0.174.0):** optional `OPENAI_API_KEY` lets `openai/gpt-image-*` call `api.openai.com` for transparent PNG (the CF proxy 7003-rejects `background`/`output_format`). When unset, those models stay opaque on Unified Billing. Public mode (`AUTH_MODE=public`) ignores the key even if set (v1.0.5, prism#193).
 - **SSE streaming** (v0.13.0+) for chat models across providers: Anthropic native SSE, Workers AI / OpenAI-compatible SSE (incl. Moonshot K3), xAI, OpenAI Chat Completions and Responses API (v0.173.0), and Gemini.
 - **AI Gateway** wraps every call for observability, caching, and rate-limiting.
@@ -241,7 +241,7 @@ One Worker, no framework, no build step beyond TypeScript. The interesting parts
 
 **UI (focus-mode redesign, v0.110.0+):** a single centered conversation column with a floating composer; the sidebar (searchable history, projects, documents) is a slide-in overlay; a searchable model picker (type to filter, v0.111.0); a ⚙ popover for the system prompt + retrieval toggles and an account menu in the top bar; a paperclip attach button and a voice-chat mic; conversation header **compact** / **expand** when a thread has enough turns (v0.175.7). Capability-aware mode switching (vision-only attachment types; image-mode re-skins to "negative prompt"; TTS / STT / video / music / voice hide irrelevant inputs), FLUX.2 reference-image attach UI (v0.16.0), per-turn web-search toggle (v0.17.0), per-user replay-able history with attachments and generated artifacts, Enter to send / Shift+Enter for newline. Mobile-optimized (safe-area insets, touch targets, no iOS zoom).
 
-**Auth (two modes via `AUTH_MODE`):** **public** (the hosted product) is first-party username/password signup with an opaque session cookie and mandatory per-user BYOK: each user brings their own AI Gateway and the worker ignores its own gateway and OpenAI secrets. Workers AI (`@cf/*`) models still run on the host's `AI` binding and bill the host; see [Who pays for what](#who-pays-for-what). **access** (the default, for private self-host) puts Cloudflare Access on the worker URL and scopes per-user history and R2 ownership via `Cf-Access-Authenticated-User-Email` (free up to 50 seats on Zero Trust). See [Running the public service](#running-the-public-service).
+**Auth (two modes via `AUTH_MODE`):** **public** (the hosted product) is first-party username/password signup with an opaque session cookie and mandatory per-user BYOK: each user supplies their Cloudflare account ID, AI Gateway slug, and API token, and the worker ignores its own gateway and OpenAI secrets. A handful of Workers AI (`@cf/*`) paths that cannot ride a gateway still run on the host's `AI` binding and bill the host; see [Who pays for what](#who-pays-for-what). **access** (the default, for private self-host) puts Cloudflare Access on the worker URL and scopes per-user history and R2 ownership via `Cf-Access-Authenticated-User-Email` (free up to 50 seats on Zero Trust). See [Running the public service](#running-the-public-service).
 
 ## Stack
 
@@ -418,8 +418,8 @@ npm run dev
 ## Running the public service
 
 Run Prism as an open, self-serve service: anyone signs up with a username and password, and each user
-brings their own Cloudflare AI Gateway for partner-model inference. Workers AI (`@cf/*`) models still run on
-your `AI` binding and bill you; see [Who pays for what](#who-pays-for-what). This
+brings their own Cloudflare account and AI Gateway for inference. A short list of Workers AI (`@cf/*`) paths
+that cannot ride a gateway still run on your `AI` binding and bill you; see [Who pays for what](#who-pays-for-what). This
 is how play.skyphusion.org runs. It is a **mode of the same worker** (`AUTH_MODE=public`), not a second
 deployment.
 
@@ -430,7 +430,7 @@ deployment.
 | `AUTH_MODE` | `access` (default; may be unset) | `public` |
 | Sign-in | Cloudflare Access (email OTP / OAuth) | First-party username + password signup |
 | Worker gateway secrets | `GATEWAY_ID` + `CF_AIG_TOKEN` (yours; you pay inference) | **None** (omit both; ignored even if set) |
-| Who pays for inference | You (the deployer) | Partner models: each user, via their own AI Gateway. Workers AI (`@cf/*`): you |
+| Who pays for inference | You (the deployer) | Each user, on their own Cloudflare account (v1.1.0), except the gateway-bypass Workers AI paths: you |
 | Cloudflare Access app | Required | **Not used** |
 
 Everything else (D1, R2, Vectorize, deploy) is the same as the [Quickstart](#quickstart): do steps 2 to
@@ -472,15 +472,18 @@ npm run deploy
 ### How users get set up (mandatory BYOK)
 
 1. Open the URL and **sign up** with a username and password (no email, no Access login).
-2. Open **Account > AI Gateway**; create a Cloudflare AI Gateway in the [Cloudflare dashboard](https://developers.cloudflare.com/ai-gateway/) if needed, and enable Unified Billing for the providers you want.
-3. Paste the gateway **slug** and a Cloudflare API token with **AI Gateway Run** permission.
-4. Run models. Until a user configures their gateway, every model fails closed with a clear "configure your AI Gateway" prompt (HTTP 412). The gate controls who may run inference; it does not change which account a Workers AI call bills (see below).
+2. Open **Account > AI Gateway**; create a Cloudflare AI Gateway in the [Cloudflare dashboard](https://developers.cloudflare.com/ai-gateway/) if needed, and load Unified Billing credits on that account.
+3. Paste the Cloudflare **account ID** (32 hex characters, from the dashboard), the gateway **slug**, and an API token scoped to that account with **Workers AI Read** (the REST API refuses a token that holds only AI Gateway permissions) and **AI Gateway Run** (the provider-native gateway endpoints). All three are required.
+4. Run models. Until a user configures all three, every model fails closed with HTTP 412 and a code naming what is missing (`gateway_not_configured`, `gateway_account_id_required`, `cf_aig_token_required`). The gate controls who may run inference; it does not change which account the gateway-bypass paths bill (see below).
+
+**Why the account ID is required (v1.1.0).** Before v1.1.0 a user stored only a slug and a token, and every call resolved that slug on the worker's own `AI` binding. Cloudflare pins a binding's gateway to the worker's account ("Must be in the same account as your Worker"), and an AI Gateway URL is `.../v1/{account_id}/{gateway_id}/{provider}`, so the account was always the host's: a user's own gateway was unreachable, and those calls either failed or billed the host, never the user. Users saved under that shape keep their slug and token but are refused with `gateway_account_id_required` until they add the account ID; nothing falls back to the host.
 
 ### Who pays for what
 
 - **You (the host)** pay Cloudflare for Workers, D1, R2, and Vectorize: the storage and compute for the service itself.
-- **You (the host)** also pay for every **Workers AI** (`@cf/*`) call, because the worker's own `AI` binding runs them: Workers AI chat models, the FLUX / Leonardo / Lykon / Stability image models, TTS, Whisper and Deepgram STT (including live voice), and the RAG embeddings (`@cf/baai/bge-base-en-v1.5`) behind document upload and retrieval. Several of these call the binding with no gateway at all (stream-incompatible image models, Deepgram STT, the live-voice socket). Bound this with Workers AI limits on your account or remove those models from `src/models.ts` on your instance.
-- **Each user** pays for partner-model inference (Anthropic, xAI, Google, OpenAI, and the other Unified Billing providers) through the AI Gateway they configured.
+- **Each user** pays for every call that goes through the `aiRun` seam or a provider-native gateway endpoint, on their own Cloudflare account and gateway (v1.1.0): all partner models (Anthropic, xAI, Google, OpenAI, and the other Unified Billing providers, including image, video, and music), Workers AI chat, TTS, Whisper STT, FLUX.1 / Lucid Origin image gen, and the RAG embeddings (`@cf/baai/bge-base-en-v1.5`) behind document upload and retrieval.
+- **You (the host)** pay for the Workers AI paths that call the worker's `AI` binding directly because AI Gateway cannot proxy them, which means the user's account cannot be reached either: the six stream-incompatible image models (FLUX.2 Klein 9B / Klein 4B / Dev, Leonardo Phoenix 1.0, Dreamshaper 8 LCM, SDXL), Deepgram file STT, and the live-voice Flux socket. Bound this with Workers AI limits on your account or remove those models from `src/models.ts` on your instance.
+- **Control-plane users** (`pcp_` key) bill chat through prism-control-plane under its own metering, not through either account above.
 
 ### Abuse controls and policies
 

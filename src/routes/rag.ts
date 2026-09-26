@@ -9,7 +9,7 @@ import { getDocumentProxy } from "unpdf";
 import * as XLSX from "xlsx";
 import type { Env } from "../env";
 import { aiRun, type AiContext } from "../ai-binding";
-import { loadGatewayCredentials, GATEWAY_NOT_CONFIGURED_MSG } from "../gateway-credentials";
+import { requireGatewayCredentials } from "../gateway-credentials";
 import { chunkText } from "../chunking";
 import { searchSearxngWeb } from "../searxng";
 import { r2Put, r2DeleteSafe } from "./shared";
@@ -221,10 +221,7 @@ export async function extractChunks(bytes: Uint8Array, mime: string, filename: s
 
 export async function embedBatch(env: Env, userEmail: string, texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const gateway = await loadGatewayCredentials(env, userEmail);
-  if (!gateway?.gatewayId) {
-    throw new Error(GATEWAY_NOT_CONFIGURED_MSG);
-  }
+  const gateway = await requireGatewayCredentials(env, userEmail);
   const aiCtx: AiContext = { env, gateway };
   const result = await aiRun(aiCtx, EMBED_MODEL, { text: texts }) as {
     shape?: [number, number];

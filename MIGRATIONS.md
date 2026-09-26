@@ -8,6 +8,8 @@ redeploy.
 
 **Migration philosophy (read this first).** `schema.sql` is the canonical full schema for standing up a *fresh* database. It contains non-idempotent `ALTER TABLE` statements, so re-running it against a database that already has tables will raise `SQLITE_ERROR: duplicate column name` and, because `wrangler d1 execute --file` runs the whole file as one transaction, abort and roll back the entire run. **Never re-run `schema.sql` against an existing database.** To upgrade an existing deployment, apply only the delta for each version you're crossing, using the explicit commands below (or, for releases that ship one, the per-release `migrate-vX.Y.Z.sql` delta file). Apply each version's delta in order, then redeploy.
 
+**v1.1.0 (account-scoped BYOK): BREAKING for existing BYOK users, no DDL.** `account_id` is a new key in the existing `user_prefs.prefs_json` blob. Every public-mode user saved before v1.1.0 (slug + token only) is refused with HTTP 412 `gateway_account_id_required` on every inference route until they add their 32-hex Cloudflare account ID under Account > AI Gateway, and their token must hold Workers AI Read as well as AI Gateway Run. A user who upgrades and does nothing loses inference. Tell your users before you tag. Access-mode installs using worker secrets are unaffected.
+
 v0.13.0 onward touched the D1 schema only at v0.20.0, v0.20.2, and v0.20.3; everything else in the v0.13.0 to v0.20.0 range is code-only. The pre-v0.13.0 migrations (v0.7.0 to v0.10.0) are below for anyone upgrading from very old deployments.
 
 For v0.7.0 (video generation):

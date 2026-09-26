@@ -9,7 +9,7 @@ import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
 import type { WorkflowEvent } from "cloudflare:workers";
 import type { Env } from "../env";
 import { aiRun, type AiContext } from "../ai-binding";
-import { loadGatewayCredentials, GATEWAY_NOT_CONFIGURED_MSG } from "../gateway-credentials";
+import { requireGatewayCredentials } from "../gateway-credentials";
 import { buildGenParams } from "../longrun-params";
 import { unzip } from "../zip";
 import { r2Put, r2KeyToDataUri, r2DeleteSafe } from "./shared";
@@ -231,10 +231,7 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
             : imageUrl;
           const params = buildGenParams(kind, { modelId, prompt, lyrics, imageUrl: resolvedImage });
 
-          const gateway = await loadGatewayCredentials(this.env, userEmail);
-          if (!gateway?.gatewayId) {
-            throw new Error(GATEWAY_NOT_CONFIGURED_MSG);
-          }
+          const gateway = await requireGatewayCredentials(this.env, userEmail);
           const aiCtx: AiContext = { env: this.env, gateway };
           const result = await aiRun(aiCtx, modelId, params) as LongRunResult;
 

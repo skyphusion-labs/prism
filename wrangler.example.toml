@@ -174,8 +174,10 @@ enabled = true
 #   GATEWAY_ID=your-gateway-slug
 #
 # Public mode (v0.167.0+): omit GATEWAY_ID and CF_AIG_TOKEN on the worker.
-# Each visitor stores their own gateway slug + token via Account > AI Gateway
-# (/api/prefs in D1 user_prefs). No Cloudflare Access needed when AUTH_MODE=public.
+# Each visitor stores their own Cloudflare account id, gateway slug, and token
+# via Account > AI Gateway (/api/prefs in D1 user_prefs); v1.1.0 requires the
+# account id, since the AI binding can only reach this worker's own account.
+# No Cloudflare Access needed when AUTH_MODE=public.
 #
 # Other worker secrets (also set via `npx wrangler secret put <NAME>`):
 #   OPENAI_API_KEY (optional sole BYOK carve-out, v0.174.0): when set,

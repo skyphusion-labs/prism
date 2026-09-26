@@ -11,15 +11,15 @@ import type { InputAttachment } from "../types";
 import { extFromMime, bytesToBase64 } from "../utils";
 import { type AiContext } from "../ai-binding";
 import {
-  loadGatewayCredentials,
-  GATEWAY_NOT_CONFIGURED_MSG,
+  resolveGateway,
+  gatewayProblemMessage,
   CF_AIG_TOKEN_REQUIRED_MSG,
 } from "../gateway-credentials";
 import {
   resolveControlPlane,
   type ControlPlaneCredentials,
 } from "../control-plane";
-import { loadUserPrefs } from "../user-prefs";
+import { loadUserPrefs, type UserPrefsJson } from "../user-prefs";
 import { resolveIdentity } from "../auth";
 
 // ---------- Types ----------
@@ -139,14 +139,27 @@ export async function requireAiContext(
   userEmail: string,
   opts?: { requireCfToken?: boolean },
 ): Promise<AiContext | Response> {
-  const gateway = await loadGatewayCredentials(env, userEmail);
-  if (!gateway?.gatewayId) {
-    return json({ error: GATEWAY_NOT_CONFIGURED_MSG, code: "gateway_not_configured" }, { status: 412 });
+  const prefs = await loadUserPrefs(env.DB, userEmail);
+  return aiContextFromPrefs(prefs, env, opts);
+}
+
+// v1.1.0: every refusal carries its own code so the SPA can say what is
+// missing. gateway_account_id_required is the pre-v1.1.0 shape (slug + token,
+// no account id) in public mode: refused, never resolved on our binding.
+export function aiContextFromPrefs(
+  prefs: UserPrefsJson | null,
+  env: Env,
+  opts?: { requireCfToken?: boolean },
+): AiContext | Response {
+  const { creds, problem } = resolveGateway(prefs, env);
+  if (!creds) {
+    const code = problem ?? "gateway_not_configured";
+    return json({ error: gatewayProblemMessage(code), code }, { status: 412 });
   }
-  if (opts?.requireCfToken && !gateway.cfAigToken) {
+  if (opts?.requireCfToken && !creds.cfAigToken) {
     return json({ error: CF_AIG_TOKEN_REQUIRED_MSG, code: "cf_aig_token_required" }, { status: 412 });
   }
-  return { env, gateway };
+  return { env, gateway: creds };
 }
 
 /**
@@ -168,7 +181,7 @@ export async function requireInferenceBackend(
   const cp = resolveControlPlane(prefs, env);
   if (cp) return { kind: "control_plane", cp };
 
-  const gatewayOrErr = await requireAiContext(env, userEmail, opts);
+  const gatewayOrErr = aiContextFromPrefs(prefs, env, opts);
   if (gatewayOrErr instanceof Response) return gatewayOrErr;
   return { kind: "gateway", ctx: gatewayOrErr };
 }
