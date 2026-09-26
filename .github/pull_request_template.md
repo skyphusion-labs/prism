@@ -16,6 +16,7 @@ This is an AGPL-3.0-only project.
 
 ## Checklist
 
+- [ ] Every commit is signed off (`git commit -s`, DCO; checked by the `dco` workflow)
 - [ ] No em-dashes or en-dashes (use commas, semicolons, or parentheses)
 - [ ] No secrets in the diff (tokens, `.dev.vars`, real `wrangler.toml`, Access JWTs)
 - [ ] Did not bump the version or add a CHANGELOG release heading (maintainers cut releases)
