@@ -4,7 +4,7 @@
 [![Typecheck](https://github.com/skyphusion-labs/prism/actions/workflows/typecheck.yml/badge.svg)](https://github.com/skyphusion-labs/prism/actions/workflows/typecheck.yml)
 [![Voice chat](https://img.shields.io/badge/%F0%9F%8E%99%EF%B8%8F_voice_chat-speak_%26_hear_chat_models-6d8cff)](#voice-chat)
 
-A multimodal AI playground deployed as a single Cloudflare Worker. **Live demo:** https://play.skyphusion.org (free signup, bring your own AI Gateway). Catalog breadth is live at `GET /api/models` (and `src/models.ts`): **93** models (44 chat + 21 image + 19 video + 3 TTS + 4 STT + 1 music + 1 live voice); the tables under [Features](#features) list every id. Native clients hit the commercial plane ([prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane)); this Worker is the playground surface (RAG, projects, compact, web search). **Hands-free voice chat**, cross-model artifact reuse, RAG, projects, Discord ingestion, web search, SSE streaming, and multi-turn conversations (with optional **compact**). One web UI with first-party accounts, per-user history, R2 for all binary artifacts.
+A multimodal AI playground deployed as a single Cloudflare Worker. **Live demo:** https://play.skyphusion.org (free signup, bring your own AI Gateway; a short list of demo capabilities is funded by the host, see [Who pays for what](#who-pays-for-what)). Catalog breadth is live at `GET /api/models` (and `src/models.ts`): **93** models (44 chat + 21 image + 19 video + 3 TTS + 4 STT + 1 music + 1 live voice); the tables under [Features](#features) list every id. Native clients hit the commercial plane ([prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane)); this Worker is the playground surface (RAG, projects, compact, web search). **Hands-free voice chat**, cross-model artifact reuse, RAG, projects, Discord ingestion, web search, SSE streaming, and multi-turn conversations (with optional **compact**). One web UI with first-party accounts, per-user history, R2 for all binary artifacts.
 
 ```mermaid
 flowchart TB
@@ -484,6 +484,27 @@ npm run deploy
 - **Each user** pays for every call that goes through the `aiRun` seam or a provider-native gateway endpoint, on their own Cloudflare account and gateway (v1.1.0): all partner models (Anthropic, xAI, Google, OpenAI, and the other Unified Billing providers, including image, video, and music), Workers AI chat, TTS, Whisper STT, FLUX.1 / Lucid Origin image gen, and the RAG embeddings (`@cf/baai/bge-base-en-v1.5`) behind document upload and retrieval.
 - **You (the host)** pay for the Workers AI paths that call the worker's `AI` binding directly because AI Gateway cannot proxy them, which means the user's account cannot be reached either: the six stream-incompatible image models (FLUX.2 Klein 9B / Klein 4B / Dev, Leonardo Phoenix 1.0, Dreamshaper 8 LCM, SDXL), Deepgram file STT, and the live-voice Flux socket. Bound this with Workers AI limits on your account or remove those models from `src/models.ts` on your instance.
 - **Control-plane users** (`pcp_` key) bill chat through prism-control-plane under its own metering, not through either account above.
+
+**How it works.** In `AUTH_MODE=public`, the host funds a named set of demo capabilities on purpose. Every other inference call bills the user's own Cloudflare account.
+
+The 412 gate (`gateway_account_id_required`) decides who may run inference. It does not decide which account pays. The `AI` binding always runs on the worker's own account, and Cloudflare does not let a binding reach another account. The gateway-bypass paths use the binding, so they bill the host. The `aiRun` paths use the REST API with the user's token, so they bill the user.
+
+This table was read from the code on `main` (v1.1.1). It shows what the code does, not what a deployed worker runs.
+
+| Capability | Code path | Billed to |
+|---|---|---|
+| FLUX.2 Klein 9B, Klein 4B, Dev; Leonardo Phoenix 1.0; Dreamshaper 8 LCM; SDXL | `bypassGateway` in `src/routes/chat.ts` calls `env.AI.run` | **Host** |
+| Deepgram Nova-3 file speech-to-text | `viaDeepgram` in `src/routes/chat.ts` calls `env.AI.run` | **Host** |
+| Live voice (Deepgram Flux websocket) | `src/stt-session.ts` calls `env.AI.run` | **Host** |
+| Workers AI chat, TTS, Whisper, FLUX.1 schnell, Lucid Origin | `aiRun`, which uses the REST API on the user's account | User |
+| RAG embeddings (`@cf/baai/bge-base-en-v1.5`) | `aiRun` in `src/routes/rag.ts` | User |
+| Partner models through `aiRun` (OpenAI, Anthropic, xAI, Google, video, music) | `aiRun`, including the long-run Workflow | User |
+| Anthropic and xAI legacy provider-native path | `gatewayProviderUrl` builds the URL from the user's account ID | User |
+| Control-plane chat (`pcp_` key) | prism-control-plane | Its own metering |
+
+The Anthropic, xAI and `aiRun` partner-model rows were Unverified in PR #195. Reading `resolveGateway` closes them. In public mode it returns credentials only with an account ID, so those calls always carry the user's account.
+
+**Review trigger.** If daily Workers AI neurons pass 5,000, a cap proposal gets written. Nothing enforces this number. It starts a decision and does not limit use. The free allocation is 10,000 neurons per day. Measured use was 8,635 neurons in the 30 days to 2026-10-08, so the cost today is zero. That window ran almost entirely before v1.1.0, when chat and embeddings also ran on the binding. v1.1.0 is deployed on play (`/health` reported `1.1.0` on 2026-10-08), so the host-funded set is now the three rows above. The 8,635 figure predates it and has not been re-measured against the new shape. `main` may be ahead of the deployed version.
 
 ### Abuse controls and policies
 
