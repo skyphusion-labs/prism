@@ -504,7 +504,7 @@ This table was read from the code on `main` (v1.1.1). It shows what the code doe
 
 The Anthropic, xAI and `aiRun` partner-model rows were Unverified in PR #195. Reading `resolveGateway` closes them. In public mode it returns credentials only with an account ID, so those calls always carry the user's account.
 
-**Review trigger.** If daily Workers AI neurons pass 5,000, a cap proposal gets written. Nothing enforces this number. It starts a decision and does not limit use. The free allocation is 10,000 neurons per day. Measured use was 8,635 neurons in the 30 days to 2026-10-08, so the cost today is zero. That window ran almost entirely before v1.1.0, when chat and embeddings also ran on the binding. Re-measure after v1.1.0 is deployed.
+**Review trigger.** If daily Workers AI neurons pass 5,000, a cap proposal gets written. Nothing enforces this number. It starts a decision and does not limit use. The free allocation is 10,000 neurons per day. Measured use was 8,635 neurons in the 30 days to 2026-10-08, so the cost today is zero. That window ran almost entirely before v1.1.0, when chat and embeddings also ran on the binding. v1.1.0 is deployed on play (`/health` reported `1.1.0` on 2026-10-08), so the host-funded set is now the three rows above. The 8,635 figure predates it and has not been re-measured against the new shape. `main` may be ahead of the deployed version.
 
 ### Abuse controls and policies
 

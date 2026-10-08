@@ -22,7 +22,9 @@ host. Every other inference call uses the REST API with the user's token and bil
 Review trigger: if daily Workers AI neurons pass 5,000, a cap proposal gets written. Nothing enforces
 this number. The free allocation is 10,000 neurons per day, and measured use was 8,635 neurons in the
 30 days to 2026-10-08. That window ran almost entirely before v1.1.0, when chat and embeddings also
-billed the host. Re-measure after v1.1.0 is deployed.
+billed the host. v1.1.0 is deployed on play (`/health` reported `1.1.0` on 2026-10-08), so the
+host-funded set is now the three rows above. The 8,635 figure predates it and has not been
+re-measured against the new shape.
 
 ### Code
 
