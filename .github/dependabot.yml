@@ -19,6 +19,14 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: deps
+    # HOLD vitest at 4: @cloudflare/vitest-pool-workers (0.22.0 and 0.23.0) peers vitest ^4.1.0,
+    # so a vitest 5 bump ERESOLVEs at npm ci before any test runs. Lift when a pool-workers
+    # release supports vitest 5. Tracked in the "hold vitest at 4" issue for this repo.
+    ignore:
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitest/*"
+        update-types: ["version-update:semver-major"]
     groups:
       cloudflare-toolchain:
         patterns:
