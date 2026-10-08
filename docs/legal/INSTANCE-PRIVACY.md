@@ -37,8 +37,12 @@ lose it, we have no way to email you a reset.
 - **Your content:** the prompts and chats you write, and the images, video, music, and voice you
   generate, plus any documents you add for retrieval (RAG). These are stored in the instance D1
   database and R2 bucket, keyed to your account by a stable, opaque account id.
-- **Your AI Gateway settings:** the gateway slug and Cloudflare AI Gateway token you enter so the
-  instance can run models on **your** account (see "How model inference is billed and routed" below).
+- **Your AI Gateway settings:** the Cloudflare account ID, the gateway slug, and the Cloudflare AI
+  Gateway token you enter so the instance can run models on **your** account (see "How model inference
+  is billed and routed" below).
+- **Your control-plane client key, if you enter one:** the `pcp_` key that switches chat onto the
+  Skyphusion-operated metered route (see "Metered chat through play-proxy" below). You only have one if
+  Skyphusion Labs issued it to you.
 - **Operational records** mechanically required to run the service: request and job state, and
   abuse-control counters (see "Abuse controls" below).
 
@@ -55,7 +59,9 @@ Before you can run a model you enter three things in Account settings: your **Cl
 your **AI Gateway** slug, and a Cloudflare API token for that account. The instance stores them in its D1
 database and uses them to send your model requests to **your** Cloudflare account and gateway, so that
 inference is billed to **your** Cloudflare account, not ours. With any of the three missing, model calls
-fail closed with a prompt naming what is missing, rather than running on our account.
+fail closed with a prompt naming what is missing, rather than running on our account. (The one route
+that does not need the three is metered chat through play-proxy, below, which only exists if you have
+entered a control-plane client key; everything other than chat still fails closed without them.)
 
 **One exception: a few models run on our Cloudflare account.** Some Workers AI models cannot be routed
 through an AI Gateway at all, so the instance runs them on its own Cloudflare account: live voice chat,
@@ -73,6 +79,61 @@ Treat the API token you enter as you would any API credential. It is held in the
 solely to authorize your model calls, and deleting your account (below) removes it along with
 everything else. Your account ID is not a secret (it appears in every gateway URL) but is stored and
 deleted the same way.
+
+## Metered chat through play-proxy (optional; a Skyphusion-operated route)
+
+This section applies only if you have entered a **control-plane client key** (it starts with `pcp_`)
+under Account settings > AI Gateway. Skyphusion Labs issues those keys by enrollment; if you never
+entered one, nothing in this section happens and chat runs through your own gateway as described above.
+
+**Correction.** Earlier versions of this notice did not mention this route at all, and said every model
+request went through the gateway you configure. That was incomplete: the route has existed since Prism
+v0.175.0 and the key has been stored with your gateway settings since then. The route itself is
+unchanged; this section is the disclosure that was missing.
+
+**Where your chat goes.** While a key is saved, your chat turns, and the conversation compaction that
+summarizes older turns, are sent to `https://play-proxy.skyphusion.org`, a service called
+prism-control-plane that Skyphusion Labs operates on its own Cloudflare account, instead of to your
+gateway. That hostname is fixed in the software and checked against an allowlist on every call; you
+cannot point it elsewhere from your account, and neither can anyone holding your key. Inference on this
+route is metered against the control-plane account the key belongs to, not billed to your Cloudflare
+account.
+
+**What is sent.** For each chat turn: the model you chose; the system prompt in effect for that
+conversation, which includes any compaction digest of earlier turns and, when you have retrieval or web
+search switched on for the turn, the document excerpts and search snippets retrieved for it; the text of
+the earlier turns still in context; your current message, including text extracted from any attachment;
+and your client key, as the credential. Images are not forwarded on this route: a turn with an image
+attached is refused with an error naming the control-plane route, rather than sent. Image, video, music,
+and voice generation, transcription, document ingestion, and web search never use this route; they stay
+exactly as described elsewhere in this notice.
+
+**What comes back, and what this instance keeps.** The model's reply, token counts, and a request id.
+The reply is stored with the turn in your chat the same way as on any other route, and the request id is
+stored on that chat row. Both are deleted with your account.
+
+**What the control plane keeps.** prism-control-plane is open source (AGPL-3.0-only) and publishes its
+own retention statement as a binding part of its contract: it never stores prompt or completion text,
+and a test in that repository fails the build if a column that could hold message text is ever added.
+Its usage ledger keeps, per request, the token counts, the cost, the model id, the status, a request id,
+and the id of the client key that made the call, plus a last-seen time on the key. That ledger is a
+billing record; the control plane does not publish a deletion window for it, and deleting your Prism
+account removes the key from this instance but does not touch that ledger. Read the statement itself:
+[Privacy invariant in `docs/CONTRACT.md`](https://github.com/skyphusion-labs/prism-control-plane/blob/main/docs/CONTRACT.md#privacy-invariant-binding-on-every-version-of-this-contract)
+and the matching section of its
+[README](https://github.com/skyphusion-labs/prism-control-plane/blob/main/README.md#privacy-invariant).
+
+**Beyond the control plane.** The control plane forwards your request to the provider that serves the
+model you chose (the catalog names the provider) through an AI Gateway on Skyphusion Labs' Cloudflare
+account with payload logging hard-wired off, so neither we nor Cloudflare keep the prompt or completion
+bodies there. Cloudflare keeps a metadata row for each call (token counts, model, provider, status, cost,
+duration; no content) under its own AI Gateway log retention. The model provider receives your prompt
+content in order to return a result and handles it under its own terms, exactly as it would through
+your own gateway.
+
+**The key itself.** It is stored in the instance database alongside your gateway settings, shown back to
+you only masked, cleared whenever you choose "clear control plane key" in Account settings, and deleted
+with your account (below).
 
 ## Abuse controls (transient IP processing)
 
@@ -101,8 +162,10 @@ not sell your data and we do not share it, with the single exception of the abus
 The hosted instance runs on Cloudflare (Workers, D1, R2, Vectorize). Your model requests are sent
 through the AI Gateway **you** configure, on your own Cloudflare account; the model providers reachable
 through that gateway receive your prompt content in order to return a result, and handle it under their
-own and your gateway's terms rather than ours. The exception is the short list of models above that run
-on our Cloudflare account, which Cloudflare Workers AI processes under our account.
+own and your gateway's terms rather than ours. There are two exceptions: the short list of models above
+that run on our Cloudflare account, which Cloudflare Workers AI processes under our account; and, only
+if you have entered a control-plane client key, chat through play-proxy as described in "Metered chat
+through play-proxy" above.
 
 **Web search is opt-in and does not use any third-party search API.** Prism has a per-turn web search
 toggle. When you switch it on for a turn, the text of that one query is sent to the instance's own
@@ -117,9 +180,10 @@ search. Leave the toggle off and no query leaves the instance.
 Account deletion is built into the app. From Account settings you delete your account (re-entering your
 password to confirm), and it **cascades**: it removes your account record and sessions, your chats and
 conversations, every generated artifact and uploaded document in R2, your RAG embeddings in Vectorize,
-your projects, and your stored AI Gateway settings. Deletion is on you and takes effect on the
-instance; we do not keep a shadow copy. If you self-host Prism instead, deletion is entirely in your
-hands on your own instance.
+your projects, and your stored AI Gateway settings, including any control-plane client key. Deletion is
+on you and takes effect on the instance; we do not keep a shadow copy. What the control plane's billing
+ledger holds about calls made with your key is not on this instance; see "What the control plane keeps"
+above. If you self-host Prism instead, deletion is entirely in your hands on your own instance.
 
 ## The one bright line
 
