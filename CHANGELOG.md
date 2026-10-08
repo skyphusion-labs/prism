@@ -1,3 +1,34 @@
+## Unreleased
+
+DOCS: state which public-mode capabilities the host funds (prism#206).
+
+The crew chose to keep the host-funded demo features and write them down. No code changes.
+
+| Capability | Code path | Billed to |
+|---|---|---|
+| FLUX.2 Klein 9B, Klein 4B, Dev; Leonardo Phoenix 1.0; Dreamshaper 8 LCM; SDXL | `bypassGateway` in `src/routes/chat.ts` calls `env.AI.run` | **Host** |
+| Deepgram Nova-3 file speech-to-text | `viaDeepgram` in `src/routes/chat.ts` calls `env.AI.run` | **Host** |
+| Live voice (Deepgram Flux websocket) | `src/stt-session.ts` calls `env.AI.run` | **Host** |
+| Workers AI chat, TTS, Whisper, FLUX.1 schnell, Lucid Origin | `aiRun`, which uses the REST API on the user's account | User |
+| RAG embeddings (`@cf/baai/bge-base-en-v1.5`) | `aiRun` in `src/routes/rag.ts` | User |
+| Partner models through `aiRun` (OpenAI, Anthropic, xAI, Google, video, music) | `aiRun`, including the long-run Workflow | User |
+| Anthropic and xAI legacy provider-native path | `gatewayProviderUrl` builds the URL from the user's account ID | User |
+| Control-plane chat (`pcp_` key) | prism-control-plane | Its own metering |
+
+The 412 gate (`gateway_account_id_required`) decides who may run inference. It does not decide which
+account pays. The `AI` binding is pinned to the worker's own account, so the three host rows bill the
+host. Every other inference call uses the REST API with the user's token and bills the user.
+
+Review trigger: if daily Workers AI neurons pass 5,000, a cap proposal gets written. Nothing enforces
+this number. The free allocation is 10,000 neurons per day, and measured use was 8,635 neurons in the
+30 days to 2026-10-08. That window ran almost entirely before v1.1.0, when chat and embeddings also
+billed the host. Re-measure after v1.1.0 is deployed.
+
+### Code
+
+- `README.md` -- host-funded table, review trigger, and a pointer from the opening paragraph
+- `CHANGELOG.md` -- this entry
+
 ## v1.1.1
 
 PATCH: two published privacy promises that the code did not keep (prism#192).
