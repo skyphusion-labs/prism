@@ -374,8 +374,11 @@ function renderGatewayBanner() {
   }
   gatewayBanner.hidden = false;
   if (gatewayBannerText) {
-    gatewayBannerText.textContent =
-      "Inference not configured. Set AI Gateway (BYOK) or a control-plane pcp_ client key under Account settings.";
+    // v1.1.0: saved before account ids existed (slug + token only). Say the
+    // one thing that is missing rather than "not configured".
+    gatewayBannerText.textContent = g.account_id_required
+      ? "Add your Cloudflare account ID under Account > AI Gateway. Without it your gateway is unreachable, so model calls are refused."
+      : "Inference not configured. Set AI Gateway (BYOK) or a control-plane pcp_ client key under Account settings.";
   }
 }
 
@@ -1508,7 +1511,8 @@ async function run() {
     userInput.focus();
     // #80 fail-closed: 412 = no AI Gateway BYOK and no control-plane pcp_ key.
     // Open the account modal so either path can be configured.
-    if (err.status === 412 || err.code === "gateway_not_configured" || err.code === "cf_aig_token_required") {
+    if (err.status === 412 || err.code === "gateway_not_configured" || err.code === "cf_aig_token_required"
+        || err.code === "gateway_account_id_required") {
       openGatewayModal();
     }
   } finally {
@@ -2188,6 +2192,7 @@ const projectModalCancel   = $("#project-modal-cancel");
 const projectModalDelete   = $("#project-modal-delete");
 
 const gatewayModal         = $("#gateway-modal");
+const gatewayModalAccount  = $("#gateway-modal-account");
 const gatewayModalId       = $("#gateway-modal-id");
 const gatewayModalToken    = $("#gateway-modal-token");
 const gatewayModalTokenHint= $("#gateway-modal-token-hint");
@@ -2354,6 +2359,7 @@ async function openGatewayModal() {
   if (gatewayModalClearCp) gatewayModalClearCp.checked = false;
   try {
     const prefs = await api("/api/prefs");
+    if (gatewayModalAccount) gatewayModalAccount.value = prefs.account_id || "";
     gatewayModalId.value = prefs.gateway_id || "";
     if (gatewayModalTokenHint) {
       gatewayModalTokenHint.textContent = prefs.cf_aig_token_set
@@ -2377,6 +2383,8 @@ async function openGatewayModal() {
       source: prefs.source,
       gateway_id: prefs.gateway_id,
       cf_aig_token_set: prefs.cf_aig_token_set,
+      account_id: prefs.account_id,
+      account_id_required: !!prefs.account_id_required,
       control_plane_configured: !!prefs.control_plane_configured,
     };
     renderGatewayBanner();
@@ -2387,7 +2395,8 @@ async function openGatewayModal() {
     gatewayModalError.hidden = false;
   }
   gatewayModal.hidden = false;
-  gatewayModalId.focus();
+  if (gatewayModalAccount && !gatewayModalAccount.value) gatewayModalAccount.focus();
+  else gatewayModalId.focus();
 }
 
 function closeGatewayModal() {
@@ -2412,7 +2421,9 @@ function showGatewayModalError(msg) {
 
 async function saveGatewayModal() {
   const gateway_id = gatewayModalId.value.trim();
+  const account_id = gatewayModalAccount ? gatewayModalAccount.value.trim() : "";
   const body = {};
+  if (gatewayModalAccount) body.account_id = account_id;
   if (gateway_id) body.gateway_id = gateway_id;
   else body.gateway_id = "";
   if (gatewayModalClear.checked) {
@@ -2426,8 +2437,8 @@ async function saveGatewayModal() {
     body.control_plane_key = gatewayModalCpKey.value.trim();
   }
   const hasCp = body.control_plane_key || body.clear_control_plane_key;
-  if (!gateway_id && !body.cf_aig_token && !body.clear_cf_aig_token && !hasCp) {
-    showGatewayModalError("enter a gateway slug, API token, and/or control-plane key");
+  if (!account_id && !gateway_id && !body.cf_aig_token && !body.clear_cf_aig_token && !hasCp) {
+    showGatewayModalError("enter your account ID, gateway slug, API token, and/or control-plane key");
     return;
   }
   try {
@@ -2437,6 +2448,8 @@ async function saveGatewayModal() {
       source: prefs.source,
       gateway_id: prefs.gateway_id,
       cf_aig_token_set: prefs.cf_aig_token_set,
+      account_id: prefs.account_id,
+      account_id_required: !!prefs.account_id_required,
       control_plane_configured: !!prefs.control_plane_configured,
     };
     renderGatewayBanner();

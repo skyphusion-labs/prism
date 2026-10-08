@@ -94,9 +94,10 @@
       <button type="submit" id="auth-submit" class="auth-submit">create account</button>
 
       <p class="auth-foot">
-        Inference runs on your own Cloudflare account: after you sign in, configure
-        an AI Gateway (slug plus a Unified Billing token) under Account. Workers,
-        storage, and retrieval are hosted; model spend is yours.
+        Inference runs on your own Cloudflare account: after you sign in, add your
+        account ID, an AI Gateway slug, and an API token under Account. Storage,
+        retrieval, live voice, Deepgram transcription, and six gateway-incompatible
+        Workers AI image models run on our account; all other model spend bills yours.
       </p>
     </form>
   </div>
@@ -182,7 +183,7 @@
       </header>
 
       <div id="gateway-banner" class="gateway-banner" hidden>
-        <span id="gateway-banner-text">AI Gateway not configured. Set your gateway slug and Cloudflare API token to run models on your account.</span>
+        <span id="gateway-banner-text">AI Gateway not configured. Set your Cloudflare account ID, gateway slug, and API token to run models on your account.</span>
         <button id="gateway-banner-btn" type="button">Configure</button>
       </div>
 
@@ -286,7 +287,11 @@
         <button class="modal-close" data-modal-close="gateway-modal" type="button" title="close">&#x2715;</button>
       </header>
       <div class="modal-body">
-        <p class="modal-hint">Connect your Cloudflare AI Gateway so model calls bill your account via Unified Billing. Create a gateway in the Cloudflare dashboard, enable Unified Billing for the providers you want, then paste the gateway slug and an API token with <strong>AI Gateway Run</strong> permission.</p>
+        <p class="modal-hint">Connect your Cloudflare AI Gateway so model calls bill your account via Unified Billing. Create a gateway in the Cloudflare dashboard and load credits, then paste your <strong>account ID</strong>, the gateway slug, and an API token scoped to that account with <strong>Workers AI Read</strong> and <strong>AI Gateway Run</strong>. All three are required: without the account ID a slug would resolve on this instance's account, so calls are refused instead.</p>
+        <label class="modal-field">
+          <span>Cloudflare account ID</span>
+          <input id="gateway-modal-account" type="text" autocomplete="off" spellcheck="false" maxlength="32" placeholder="32 hex characters, from your dashboard">
+        </label>
         <label class="modal-field">
           <span>gateway slug</span>
           <input id="gateway-modal-id" type="text" autocomplete="off" placeholder="my-gateway-slug">

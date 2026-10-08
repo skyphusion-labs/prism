@@ -1,6 +1,6 @@
 {
   "name": "@skyphusion/create-prism",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "description": "Scaffold a new prism deployment: a multimodal AI playground on Cloudflare Workers.",
   "license": "AGPL-3.0-only",
   "author": "Conrad Rockenhaus",
