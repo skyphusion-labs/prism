@@ -15,4 +15,4 @@
 // That distinction is the entire point. In prism-mcp the advertised version was a literal and
 // the test asserting it carried a TRANSCRIBED duplicate, so the assertion only ever proved
 // that someone had typed the same thing twice, and a correct version bump went red.
-export const VERSION = "1.1.0";
+export const VERSION = "1.1.1";

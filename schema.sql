@@ -298,6 +298,12 @@ CREATE TABLE IF NOT EXISTS auth_attempts (
   count        INTEGER NOT NULL DEFAULT 0,
   window_start TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- prism#192: src/rate-limit.ts prunes this table on write (the csp_reports
+-- pattern) so "transient IP processing" in the hosted privacy notice is true of
+-- the code. The prune filters window_start; index it, exactly as
+-- idx_csp_reports_received does for the other prune-on-write table.
+CREATE INDEX IF NOT EXISTS idx_auth_attempts_window ON auth_attempts(window_start);
 -- 0004: CSP violation collector (fleet-chezmoi#1646).
 --
 -- Two tables, and the split is the point. `csp_report_buckets` is a rate-limit

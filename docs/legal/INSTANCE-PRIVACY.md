@@ -81,6 +81,15 @@ counting recent attempts against the caller's IP address (the address Cloudflare
 and, for login, the username being tried. IP addresses are processed for this abuse-control purpose
 only; we do not use them to profile you, build a history, or track you across sessions.
 
+**How long those counters live: at most 24 hours.** A successful login clears its own counter
+immediately, and every signup or login attempt also deletes any counter older than 24 hours, so an
+address that stops coming back is erased on the next attempt by anyone. The counting windows
+themselves are much shorter (15 minutes for login, 1 hour for signup); the 24-hour figure is the
+outer bound on how long a row can sit in the database before it is removed. Earlier versions of this
+notice called this processing "transient" without saying what that meant, and in fact nothing removed
+a counter that never saw a successful login: those rows persisted indefinitely. That is fixed, and the
+deletion now runs on the write path rather than depending on a scheduled job.
+
 ## What we do not do
 
 No tracking, no advertising, no analytics or ad-tech, no profiling, no third-party data brokers. We do
