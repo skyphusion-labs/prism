@@ -135,21 +135,25 @@ your own gateway.
 you only masked, cleared whenever you choose "clear control plane key" in Account settings, and deleted
 with your account (below).
 
-## Abuse controls (transient IP processing)
+## Abuse controls (bounded IP processing for signup and login)
 
 To keep signup and login from being abused, the instance rate-limits those requests. It does this by
 counting recent attempts against the caller's IP address (the address Cloudflare reports at the edge)
-and, for login, the username being tried. IP addresses are processed for this abuse-control purpose
-only; we do not use them to profile you, build a history, or track you across sessions.
+and, for login, the username being tried. A counter row holds that key, a count, and the start of its
+counting window, and nothing else. IP addresses are processed for this abuse-control purpose only; we
+do not use them to profile you, build a history, or track you across sessions.
 
-**How long those counters live: at most 24 hours.** A successful login clears its own counter
-immediately, and every signup or login attempt also deletes any counter older than 24 hours, so an
-address that stops coming back is erased on the next attempt by anyone. The counting windows
-themselves are much shorter (15 minutes for login, 1 hour for signup); the 24-hour figure is the
-outer bound on how long a row can sit in the database before it is removed. Earlier versions of this
-notice called this processing "transient" without saying what that meant, and in fact nothing removed
-a counter that never saw a successful login: those rows persisted indefinitely. That is fixed, and the
-deletion now runs on the write path rather than depending on a scheduled job.
+**How long a counter lives: at most 24 hours.** The counting windows are short (15 minutes for login,
+1 hour for signup); 24 hours is the outer bound on how long a row can sit in the database before it is
+removed, and it is deliberately far longer than any counting window so a prune can never discard a
+counter a rate-limit decision still depends on. A successful login clears its own counter immediately,
+and every signup or login attempt deletes every counter older than 24 hours, so an address that stops
+coming back is erased by the next attempt from anyone. The deletion runs on the write path itself, not
+on a scheduled job, so a self-hosted instance inherits the same bound with no extra configuration.
+
+**Correction (v1.1.1).** Earlier versions of this notice called this processing "transient" without
+saying what that meant, and in fact nothing removed a counter that never saw a successful login: those
+rows persisted indefinitely. v1.1.1 added the 24-hour bound above.
 
 ## What we do not do
 
@@ -179,7 +183,9 @@ search. Leave the toggle off and no query leaves the instance.
 
 Account deletion is built into the app. From Account settings you delete your account (re-entering your
 password to confirm), and it **cascades**: it removes your account record and sessions, your chats and
-conversations, every generated artifact and uploaded document in R2, your RAG embeddings in Vectorize,
+conversations (including the compaction digests of your conversations, which v1.1.1 added to the
+cascade; before it, account deletion left those digests behind), every generated artifact and uploaded
+document in R2, your RAG embeddings in Vectorize,
 your projects, and your stored AI Gateway settings, including any control-plane client key. Deletion is
 on you and takes effect on the instance; we do not keep a shadow copy. What the control plane's billing
 ledger holds about calls made with your key is not on this instance; see "What the control plane keeps"
