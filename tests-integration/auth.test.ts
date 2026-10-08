@@ -43,6 +43,7 @@ const ALL_TABLES = [
   "users",
   "sessions",
   "auth_attempts",
+  "conversation_compact",
 ];
 
 const anyEnv = env as unknown as { AUTH_MODE?: string; GATEWAY_ID?: string; CF_AIG_TOKEN?: string };
@@ -611,5 +612,104 @@ describe("rate limiting", () => {
       .first<{ count: number }>();
     expect(row).not.toBeNull();
     expect(row!.count).toBeGreaterThanOrEqual(5);
+  });
+});
+
+// prism#192 claim 1: the deletion cascade skipped conversation_compact, whose
+// `summary` column is a model-written digest of the user's own chat turns.
+// INSTANCE-PRIVACY.md says deletion "cascades ... we do not keep a shadow
+// copy", so a surviving summary row contradicts the published notice.
+describe("DELETE /api/account also cascades conversation_compact (prism#192)", () => {
+  it("removes the user's compact summaries, and leaves another user's alone", async () => {
+    const cookie = await signup("rosa", "password123", "203.0.113.61");
+    const userId = (
+      await env.DB.prepare(`SELECT id FROM users WHERE username_lc = 'rosa'`).first<{ id: string }>()
+    )!.id;
+    const otherCookie = await signup("sage", "password123", "203.0.113.62");
+    const otherId = (
+      await env.DB.prepare(`SELECT id FROM users WHERE username_lc = 'sage'`).first<{ id: string }>()
+    )!.id;
+
+    for (const [conv, who] of [["conv-rosa", userId], ["conv-sage", otherId]] as const) {
+      await env.DB.prepare(
+        `INSERT INTO conversation_compact
+           (conversation_id, user_email, summary, through_turn_index, model)
+         VALUES (?, ?, ?, 4, 'm')`,
+      )
+        .bind(conv, who, "a model-written digest of the user's earlier turns")
+        .run();
+    }
+
+    // Precondition: the row the cascade must remove really is there, so a later
+    // zero cannot be an insert that silently failed.
+    const before = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM conversation_compact WHERE user_email = ?`,
+    ).bind(userId).first<{ n: number }>();
+    expect(before!.n).toBe(1);
+
+    const del = await req("/api/account", { method: "DELETE", cookie, body: { password: "password123" } });
+    expect(del.status).toBe(200);
+
+    const after = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM conversation_compact WHERE user_email = ?`,
+    ).bind(userId).first<{ n: number }>();
+    expect(after!.n).toBe(0);
+
+    // Positive control: the cascade is scoped, not a table wipe. If this ever
+    // reads 0 the DELETE lost its WHERE clause and the test above would still
+    // pass, which is the reading that would prove the assertion worthless.
+    const survivor = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM conversation_compact WHERE user_email = ?`,
+    ).bind(otherId).first<{ n: number }>();
+    expect(survivor!.n).toBe(1);
+    expect((await boot(otherCookie)).authenticated).toBe(true);
+  });
+});
+
+// prism#192 claim 2: auth_attempts rows were pruned only by a successful login
+// clearing its own bucket, so a signup bucket or a never-succeeding
+// login:<ip>:<username> bucket persisted indefinitely. The notice heads that
+// section "transient IP processing". There is no cron (`crons = []`) and no
+// scheduled handler, so retention has to be an executed deletion on the write
+// path, the same way src/routes/csp-report.ts does it.
+describe("auth_attempts retention is pruned on write (prism#192)", () => {
+  it("drops a bucket older than the window and keeps a live one", async () => {
+    await signup("tess", "password123", "198.51.100.41");
+
+    // A stale bucket from an IP that never came back, aged past retention.
+    await env.DB.prepare(
+      `INSERT INTO auth_attempts (bucket_key, count, window_start)
+       VALUES ('signup:198.51.100.99', 7, datetime('now', '-30 days'))`,
+    ).run();
+    // A bucket inside the retention window, which must SURVIVE. Without this
+    // the test would also pass if the prune deleted the whole table.
+    await env.DB.prepare(
+      `INSERT INTO auth_attempts (bucket_key, count, window_start)
+       VALUES ('signup:198.51.100.98', 3, datetime('now', '-10 minutes'))`,
+    ).run();
+
+    const staleBefore = await env.DB.prepare(
+      `SELECT count FROM auth_attempts WHERE bucket_key = 'signup:198.51.100.99'`,
+    ).first();
+    expect(staleBefore).not.toBeNull(); // the instrument can see the row it will look for
+
+    // Any subsequent limiter write is what performs the prune.
+    const res = await req("/api/auth/login", {
+      method: "POST",
+      body: { username: "tess", password: "wrongpassword" },
+      ip: "198.51.100.41",
+    });
+    expect([200, 401, 429]).toContain(res.status);
+
+    expect(
+      await env.DB.prepare(
+        `SELECT count FROM auth_attempts WHERE bucket_key = 'signup:198.51.100.99'`,
+      ).first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare(
+        `SELECT count FROM auth_attempts WHERE bucket_key = 'signup:198.51.100.98'`,
+      ).first(),
+    ).not.toBeNull();
   });
 });

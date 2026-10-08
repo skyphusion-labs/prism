@@ -6,6 +6,20 @@
 // pure function so it is unit-testable without D1; the DB layer only does the
 // epoch conversion and the upsert.
 
+// prism#192: how long a rate-limit bucket may survive its own window.
+//
+// Before this, rows were removed only by resetRateLimit on a SUCCESSFUL login,
+// so a `signup:<ip>` bucket, or any `login:<ip>:<username>` bucket that never
+// saw a success, lived in D1 forever. The hosted privacy notice heads that
+// section "transient IP processing", and indefinite retention of failed-login
+// IP-plus-username pairs is not transient.
+//
+// 24h is deliberately far beyond the longest live window (SIGNUP_WINDOW, 1h in
+// src/auth.ts), so a prune can never discard a bucket a limiter decision still
+// depends on: past its window rateLimitDecision already treats the row as a
+// fresh start, making an aged row functionally dead weight.
+export const AUTH_ATTEMPT_RETENTION_HOURS = 24;
+
 export interface RateLimitDecision {
   allowed: boolean;
   nextCount: number;
@@ -63,6 +77,18 @@ export async function checkRateLimit(
          window_start = excluded.window_start`,
     )
     .bind(bucketKey, decision.nextCount, decision.nextWindowStart)
+    .run();
+
+  // Retention as an executed deletion, not an intention -- the csp_reports
+  // pattern (src/routes/csp-report.ts). Prune-on-write needs no cron, no new
+  // trigger and no binding, and it cannot drift out of sync with the write path
+  // because it IS the write path. That matters here specifically: the shipped
+  // wrangler.example.toml has `crons = []` and there is no scheduled handler,
+  // so anything cron-shaped would be retention that never actually runs, and a
+  // self-host would silently inherit indefinite retention.
+  await db
+    .prepare(`DELETE FROM auth_attempts WHERE window_start < datetime('now', ?)`)
+    .bind(`-${AUTH_ATTEMPT_RETENTION_HOURS} hours`)
     .run();
 
   return decision.allowed;

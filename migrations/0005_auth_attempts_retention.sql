@@ -1,0 +1,23 @@
+-- 0005: index the auth_attempts prune column (prism#192).
+--
+-- WHY THIS EXISTS: src/rate-limit.ts now prunes auth_attempts on write, the way
+-- src/routes/csp-report.ts prunes csp_reports, because the hosted privacy
+-- notice calls that section "transient IP processing" and nothing was actually
+-- making it transient. Rows were removed only by a SUCCESSFUL login clearing
+-- its own bucket, so a signup bucket, or a login:<ip>:<username> bucket that
+-- never saw a success, persisted indefinitely.
+--
+-- The prune filters on window_start, which was unindexed; auth_attempts has
+-- only its bucket_key primary key. csp_reports already carries
+-- idx_csp_reports_received for exactly the same reason, so this matches the
+-- established pattern rather than inventing one. The table is small (one row
+-- per IP / username bucket), but the prune runs on EVERY signup and login
+-- attempt, which is the hot path the limiter is supposed to protect.
+--
+-- No data change and no new column: safe to re-apply.
+--
+-- Apply to an existing database with:
+--   npx wrangler d1 execute skyphusion-llm --remote --file=migrations/0005_auth_attempts_retention.sql
+-- Fresh databases get this from schema.sql.
+
+CREATE INDEX IF NOT EXISTS idx_auth_attempts_window ON auth_attempts(window_start);

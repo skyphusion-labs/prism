@@ -313,6 +313,12 @@ export async function cascadeDeleteUserData(env: Env, userId: string): Promise<v
     env.DB.prepare(`DELETE FROM documents        WHERE user_email = ?`).bind(userId),
     env.DB.prepare(`DELETE FROM projects         WHERE user_email = ?`).bind(userId),
     env.DB.prepare(`DELETE FROM chats            WHERE user_email = ?`).bind(userId),
+    // prism#192: conversation_compact holds a model-written SUMMARY of this
+    // user's chat turns, so leaving it behind is exactly the shadow copy
+    // INSTANCE-PRIVACY.md says deletion does not keep. Deleting a single
+    // conversation already removes its row (routes/conversations.ts); account
+    // deletion is the path that skipped it.
+    env.DB.prepare(`DELETE FROM conversation_compact WHERE user_email = ?`).bind(userId),
     env.DB.prepare(`DELETE FROM user_prefs       WHERE user_email = ?`).bind(userId),
     env.DB.prepare(`DELETE FROM sessions         WHERE user_id = ?`).bind(userId),
     env.DB.prepare(`DELETE FROM users            WHERE id = ?`).bind(userId),

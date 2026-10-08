@@ -1,3 +1,56 @@
+## v1.1.1
+
+PATCH: two published privacy promises that the code did not keep (prism#192).
+
+Account deletion and abuse-control retention. Both were stated in
+`docs/legal/INSTANCE-PRIVACY.md`, which is a disclosure to a hosted user, so each was a misstatement
+rather than a doc nit.
+
+**1. Deletion now cascades `conversation_compact`.** The notice says deletion "cascades ... we do not
+keep a shadow copy", and `README.md` says it "cascades every trace". The batch in `src/auth.ts`
+deleted nine tables and skipped `conversation_compact`, whose `summary` column holds a model-written
+digest of the user's own chat turns. Deleting a single conversation already removed its row
+(`src/routes/conversations.ts`); account deletion was the one path that did not, so any conversation
+the user had not individually deleted left its summary in D1 after the account was gone. That is a
+shadow copy of chat content in exactly the sense the notice denies.
+
+**2. Abuse-control counters are now actually transient.** The notice heads that section "transient IP
+processing". `auth_attempts` rows were removed only by `resetRateLimit` on a SUCCESSFUL login clearing
+its own bucket, so a `signup:<ip>` bucket, or any `login:<ip>:<username>` bucket that never saw a
+success, persisted indefinitely. There is no cron (`wrangler.example.toml` ships `crons = []`) and no
+scheduled handler, so retention had to become an executed deletion on the write path: `checkRateLimit`
+now prunes rows older than `AUTH_ATTEMPT_RETENTION_HOURS` (24h), the same prune-on-write pattern
+`src/routes/csp-report.ts` already uses for `csp_reports`. 24h is far beyond the longest live window
+(`SIGNUP_WINDOW`, 1h), so a prune can never discard a bucket a limiter decision still depends on. The
+notice now states the window instead of implying one.
+
+**Deliberately NOT in this release.** The third claim in prism#192 is that the notice does not disclose
+the `play-proxy.skyphusion.org` route: with a `control_plane_key` set, `src/control-plane.ts` sends the
+full messages array to a Skyphusion-operated service, while the notice says model requests go through
+"the AI Gateway **you** configure, on your own Cloudflare account" and never mentions the stored pcp
+key. That is a disclosure rewrite, not a code defect (the base URL is not user-chosen and is host
+allowlisted), and prism#192 assigns the notice rewrite to the legal lane. The issue stays open for it.
+
+### Code
+
+- `src/auth.ts` -- add `conversation_compact` to the account-deletion batch
+- `src/rate-limit.ts` -- `AUTH_ATTEMPT_RETENTION_HOURS` (24) and prune-on-write in `checkRateLimit`
+- `schema.sql`, `migrations/0005_auth_attempts_retention.sql` -- `idx_auth_attempts_window` on the
+  prune column, matching `idx_csp_reports_received`; the prune runs on every signup and login attempt
+- `docs/legal/INSTANCE-PRIVACY.md` -- state the 24h outer bound on abuse-control counters
+- `tests-integration/auth.test.ts` -- two tests, each with the positive control that makes it
+  falsifiable: the cascade test asserts a second user's compact row SURVIVES (so a dropped `WHERE`
+  cannot pass), and the prune test asserts a 10-minute-old bucket survives (so a whole-table delete
+  cannot pass). Also adds `conversation_compact` to `ALL_TABLES`, which was not being truncated
+  between tests.
+- `src/version.ts`, `package.json`, `packages/create-prism/package.json`, `package-lock.json` -- 1.1.0 -> 1.1.1
+- `CHANGELOG.md` -- this entry
+
+Both tests were confirmed RED before the fix (`expected 1 to be +0` for the surviving summary,
+`expected { count: 7 } to be null` for the surviving bucket) and green after. `npm run typecheck`
+exit 0; full `npx vitest run` exit 0, 480 passed across 39 files. No binding or secret change; one
+additive index migration.
+
 ## v1.1.0
 
 MINOR, **BREAKING for existing BYOK users**: BYOK now reaches the user's own Cloudflare account. It never did before.
