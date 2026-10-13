@@ -172,12 +172,20 @@ if you have entered a control-plane client key, chat through play-proxy as descr
 through play-proxy" above.
 
 **Web search is opt-in and does not use any third-party search API.** Prism has a per-turn web search
-toggle. When you switch it on for a turn, the text of that one query is sent to the instance's own
-self-hosted search service (SearXNG, run by Skyphusion Labs) and to keyless public sources such as
-Wikipedia. No third-party search-API provider (and no per-provider API key) is in the path. The
-snippets that come back are stored with the turn as retrieved context, the same way your RAG chunks
-are. Your chat history, your uploaded documents, and your generated media are never sent out for
-search. Leave the toggle off and no query leaves the instance.
+toggle. When you switch it on for a turn, the text of that one query is sent to keyless public sources,
+today Wikipedia (the public MediaWiki search endpoint). The software can also query a SearXNG metasearch
+instance, but **the hosted instance has no SearXNG service**: the one Skyphusion Labs ran at
+search.skyphusion.org was retired with the September 2026 infrastructure change and that hostname no
+longer resolves, so on this instance the SearXNG source returns nothing and the query reaches Wikipedia
+alone. No third-party search-API provider (and no per-provider API key) is in the path. The snippets
+that come back are stored with the turn as retrieved context, the same way your RAG chunks are. Your
+chat history, your uploaded documents, and your generated media are never sent out for search. Leave
+the toggle off and no query leaves the instance.
+
+**Correction (2026-10-13).** Earlier versions of this notice said the query also went to a self-hosted
+SearXNG service run by Skyphusion Labs. That service no longer exists, and the paragraph above describes
+the instance as it runs today. If a search service is stood up again, this notice will be updated to
+name it.
 
 ## Deleting your data
 
