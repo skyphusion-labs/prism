@@ -1,17 +1,19 @@
 name: publish-npm
 
-# Publish @skyphusion/create-prism to npm when a GitHub Release is published.
-# prism is PUBLIC, so this runs on GitHub-hosted ubuntu-latest (fork-safe), never
-# the self-hosted fleet pool. This workflow is a no-op-safe merge: it fires ONLY
-# on a published Release, and the repo has never cut one, so it stays inert until
-# we deliberately cut vX.Y.Z as a Release.
+# Auth is npm trusted publishing. npmjs.com trusts this filename
+# (publish-npm.yml) and no GitHub environment. The publish job uses the
+# Actions OIDC token and does not read NPM_TOKEN. npm CLI 11.5.1 or newer
+# performs the exchange, so the publish step installs npm 11 first.
+# A GitHub Release publishes @skyphusion/create-prism. workflow_dispatch is
+# a trust probe only and never publishes a new version. Public repo, so this
+# runs on GitHub-hosted ubuntu-latest.
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
-# Least privilege. id-token: write is required for npm provenance (the workflow
-# mints a short-lived OIDC token so npm can attest the build); contents: read to
-# check out the tagged tree. No other scopes.
+# Least privilege. id-token: write lets the job mint the OIDC token npm
+# exchanges; contents: read checks out the tree. No other scopes.
 permissions:
   contents: read
   id-token: write
@@ -22,6 +24,9 @@ concurrency:
 
 jobs:
   publish:
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -46,6 +51,7 @@ jobs:
       # a mis-tagged Release can never publish the wrong version. Tag is vX.Y.Z;
       # package.json version is X.Y.Z (no leading v).
       - name: Verify release tag matches package version
+        if: github.event_name == 'release'
         # Route the (maintainer-controlled but still untrusted) tag through env
         # rather than interpolating it into the script body, so a tag containing
         # shell metacharacters ($ ( ) backticks) cannot inject into the run step.
@@ -82,5 +88,45 @@ jobs:
       - name: Publish to npm
         working-directory: packages/create-prism
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+          TRUST_PROBE: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          npm install -g npm@^11.5.1
+          npm --version
+          pkg="$(node -p "require('./package.json').name")"
+          ver="$(node -p "require('./package.json').version")"
+          probe="${TRUST_PROBE:-false}"
+          on_registry=0
+          if npm view "${pkg}@${ver}" version >/dev/null 2>&1; then
+            on_registry=1
+          fi
+          # A probe must not mint a version. Rewrite the checkout's version to
+          # the one already on npm, then let publish refuse it. The refusal
+          # happens after the OIDC exchange and before the upload.
+          if [ "$probe" = "true" ] && [ "$on_registry" != "1" ]; then
+            ver="$(npm view "$pkg" version)"
+            node -e 'const fs=require("fs"); const p="package.json"; const j=JSON.parse(fs.readFileSync(p,"utf8")); j.version=process.argv[1]; fs.writeFileSync(p, JSON.stringify(j,null,2)+"\n");' "$ver"
+            on_registry=1
+          fi
+          if [ "$on_registry" = "1" ]; then
+            set +e
+            # prepublishOnly runs before the OIDC exchange. A probe that
+            # rewrites package.json can fail that script before npm exchanges
+            # the token. Ignore scripts on this call only. The real publish
+            # below still runs them.
+            out="$(npm publish --access public --provenance --ignore-scripts 2>&1)"
+            rc=$?
+            set -e
+            printf '%s\n' "$out"
+            if printf '%s\n' "$out" | grep -F -q 'previously published versions'; then
+              echo "Trusted publisher accepted for ${pkg}@${ver} (already on the registry, nothing new published)"
+              exit 0
+            fi
+            echo "::error::trusted publisher was not accepted for ${pkg} (npm publish exit ${rc})" >&2
+            exit 1
+          fi
+          if [ "$probe" = "true" ]; then
+            echo "::error::trust probe refused to publish a new version of ${pkg}" >&2
+            exit 1
+          fi
+          npm publish --access public --provenance
