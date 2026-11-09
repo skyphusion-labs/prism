@@ -1068,7 +1068,7 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## Acknowledgements
 
-Built and maintained by [SkyPhusion](https://x.com/SkyPhusion).
+Built and maintained by [SkyPhusion](https://x.com/rockrockenhaus).
 
 Built on Cloudflare Workers, Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Image generation models courtesy of Black Forest Labs and Leonardo.Ai. Text-to-speech via Deepgram. Speech-to-text via OpenAI Whisper. Web search via self-hosted SearXNG and Wikipedia.
 
