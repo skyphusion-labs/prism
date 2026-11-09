@@ -37,15 +37,15 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.23.0",
-    "@cloudflare/workers-types": "^5.20261018.1",
+    "@cloudflare/workers-types": "^5.20261101.1",
     "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "^4.1.12",
     "typescript": "^7.0.2",
     "vitest": "^4.1.8",
-    "wrangler": "^4.151.1"
+    "wrangler": "^4.156.0"
   },
   "dependencies": {
-    "unpdf": "^1.9.0",
+    "unpdf": "^2.1.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "overrides": {
