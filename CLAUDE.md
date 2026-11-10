@@ -11,8 +11,9 @@ was renamed: the deployed Worker, D1, R2, and Vectorize keep their original `sky
 so binding/resource names in this file and `wrangler.example.toml` still read `skyphusion-llm` on
 purpose.
 
-**Status: v1.0.0** (tag `v1.0.0` on `main`, 2026-08-07). `@skyphusion/create-prism` is locked to the
-same SemVer. Aviation-grade `main`. Tag-gated production deploy.
+**Status:** root `package.json` and `packages/create-prism` are 1.1.1 on `main` (untagged). The
+latest release tag and production deploy is `v1.1.0` (2026-10-08). The `v1.0.0` tag from 2026-08-07
+UTC is not the current cut. Aviation-grade `main`. Production deploy is tag-gated.
 
 A multimodal AI playground deployed as a **single Cloudflare Worker** (no framework, no build step
 beyond TypeScript). One web UI exposes chat, image / TTS / STT / video / music generation, and RAG
@@ -26,8 +27,9 @@ providers stay on Unified Billing. Opt-in web search retrieves from self-hosted 
 `POST|DELETE /api/conversations/:id/compact` summarizes older turns for model context; UI transcript
 unchanged.
 
-Sibling clients (all **1.0.0**): `prism-android`, `prism-ios`, `prism-control-plane` (metered proxy at
-`play-proxy.skyphusion.org`), `prism-mcp` (MCP door). **Control-plane mode (optional):** user prefs may
+Sibling versions, read from each repo: `prism-android` `versionName` and `prism-ios` `MARKETING_VERSION`
+are 1.0.0. `prism-control-plane` `package.json` is 1.1.1 (metered proxy at
+`play-proxy.skyphusion.org`). `prism-mcp` `package.json` is 1.1.0 (MCP door). **Control-plane mode (optional):** user prefs may
 store a `pcp_` client key + control-plane URL; when set, **chat** goes through the proxy (history/RAG
 stay here). See `src/control-plane.ts` + Account > AI Gateway modal. Trust root `package.json` for the
 current cut.
@@ -195,8 +197,8 @@ Add pure-function tests to `tests/`; add fetch-handler or binding tests to `test
 
 ## Release / tagging
 
-**TAG-GATED deploy.** `.github/workflows/ci.yml` deploys the Worker **only** on a pushed `v*` tag
-(after CI passes). A bare merge to `main` does **not** redeploy production.
+**TAG-GATED deploy.** `.github/workflows/deploy.yml` deploys the Worker **only** on a pushed `v*`
+tag. A bare merge to `main` runs `ci.yml` and does **not** redeploy production.
 
 `.github/workflows/tag-version.yml` asserts `vX.Y.Z` == root `package.json` version on every `v*`
 push (refuses a lying tag).
