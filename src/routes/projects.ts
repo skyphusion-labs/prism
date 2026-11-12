@@ -8,6 +8,7 @@ import { parseDiscordExport, chunkDiscordMessages } from "../discord";
 import { json, getUserEmail, r2Put, r2DeleteSafe } from "./shared";
 import type { ChatRequest } from "./shared";
 import { embedBatch, DOC_MAX_BYTES, EMBED_BATCH_SIZE } from "./rag";
+import { mintVectorId } from "../vector-id";
 
 // v0.20.0: project + project_documents join. A project groups documents
 // (and in v0.20.1, conversations) under a shared system_prompt and
@@ -483,8 +484,8 @@ export async function handleDiscordImport(request: Request, env: Env, projectId:
     await env.DB.batch(stmts);
   }
 
-  // Embed chunks and upsert to Vectorize. vector_id scheme matches documents:
-  // `${userEmail}:${docId}:${chunkIndex}`.
+  // Embed chunks and upsert to Vectorize. Vector ids are random and carry no
+  // identity, the same as documents (src/vector-id.ts, prism#232).
   const vectorIdsWritten: string[] = [];
   const chunkRowsToInsert: {
     chunk_index: number;
@@ -505,7 +506,7 @@ export async function handleDiscordImport(request: Request, env: Env, projectId:
       }
       const payload = batch.map((c, i) => {
         const idx = b + i;
-        const vid = `${userEmail}:${docId}:${idx}`;
+        const vid = mintVectorId();
         chunkRowsToInsert.push({
           chunk_index: idx,
           text: c.text,

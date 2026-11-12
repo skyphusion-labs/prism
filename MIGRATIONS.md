@@ -247,3 +247,33 @@ var.
 bytes would share an index entry. The D1 join still scopes their results correctly, so the worst case
 for those users is the old global behaviour, not a disclosure.
 
+
+## Vector ids without identity (prism#232)
+
+**Why.** Before prism#232, ingest minted each Vectorize vector id as `<identity>:<document id>:<chunk
+index>`. In access mode the identity is the raw email address, so every id in the index carried it.
+Vector ids are visible outside D1: in the index, in query results, and in any tool that lists or
+exports ids. New ingests mint a random id (`c_` plus 32 hex digits, `src/vector-id.ts`). Ownership
+stays in the vector's `user_email` metadata and the D1 `chunks` row.
+
+**Nothing breaks if you do nothing.** Every reader (retrieval, document delete, account delete) looks
+ids up through D1 `chunks.vector_id`, so old ids keep working next to new ones. Public-mode ids carry
+the opaque `usr_` id, not an email, and are left alone.
+
+**To remove the emails from existing ids** (access-mode deployments only), re-key them. The script
+selects the D1 rows whose `vector_id` contains `@`, writes each vector under a new random id with the
+same values and metadata (nothing is re-embedded), points the D1 row at the new id, then deletes the old
+id. It prints counts only, never an id or a value, and is safe to re-run.
+
+```bash
+CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
+  node scripts/vectorize-rekey-vector-ids.mjs --index skyphusion-llm-vec --d1 <D1 database uuid> --dry-run
+CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
+  node scripts/vectorize-rekey-vector-ids.mjs --index skyphusion-llm-vec --d1 <D1 database uuid>
+```
+
+The token needs Vectorize Edit and D1 Edit. `legacy` in the dry-run output is the number of
+email-bearing ids. Exit 0 means every one was re-keyed. Exit 1 means some D1 ids had no vector (`gaps`)
+or a row changed during the run (`conflicts`). Exit 2 means it refused or could not read. Vectorize
+applies writes asynchronously, so retrieval for a re-keyed chunk can miss for a few seconds after its
+batch; run it in a quiet window.
