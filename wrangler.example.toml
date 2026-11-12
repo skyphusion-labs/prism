@@ -46,6 +46,10 @@ bucket_name = "skyphusion-llm"
 # @cf/baai/bge-base-en-v1.5; cosine similarity.
 # Create with:
 #   npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
+#   npx wrangler vectorize create-metadata-index skyphusion-llm-vec --property-name=user_email --type=string
+# The metadata index lets retrieval filter by user in Vectorize itself
+# (VEC_METADATA_FILTER, below). Create it before the first document upload: an
+# index added later does not cover vectors already written. See MIGRATIONS.md.
 [[vectorize]]
 binding = "VEC"
 index_name = "skyphusion-llm-vec"
@@ -177,6 +181,10 @@ enabled = true
 # commented vars header (CI uncomments every "# [vars]" line and TOML breaks).
 # CONTROL_PLANE_URL = "https://play-proxy.skyphusion.org"
 # CONTROL_PLANE_ALLOW_LOCALHOST = "true"
+# RAG retrieval filtered by user in Vectorize (fleet-chezmoi#1636). Off unless
+# "on". Needs the user_email metadata index AND, on an index that already holds
+# vectors, scripts/vectorize-backfill-metadata.mjs run after it. See MIGRATIONS.md.
+# VEC_METADATA_FILTER = "on"
 
 # Note: GATEWAY_ID is set as a worker secret rather than a var in this file
 # (v0.12.0+). This keeps deployer-specific values out of the committed template.

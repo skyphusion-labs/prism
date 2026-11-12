@@ -37,6 +37,17 @@ export interface Env {
   DB: D1Database;
   R2: R2Bucket;
   VEC: VectorizeIndex;
+  /**
+   * Filter RAG retrieval by `user_email` in Vectorize itself (skyphusion-labs/fleet-chezmoi#1636).
+   * "on" (also "1" / "true") turns it on; anything else, including unset, is off.
+   *
+   * DEFAULT OFF, ON PURPOSE. The filter needs a `user_email` metadata index on the Vectorize index
+   * AND every existing vector re-upserted after that index exists (metadata indexes are not
+   * retroactive). Turned on before both are done, it hides every older vector and retrieval returns
+   * nothing. Order: create the metadata index, run scripts/vectorize-backfill-metadata.mjs, then set
+   * this. See MIGRATIONS.md.
+   */
+  VEC_METADATA_FILTER?: string;
   ASSETS: Fetcher;
   // v0.167.0 (issue #80): deployment auth plane. "public" = first-party
   // username/password accounts, session cookie identity, and fail-closed

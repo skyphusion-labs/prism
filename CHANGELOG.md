@@ -1,4 +1,24 @@
-## Unreleased
+## v1.2.0
+
+MINOR: RAG retrieval filtered by user inside Vectorize, on for the hosted deploy; and the first tagged release since v1.1.0.
+
+**v1.1.1 was never tagged, and ships here.** Its version bump landed inside a fix PR (#208, 2026-10-08), before the bump-at-release convention, and no `v1.1.1` tag was ever cut, so production stayed on v1.1.0. The `## v1.1.1` section below (account deletion now cascades `conversation_compact`; `auth_attempts` rows are pruned after 24h) deploys for the first time with this tag. No retroactive `v1.1.1` tag will be cut: on today's `main` it would name code that 1.1.1 never was.
+
+**What deploys with this tag, user-visible:**
+- RAG retrieval filtered by user in Vectorize (fleet-chezmoi#1636, #231). It is on for play.skyphusion.org (#234), whose index got the `user_email` metadata index and its one-vector backfill before this release. Self-hosted deployments keep the old behaviour until they follow MIGRATIONS.md.
+- The two v1.1.1 privacy fixes (prism#192, #208), described below.
+- PDF text extraction for document upload now runs on `unpdf` 2.1.0, up from 1.8.1 (#217, #221). See the deploy risk below.
+- Documentation only, not part of the Worker: the privacy notice discloses the play-proxy metered chat route and the stored `pcp_` key (#207), and says the hosted web search has no SearXNG service (#210). The README covers host-funded capabilities (#209), control-plane media retention (#225) and the new X links (#222).
+
+**Not user-visible:** dependency bumps used only for build and test (wrangler, workers-types, vitest, `@cloudflare/vitest-pool-workers`, `@types/node`, `source-map-js`), action SHA pins (#226), coverage running the real suite (#227), npm trusted publishing (#211, #212), the dependabot vitest hold (#205), and CLAUDE.md corrections (#223, #229).
+
+**Deploy risk: `unpdf` 2.x is a major version.** prism uses three calls: `getDocumentProxy`, `getPage`, `getTextContent` (`extractPdfChunks`, `src/routes/rag.ts`). The 2.0 breaking changes (`configureUnPDF` and `resolvePDFJSImport` removed, ESM only, Node 24) touch none of them. Before this release no committed test reached the path. It is now pinned by `tests-integration/pdf-extract.test.ts` (#236), which runs in workerd and asserts per-page text with 1-based page numbers on a two-page PDF built in the test; it also covers a page with no text layer being skipped, and non-PDF bytes rejecting. `wrangler deploy --dry-run` builds the bundle at 3454 KiB, 804 KiB gzipped. Not covered: scanned or image-heavy PDFs (2.x changed image decoding) and the CPU time of a large PDF. After the deploy, a real PDF upload on play is the live check. Rollback, if extraction breaks: a v1.2.1 that reverts #221.
+
+TEST: PDF text extraction is pinned by a committed workerd test (`tests-integration/pdf-extract.test.ts`): a two-page PDF built in the test, asserted through the shipped `extractPdfChunks` for per-page text and 1-based page numbers, plus a page with no text layer skipped and non-PDF bytes rejected. Until now no committed test reached `unpdf`, which goes 1.8.1 -> 2.1.0 (a major) in the next release.
+
+CI: the hosted deploy (`deploy.yml`) renders `VEC_METADATA_FILTER = "on"` and refuses to deploy if the rendered `wrangler.toml` lacks it (skyphusion-labs/fleet-chezmoi#1636). play.skyphusion.org's index has the `user_email` metadata index and was backfilled (1 vector, 0 gaps), and filtered queries were verified for the owner (1 match) and a stranger (0 matches). Self-hosted deployments are unchanged: the var stays commented out in `wrangler.example.toml`.
+
+FEAT: RAG retrieval can filter by user inside Vectorize (skyphusion-labs/fleet-chezmoi#1636). With `VEC_METADATA_FILTER = "on"`, `retrieveContext` adds `filter: { user_email }` to the Vectorize query, so a user's top-K is drawn from their own vectors instead of a global top-K that the D1 join can empty out on a shared index. The D1 join still scopes every result. **Off by default:** the filter needs a `user_email` metadata index, plus a re-upsert of vectors written before that index existed (metadata indexes are not retroactive). New `scripts/vectorize-backfill-metadata.mjs` does the re-upsert from D1 `chunks.vector_id`, with no re-embedding: it refuses without the index, prints counts only, and is safe to re-run. The index creation step is now in README, MIGRATIONS.md, `wrangler.example.toml` and create-prism. Existing deployments: follow the new MIGRATIONS.md section before setting the var.
 
 Web search calls the `skyphusion-search` Worker over a service binding (`SEARCH`) with named entrypoint `SearchEntrypoint`, method `search(question)`. That replaces the retired search host. It does not call `POST /ask`: the live worker requires Turnstile on that route, so a binding fetch would fail every call. The RPC method is not a public route. There is no Origin header and no Turnstile check. It returns `{ chunks }`. Prism maps those chunks to GitHub blob links. The chat response (and the stream `done` event) includes `sources.web` and `sources.wikipedia`, each `{ status, count, error? }`. `ok` with count 0 is zero hits. `failed` is a thrown call (`web_search_error` is set only then). When the RPC throws `empty_question`, `question_too_long`, `rate_limited`, or `search_unavailable`, the error string is that code. `absent` means the binding is not on the worker. Wikipedia is unchanged and still returns when the web source fails or is absent. No version bump (bump-at-release, fleet-chezmoi#1766).
 
@@ -57,6 +77,15 @@ re-measured against the new shape.
 
 - `README.md` -- host-funded table, review trigger, and a pointer from the opening paragraph
 - `CHANGELOG.md` -- this entry
+
+### Code (release)
+
+- `package.json`, `package-lock.json` -- 1.1.1 -> 1.2.0
+- `packages/create-prism/package.json` -- 1.1.1 -> 1.2.0
+- `src/version.ts` -- `VERSION` 1.1.1 -> 1.2.0
+- `CHANGELOG.md` -- this section; the entries above it were `## Unreleased`, including #236's TEST line
+
+`npm run typecheck` clean; `npm test` green.
 
 ## v1.1.1
 

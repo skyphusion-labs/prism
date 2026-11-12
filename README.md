@@ -357,7 +357,12 @@ For RAG over PDFs and spreadsheets:
 
 ```
 npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
+npx wrangler vectorize create-metadata-index skyphusion-llm-vec --property-name=user_email --type=string
 ```
+
+The second command adds a `user_email` metadata index, which lets retrieval filter by user inside Vectorize
+(`VEC_METADATA_FILTER = "on"`). Create it now, before any upload: an index added later does not cover
+vectors already written, and those need the backfill in [MIGRATIONS.md](MIGRATIONS.md).
 
 The `VEC` binding is already in the template. If you don't intend to use RAG, the worker still functions; the binding just goes unused.
 
@@ -861,6 +866,8 @@ The retrieved chunks appear above the model's response with filename, chunk inde
 ```
 # Create the Vectorize index (768 dimensions for BGE-base, cosine similarity)
 npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
+# ...and its user_email metadata index, before any document is uploaded
+npx wrangler vectorize create-metadata-index skyphusion-llm-vec --property-name=user_email --type=string
 
 # Apply the full schema to a FRESH database. schema.sql is the canonical
 # full schema for new deployments. Do NOT re-run it against a database that

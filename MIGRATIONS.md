@@ -26,6 +26,7 @@ For v0.8.0 (RAG Pass 1):
 
 ```
 npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
+npx wrangler vectorize create-metadata-index skyphusion-llm-vec --property-name=user_email --type=string
 # Create the documents and chunks tables explicitly. (Historically this step
 # was "--file=schema.sql"; that is no longer safe because today's schema.sql
 # also carries later non-idempotent ALTERs. Use the explicit DDL below.)
@@ -197,3 +198,52 @@ statement and continues. Fresh installs get all of the above from `schema.sql` a
 none of these deltas.
 
 All other releases are code/frontend-only with no D1 migration.
+
+## Vectorize metadata filter for RAG retrieval (fleet-chezmoi#1636)
+
+**Why.** Retrieval used to query Vectorize globally and scope by user only in the D1 join. On a shared
+index, a user with a small share of the vectors can get a top-K made entirely of other users' vectors,
+which the join then drops, so they see no results even when their own documents match.
+`VEC_METADATA_FILTER = "on"` filters the Vectorize query on `user_email` as well. The D1 join stays,
+as the second layer of scope.
+
+**It is off by default, and the order matters.** A Vectorize metadata index is not retroactive. Turn
+the filter on before the backfill, and every vector written before the index existed is invisible to it:
+retrieval returns nothing.
+
+1. Create the metadata index (once):
+
+   ```bash
+   npx wrangler vectorize create-metadata-index skyphusion-llm-vec --property-name=user_email --type=string
+   ```
+
+   Vectors upserted from now on are indexed automatically.
+
+2. If the index already holds vectors, re-upsert them. The script reads every id from D1
+   `chunks.vector_id`, fetches each vector, and writes it back with the same id, values and metadata.
+   Nothing is re-embedded. It refuses to run until step 1 is done, prints counts only (never an id or a
+   value), and is safe to re-run.
+
+   ```bash
+   CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
+     node scripts/vectorize-backfill-metadata.mjs --index skyphusion-llm-vec --d1 <D1 database uuid> --dry-run
+   CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
+     node scripts/vectorize-backfill-metadata.mjs --index skyphusion-llm-vec --d1 <D1 database uuid>
+   ```
+
+   The token needs Vectorize Edit and D1 Read. Exit 0 means every D1 id was re-upserted. Exit 1 means
+   some ids had no vector (`gaps`) or no `user_email` metadata (`missing_metadata`); do not turn the
+   filter on until that is understood. Exit 2 means it refused or could not read, and nothing was written.
+
+3. Verify, then set `VEC_METADATA_FILTER = "on"` (a plain var) and deploy. Check that a user with
+   documents still gets results, and that the index `info` vector count matches the script's `upserted`
+   count. Allow a few seconds after the upsert for Vectorize to apply it.
+
+A fresh deployment that creates the metadata index before its first upload needs only step 1, then the
+var.
+
+**Caveat:** a string metadata index matches on the first 64 bytes of the value. Public-mode identities
+(`usr_` plus 24 hex characters) are well inside that. In access mode, two emails sharing their first 64
+bytes would share an index entry. The D1 join still scopes their results correctly, so the worst case
+for those users is the old global behaviour, not a disclosure.
+

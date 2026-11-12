@@ -127,6 +127,7 @@ Next steps:
             npm run db:migrate:remote
         npx wrangler r2 bucket create skyphusion-llm
         npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
+        npx wrangler vectorize create-metadata-index skyphusion-llm-vec --property-name=user_email --type=string
   5.  Set the worker secrets (access mode, the default):
         npx wrangler secret put GATEWAY_ID     (your AI Gateway slug)
         npx wrangler secret put CF_AIG_TOKEN   (AI Gateway Run token, for paid models)
