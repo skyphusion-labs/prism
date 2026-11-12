@@ -236,12 +236,25 @@ export async function embedBatch(env: Env, userEmail: string, texts: string[]): 
 // ---------- RAG: retrieval (Pass 2) ----------
 //
 // Embeds the user prompt, queries Vectorize for the top-K nearest chunks,
-// then looks up source text in D1. We filter by user_email in the D1 JOIN
-// (not in the Vectorize filter param) so this works without a metadata
-// index on the Vectorize side - simpler for single-user deployments.
-// Vectorize score ordering is preserved.
+// then looks up source text in D1. Tenant scope is the user_email filter in
+// the D1 JOIN, always. Vectorize score ordering is preserved.
+//
+// With VEC_METADATA_FILTER on (fleet-chezmoi#1636), the Vectorize query is
+// ALSO filtered on user_email, so the top-K is drawn from the caller's own
+// vectors. Without it the query is global, and a caller with a small share of
+// a large index can get a top-K made entirely of other users' vectors, which
+// the D1 join then drops: zero results even when their own documents match.
+// The flag needs a user_email metadata index plus a re-upsert of existing
+// vectors first (scripts/vectorize-backfill-metadata.mjs), so it defaults off
+// and a deployment that has not done both keeps the global query.
 
 export const RETRIEVE_TOP_K = 5;
+
+/** VEC_METADATA_FILTER is on only for an explicit "on" / "1" / "true" (fleet-chezmoi#1636). */
+export function vecMetadataFilterOn(env: Pick<Env, "VEC_METADATA_FILTER">): boolean {
+  const v = (env.VEC_METADATA_FILTER ?? "").trim().toLowerCase();
+  return v === "on" || v === "1" || v === "true";
+}
 
 export async function retrieveContext(
   env: Env,
@@ -270,8 +283,9 @@ export async function retrieveContext(
     return { chunks: [], error: `embed failed: ${m}` };
   }
 
-  // 2) Query Vectorize. No metadata filter - we scope by user in D1 below.
-  // When projectId is set, we overfetch (3x topK) at the Vectorize stage
+  // 2) Query Vectorize. Filtered on user_email when VEC_METADATA_FILTER is on;
+  // global otherwise. Either way the D1 join below is the tenant scope and
+  // stays, as the second layer. When projectId is set, we overfetch (3x topK) at the Vectorize stage
   // and filter by project membership in D1, since Vectorize doesn't know
   // about project membership. Without overfetch, a small topK that all
   // misses the project would return zero results even when the project
@@ -279,7 +293,12 @@ export async function retrieveContext(
   const vectorizeTopK = projectId !== undefined ? topK * 3 : topK;
   let matches: { id: string; score: number }[];
   try {
-    const q = await env.VEC.query(queryVec, { topK: vectorizeTopK });
+    const q = await env.VEC.query(
+      queryVec,
+      vecMetadataFilterOn(env)
+        ? { topK: vectorizeTopK, filter: { user_email: userEmail } }
+        : { topK: vectorizeTopK },
+    );
     matches = (q?.matches ?? []).map((m) => ({ id: m.id, score: m.score }));
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
