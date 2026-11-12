@@ -1,5 +1,7 @@
 ## Unreleased
 
+CI: the hosted deploy (`deploy.yml`) renders `VEC_METADATA_FILTER = "on"` and refuses to deploy if the rendered `wrangler.toml` lacks it (skyphusion-labs/fleet-chezmoi#1636). play.skyphusion.org's index has the `user_email` metadata index and was backfilled (1 vector, 0 gaps), and filtered queries were verified for the owner (1 match) and a stranger (0 matches). Self-hosted deployments are unchanged: the var stays commented out in `wrangler.example.toml`.
+
 FEAT: RAG retrieval can filter by user inside Vectorize (skyphusion-labs/fleet-chezmoi#1636). With `VEC_METADATA_FILTER = "on"`, `retrieveContext` adds `filter: { user_email }` to the Vectorize query, so a user's top-K is drawn from their own vectors instead of a global top-K that the D1 join can empty out on a shared index. The D1 join still scopes every result. **Off by default:** the filter needs a `user_email` metadata index, plus a re-upsert of vectors written before that index existed (metadata indexes are not retroactive). New `scripts/vectorize-backfill-metadata.mjs` does the re-upsert from D1 `chunks.vector_id`, with no re-embedding: it refuses without the index, prints counts only, and is safe to re-run. The index creation step is now in README, MIGRATIONS.md, `wrangler.example.toml` and create-prism. Existing deployments: follow the new MIGRATIONS.md section before setting the var.
 
 DOCS: the README states prism-control-plane media retention, 30 days (prism-control-plane#91). No code changes.

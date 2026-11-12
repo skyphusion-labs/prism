@@ -47,6 +47,12 @@ jobs:
           sed -i "s/PLACEHOLDER_RUN_wrangler_d1_create_THEN_PASTE_HERE/${{ secrets.D1_DATABASE_ID }}/" wrangler.toml
           sed -i 's/# \[vars\]/[vars]/' wrangler.toml
           sed -i 's/# AUTH_MODE = "public"/AUTH_MODE = "public"/' wrangler.toml
+          # fleet-chezmoi#1636: the hosted index has its user_email metadata index and was backfilled,
+          # so the hosted deploy filters RAG retrieval by user in Vectorize. Self-host stays opt-in.
+          sed -i 's/# VEC_METADATA_FILTER = "on"/VEC_METADATA_FILTER = "on"/' wrangler.toml
+          # Refuse to deploy without it: a template edit that renamed or moved the line would
+          # otherwise drop the flag silently and the deploy would still go green.
+          grep -qx 'VEC_METADATA_FILTER = "on"' wrangler.toml || { echo "::error::rendered wrangler.toml has no VEC_METADATA_FILTER = \"on\""; exit 1; }
       - name: Apply D1 migrations
         run: npx wrangler d1 migrations apply skyphusion-llm --remote
       - name: Deploy
