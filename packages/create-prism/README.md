@@ -64,10 +64,9 @@ template `wrangler.example.toml`.
 
 **Optional**
 
-- `SEARXNG_URL` (and the `SEARXNG_ACCESS_CLIENT_ID` / `SEARXNG_ACCESS_CLIENT_SECRET`
-  halves when your SearXNG instance sits behind Cloudflare Access) enable the opt-in
-  web-search source. Unset, web search silently skips SearXNG; keyless Wikipedia still
-  runs.
+- `SEARCH` service binding (`service = "skyphusion-search"`) enables the opt-in
+  web-search source. Delete the block if you have no such worker: the source then
+  reports `absent`, and keyless Wikipedia still runs.
 
 ## Auth: two modes, one identity seam (`AUTH_MODE`)
 

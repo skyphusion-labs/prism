@@ -1,5 +1,35 @@
 ## Unreleased
 
+Web search calls the `skyphusion-search` Worker over a service binding (`SEARCH`) instead of the retired search host. `POST /ask` returns an SSE stream; prism reads the `chunks` event. The chat response (and the stream `done` event) now includes `sources.web` and `sources.wikipedia`, each `{ status, count, error? }`. `ok` with count 0 is zero hits. `failed` is a broken call (`web_search_error` is set). `absent` means the binding is not on the worker. Wikipedia is unchanged and still returns when the web source fails or is absent. No version bump (bump-at-release, fleet-chezmoi#1766).
+
+Existing deployers: add this block to the gitignored `wrangler.toml`, or delete it if you have no `skyphusion-search` worker (`wrangler deploy` fails when the service does not exist). Then redeploy. No new secret.
+
+```toml
+[[services]]
+binding = "SEARCH"
+service = "skyphusion-search"
+```
+
+Optional, inside the existing `[vars]` table, only if your search worker allowlists a different Origin than the code default `https://skyphusion.net`:
+
+```toml
+SEARCH_ASK_ORIGIN = "https://skyphusion.net"
+```
+
+### Code
+
+- `src/skyphusion-search.ts` (new): service-binding client, SSE `chunks` parser, corpus URL mapper
+- `src/searxng.ts` (removed)
+- `src/routes/rag.ts`: `searchWeb` returns `sources`; web source is the binding
+- `src/routes/chat.ts`: `sources` on the chat JSON and the stream `done` event
+- `src/routes/shared.ts`: web `source` is `skyphusion-search` (older rows may still say `searxng`)
+- `src/env.ts`: `SEARCH?`, `SEARCH_ASK_ORIGIN?`; the old search URL and access-token fields are gone
+- `wrangler.example.toml`: `[[services]]` binding `SEARCH`
+- `public/app.js`, `public/url-safety.js`: label and comment
+- `tests/skyphusion-search.test.ts` (new); `tests/searxng.test.ts` (removed)
+- `README.md`, `CLAUDE.md`, `docs/legal/INSTANCE-PRIVACY.md`, `packages/create-prism/README.md`, `packages/create-prism/index.js`
+- `CHANGELOG.md` -- this entry
+
 DOCS: the README states prism-control-plane media retention, 30 days (prism-control-plane#91). No code changes.
 
 DOCS: state which public-mode capabilities the host funds (prism#206).

@@ -57,14 +57,13 @@ export interface Env {
   // stay on Unified Billing and render opaque. No other provider reads a
   // deployer key.
   OPENAI_API_KEY?: string;
-  // v0.166.0: base URL of the self-hosted SearXNG instance for the optional
-  // web-search retrieval source (our deploy: https://search.skyphusion.org).
-  // Optional: when unset, the SearXNG source is silently skipped (Wikipedia,
-  // which needs no config, still runs). May be a plain [vars] entry or a secret.
-  SEARXNG_URL?: string;
-  // v0.166.0: Cloudflare Access service-token halves for a gated SearXNG
-  // instance. Sent as CF-Access-Client-Id / CF-Access-Client-Secret ONLY when
-  // both are set; a self-hoster running an un-gated instance leaves them unset.
-  SEARXNG_ACCESS_CLIENT_ID?: string;
-  SEARXNG_ACCESS_CLIENT_SECRET?: string;
+  // Service binding to the skyphusion-search Worker (POST /ask). Optional:
+  // when the binding is absent, web search reports that source as "absent"
+  // and Wikipedia still runs. Declared in wrangler.example.toml as
+  // [[services]] binding = "SEARCH", service = "skyphusion-search".
+  SEARCH?: Fetcher;
+  // Origin header sent on POST /ask. The search worker rejects /ask unless
+  // Origin is on its allowlist. Default in code is https://skyphusion.net,
+  // which the production worker allows. Set this var to override.
+  SEARCH_ASK_ORIGIN?: string;
 }

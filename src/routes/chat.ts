@@ -43,9 +43,11 @@ import {
   retrieveContext,
   RETRIEVE_TOP_K,
   searchWeb,
+  noWebSearch,
   formatRetrievalForSystemPrompt,
   formatWebForSystemPrompt,
   looksBinary,
+  type WebSearchOutcome,
 } from "./rag";
 import { resolveProjectForChat } from "./projects";
 import type { LongRunParams } from "./workflow";
@@ -237,10 +239,10 @@ export async function runChat(request: Request, env: Env, model: ModelEntry, bod
   // v0.17.0: web search runs in parallel with RAG retrieval and the
   // attachment walk. Per-source timeouts + catches inside searchWeb bound
   // the worst-case latency to WEB_SEARCH_TIMEOUT_MS.
-  const webSearchPromise: Promise<{ results: RetrievedWebResult[]; error: string | null }> =
+  const webSearchPromise: Promise<WebSearchOutcome> =
     body.use_web_search
       ? searchWeb(env, body.user_input)
-      : Promise.resolve({ results: [], error: null });
+      : Promise.resolve(noWebSearch());
 
   // Walk inputs: write images / video frames to R2, transcribe audio via
   // Whisper. Build three parallel structures used after the loop:
@@ -360,7 +362,7 @@ export async function runChat(request: Request, env: Env, model: ModelEntry, bod
   const { chunks: retrievedChunks, error: retrievalError } = await retrievePromise;
 
   // v0.17.0: web-search retrieval, same parallelism pattern as RAG.
-  const { results: webResults, error: webSearchError } = await webSearchPromise;
+  const { results: webResults, error: webSearchError, sources: webSources } = await webSearchPromise;
   const allRetrieved: RetrievedItem[] = [...retrievedChunks, ...webResults];
 
   // Build the effective system prompt: user-supplied prompt, optional compact
@@ -522,6 +524,9 @@ export async function runChat(request: Request, env: Env, model: ModelEntry, bod
     effective_system_prompt: (body.use_docs || body.use_web_search) ? effectiveSystemPrompt : undefined,
     retrieval_error: body.use_docs ? retrievalError : undefined,
     web_search_error: body.use_web_search ? webSearchError : undefined,
+    // Per-source status. "ok" with count 0 is zero hits. "failed" is a
+    // broken web source. "absent" means the SEARCH binding is not configured.
+    sources: body.use_web_search ? webSources : undefined,
   });
 }
 
@@ -1274,10 +1279,10 @@ export async function runChatStream(request: Request, env: Env, model: ModelEntr
       : Promise.resolve({ chunks: [], error: null });
 
   // v0.17.0: web search runs in parallel with RAG retrieval, same as runChat.
-  const webSearchPromise: Promise<{ results: RetrievedWebResult[]; error: string | null }> =
+  const webSearchPromise: Promise<WebSearchOutcome> =
     body.use_web_search
       ? searchWeb(env, body.user_input)
-      : Promise.resolve({ results: [], error: null });
+      : Promise.resolve(noWebSearch());
 
   // Attachment walk. Reach completion before any bytes flow back; streaming
   // helps with time-to-last-token, not time-to-first-token on multimodal turns.
@@ -1374,7 +1379,7 @@ export async function runChatStream(request: Request, env: Env, model: ModelEntr
   }
 
   const { chunks: retrievedChunks } = await retrievePromise;
-  const { results: webResults } = await webSearchPromise;
+  const { results: webResults, error: webSearchError, sources: webSources } = await webSearchPromise;
   const allRetrieved: RetrievedItem[] = [...retrievedChunks, ...webResults];
 
   const userSystemPrompt = body.system_prompt?.trim() ?? "";
@@ -1497,6 +1502,8 @@ export async function runChatStream(request: Request, env: Env, model: ModelEntr
         tokens_out: usageOut,
         conversation_id: conversationId,
         turn_index: turnIndex,
+        web_search_error: body.use_web_search ? webSearchError : undefined,
+        sources: body.use_web_search ? webSources : undefined,
       });
     } catch (err) {
       // Self-triggered AbortError (we aborted because client disconnected)

@@ -1,11 +1,11 @@
 // URL safety for values this app did not construct.
 //
-// Web-search results reach the transcript carrying a `url` field that
-// originates off-box. SearXNG hands upstream engine results through with a
-// truthiness filter only (src/searxng.ts filters on `r.url && r.title` and
-// never parses), src/routes/rag.ts maps them to source_type:"web", and the
-// value is persisted in retrieved_context and replayed on every subsequent
-// transcript render. So the string in an href there is not ours.
+// Web-search rows reach the transcript carrying a `url` field that is
+// persisted in retrieved_context and replayed on every later render.
+// Current rows use a URL this worker built (src/skyphusion-search.ts).
+// Older rows carry a URL from an upstream engine that the worker stored
+// after a truthiness check only. Either way the href is replayed from D1,
+// so the string is not trusted at render time.
 //
 // WHY ESCAPING IS THE WRONG TOOL HERE. escapeHtml() replaces & < > " ' and is
 // exactly right for stopping attribute injection. It does nothing whatever to

@@ -32,7 +32,7 @@ export interface ChatRequest {
   image_url?: string;   // v0.21.5: source image for image-to-video models (hh1-i2v); a fetchable URL
   image_key?: string;   // v0.21.6: source image as an R2 key (e.g. a prior nano-banana output) for image-to-video chaining
   use_docs?: boolean;   // Pass 2: when true, retrieve top-K chunks from Vectorize and inject as context
-  use_web_search?: boolean;  // v0.17.0: when true, query SearXNG + Wikipedia and inject snippets as context
+  use_web_search?: boolean;  // v0.17.0: when true, query skyphusion-search + Wikipedia and inject snippets as context
   conversation_id?: string;  // Multi-turn: when present, continue an existing conversation
   project_id?: number;  // v0.20.0: when present, scope RAG retrieval to the project's docs
                         // and apply the project's system_prompt as default if system_prompt is empty
@@ -55,7 +55,10 @@ export interface RetrievedChunk {
 // retrieved_context column. The frontend renders branches on source_type.
 export interface RetrievedWebResult {
   source_type: "web";
-  source: "searxng" | "wikipedia";
+  // "skyphusion-search" is the service-binding corpus source. Older rows
+  // stored "searxng"; the UI still labels those as web. New writes use
+  // "skyphusion-search" only.
+  source: "skyphusion-search" | "wikipedia";
   url: string;
   title: string;
   snippet: string;          // already HTML-stripped

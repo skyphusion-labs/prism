@@ -50,6 +50,15 @@ bucket_name = "skyphusion-llm"
 binding = "VEC"
 index_name = "skyphusion-llm-vec"
 
+# Opt-in web search. Service binding to the skyphusion-search Worker
+# (POST /ask; source repo skyphusion-labs/search-mcp). Self-hosters who
+# do not run that worker delete this block: wrangler deploy fails when
+# the named service does not exist. With the binding absent, that source
+# reports status "absent" and Wikipedia still runs.
+[[services]]
+binding = "SEARCH"
+service = "skyphusion-search"
+
 # Static frontend (HTML, CSS, JS).
 [assets]
 directory = "./public"
@@ -165,6 +174,11 @@ enabled = true
 # commented vars header (CI uncomments every "# [vars]" line and TOML breaks).
 # CONTROL_PLANE_URL = "https://play-proxy.skyphusion.org"
 # CONTROL_PLANE_ALLOW_LOCALHOST = "true"
+# Optional Origin sent on the SEARCH binding's POST /ask. The code default
+# is https://skyphusion.net (on the production skyphusion-search allowlist).
+# Uncomment inside this [vars] table only if your search worker allowlists
+# a different origin.
+# SEARCH_ASK_ORIGIN = "https://skyphusion.net"
 
 # Note: GATEWAY_ID is set as a worker secret rather than a var in this file
 # (v0.12.0+). This keeps deployer-specific values out of the committed template.
@@ -187,12 +201,5 @@ enabled = true
 #   CF_AIG_TOKEN (required for Anthropic, xAI, OpenAI chat, Google, and proxied
 #                 image/video/music on Unified Billing when using worker-level
 #                 credentials; optional in public demo mode where users supply
-#                 their own token via /api/prefs; v0.93.0+),
-#   SEARXNG_URL (optional, v0.166.0; base URL of a self-hosted SearXNG instance
-#                for the opt-in web-search source, e.g. https://search.skyphusion.org.
-#                May be a plain [vars] entry instead of a secret. Skipped when
-#                unset; Wikipedia still runs keyless),
-#   SEARXNG_ACCESS_CLIENT_ID / SEARXNG_ACCESS_CLIENT_SECRET (optional, v0.166.0;
-#                Cloudflare Access service-token halves for a gated SearXNG
-#                instance. Sent as CF-Access-Client-Id / CF-Access-Client-Secret
-#                only when BOTH are set; leave unset for an un-gated instance).
+#                 their own token via /api/prefs; v0.93.0+).
+# Web search uses the SEARCH service binding above. It does not take a secret.

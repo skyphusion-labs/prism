@@ -231,7 +231,7 @@ One Worker, no framework, no build step beyond TypeScript. The interesting parts
 
 **Discord ingestion (v0.20.3+):** import a [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter) JSON export into a project. The worker parses the export, groups messages into conversation-aware chunks (by author, time gap, and channel), and embeds them into the project's retrieval scope, so you can ask questions across an archived Discord channel's history. Import is a file picker in the project's "manage documents" modal.
 
-**Web search (v0.17.0):** opt-in retrieval source that queries self-hosted SearXNG (general web; v0.166.0) and Wikipedia (reference and lore) in parallel. Snippets folded into the system prompt the same way RAG chunks are. Per-turn toggle. SearXNG requires `SEARXNG_URL`; Wikipedia needs no setup. See [Web search](#web-search) below.
+**Web search (v0.17.0):** opt-in retrieval source that queries the `skyphusion-search` Worker (service binding `SEARCH`) and Wikipedia (reference and lore) in parallel. Snippets folded into the system prompt the same way RAG chunks are. Per-turn toggle. Without the `SEARCH` binding that source reports absent; Wikipedia needs no setup. See [Web search](#web-search) below.
 
 **Streaming (v0.13.0+):** `POST /api/chat/stream` returns SSE for any chat model flagged `streaming: true` in the catalog. Token deltas surface as `{ type: "delta", text: "..." }` events, terminal completion as `{ type: "done", ... }` with token counts and conversation IDs. Client disconnect aborts the upstream model call immediately.
 
@@ -390,22 +390,17 @@ For an open, self-serve **public service**, do not use Cloudflare Access at all:
 
 Do **not** use a **Bypass** policy on the main app URL. Bypass skips login, so the worker never receives a user email and everyone shares the `anonymous` bucket.
 
-### 7. Optional: web search (SearXNG)
+### 7. Optional: web search
 
-For the v0.17.0 web-search feature (SearXNG source added v0.166.0), point the worker at a self-hosted SearXNG instance with the JSON API enabled:
+Web search calls the `skyphusion-search` Worker through a service binding. The committed template already declares it:
 
-```
-npx wrangler secret put SEARXNG_URL
-```
-
-If the instance is behind Cloudflare Access, also set the service-token halves:
-
-```
-npx wrangler secret put SEARXNG_ACCESS_CLIENT_ID
-npx wrangler secret put SEARXNG_ACCESS_CLIENT_SECRET
+```toml
+[[services]]
+binding = "SEARCH"
+service = "skyphusion-search"
 ```
 
-Without `SEARXNG_URL`, the SearXNG source is silently skipped. Wikipedia always works with no config. See [Web search](#web-search) below.
+Copy that block into your `wrangler.toml`. If you do not run a worker with that script name, delete the block instead: `wrangler deploy` fails when the service does not exist. With the binding absent, the response says that source is `absent` and Wikipedia still runs. Wikipedia needs no config. See [Web search](#web-search) below.
 
 ### 8. Local development
 
@@ -459,7 +454,7 @@ npx wrangler secret put GATEWAY_ID
 npx wrangler secret put CF_AIG_TOKEN
 ```
 
-For local dev, leave those keys out of `.dev.vars` as well. The optional web-search config (`SEARXNG_URL`, plus `SEARXNG_ACCESS_CLIENT_ID` / `SEARXNG_ACCESS_CLIENT_SECRET` for a gated instance) still works if you want global features, but most public demos omit it so visitors rely on their own gateway for paid models.
+For local dev, leave those keys out of `.dev.vars` as well. Web search is the `SEARCH` service binding, not a secret. Omit that block when you have no `skyphusion-search` worker; Wikipedia still runs. Most public demos omit gateway secrets so visitors rely on their own gateway for paid models.
 
 Do **not** create a Cloudflare Access application for a public-mode worker: the app has its own signup, and an Access gate in front would add a second login before it.
 
@@ -537,7 +532,7 @@ For D1 **schema** changes, see [Migrating an existing deployment](#migrating-an-
        |
    +---+---+
    |       |
- SearXNG  Wikipedia          (web search)
+ SEARCH   Wikipedia          (web search)
 ```
 
 The worker is the only public surface. R2 is private; the worker streams objects through `GET /api/artifact/*` after verifying ownership via `customMetadata.user_email` on the R2 object.
@@ -619,7 +614,7 @@ Workers AI billing is per-token / per-image / per-minute depending on model. Fre
 
 D1 is roughly $0.75/GB-month for storage. R2 is roughly $0.015/GB-month with no egress fees inside Cloudflare. Free tiers on D1 and R2 cover small personal use indefinitely.
 
-Anthropic (Claude), xAI (Grok), OpenAI chat, Google Gemini, and proxied image / video / music models bill against your Cloudflare account via Unified Billing. Self-hosted SearXNG web search has no per-search API cost (you run the instance); Wikipedia is free. See per-provider sections below.
+Anthropic (Claude), xAI (Grok), OpenAI chat, Google Gemini, and proxied image / video / music models bill against your Cloudflare account via Unified Billing. Web search through the `SEARCH` service binding stays on your Cloudflare account (no third-party search API). Wikipedia is free. See per-provider sections below.
 
 ## Anthropic models (Unified Billing)
 
@@ -934,48 +929,44 @@ DiscordChatExporter.Cli export -t <TOKEN> -c <CHANNEL_ID> -f Json \
 
 ## Web search
 
-An opt-in retrieval source (v0.17.0) that queries the web at request time and folds the snippets into the system prompt. Runs in parallel with RAG, so a single turn can pull from both your uploaded docs and the web. Designed for creative work, worldbuilding, and "what's current" questions where you want your model to do the synthesis rather than a search engine's pre-summary.
+An opt-in retrieval source (v0.17.0) that retrieves at request time and folds the snippets into the system prompt. Runs in parallel with RAG, so a single turn can pull from your uploaded docs, the skyphusion-search corpus, and Wikipedia. The corpus half is Skyphusion public repos, not the open web. Wikipedia is the reference half.
 
 ### How it works
 
 When you check the "search the web" toggle next to the run button (chat models only), the worker fires two parallel queries on each turn:
 
-1. **SearXNG** for general web results (v0.166.0). A self-hosted metasearch instance queried via its JSON API (`GET {SEARXNG_URL}/search?q=...&format=json`). Requires `SEARXNG_URL`; without it, this source is silently skipped. When the instance is gated by Cloudflare Access, the worker authenticates with a service token (`SEARXNG_ACCESS_CLIENT_ID` / `SEARXNG_ACCESS_CLIENT_SECRET`).
-2. **Wikipedia** for reference and lore. No API key needed. Returns titles + HTML-stripped snippets via the public MediaWiki search endpoint.
+1. **skyphusion-search** for corpus hits. A service binding (`SEARCH`) calls `POST /ask` on the `skyphusion-search` Worker and reads the SSE `chunks` event. With the binding absent, the chat response reports `sources.web.status` `absent`. A non-2xx response, a thrown binding, or an SSE error event reports `failed`. A 2xx stream with no chunks reports `ok` and count 0. Those three are different.
+2. **Wikipedia** for reference and lore. No API key needed. Returns titles + HTML-stripped snippets via the public MediaWiki search endpoint. Unchanged: it still answers when the web source fails or is absent.
 
-Both have an 8-second per-source timeout. If one fails or times out, the other still returns its hits. Results are persisted in the same `retrieved_context` column alongside any RAG chunks from the same turn, with a `source_type` discriminator so the UI can render web results (title + clickable URL + snippet) distinctly from doc chunks.
+Both have an 8-second per-source timeout. If one fails or times out, the other still returns its hits. The chat JSON (and the stream `done` event) includes `sources.web` and `sources.wikipedia`, each `{ status, count, error? }`. `web_search_error` is set only when the web source failed. Results are persisted in the same `retrieved_context` column alongside any RAG chunks from the same turn, with a `source_type` discriminator so the UI can render web results (title + clickable URL + snippet) distinctly from doc chunks.
 
 Per-turn opt-in: the toggle is not sticky across turns. Each turn decides independently whether to search. Web search and RAG can be on simultaneously; the model sees both in the system prompt.
 
 ### Setup
 
-Run a SearXNG instance with the JSON output format enabled, then point the worker at it (Wikipedia needs no config):
+Add the service binding to your `wrangler.toml` (already in `wrangler.example.toml`) and redeploy. Wikipedia needs no config.
 
-```
-npx wrangler secret put SEARXNG_URL
-```
-
-If the instance is behind Cloudflare Access (recommended for a private deployment), also set the service-token halves so the worker can authenticate:
-
-```
-npx wrangler secret put SEARXNG_ACCESS_CLIENT_ID
-npx wrangler secret put SEARXNG_ACCESS_CLIENT_SECRET
+```toml
+[[services]]
+binding = "SEARCH"
+service = "skyphusion-search"
 ```
 
-The worker sends them as `CF-Access-Client-Id` / `CF-Access-Client-Secret` only when both are set; leave them unset for an un-gated instance. Redeploy after setting secrets.
+The search worker accepts `POST /ask` only from an Origin on its allowlist. This worker sends `https://skyphusion.net` unless you set `SEARCH_ASK_ORIGIN` in `[vars]`. Delete the `[[services]]` block if that worker is not on your account.
 
 ### Caveats worth knowing
 
-- **Token budget.** Each turn with web search on adds roughly 2000-4000 tokens to the system prompt (up to 5 SearXNG snippets and 3 Wikipedia snippets). Long campaigns or document-heavy RAG turns may push against your model's context window.
-- **Self-hosting cost.** SearXNG is free and open-source; the only cost is running the instance. Search-every-turn would still burn context tokens, so the per-turn toggle is intentional.
+- **Token budget.** Each turn with web search on adds roughly 2000-4000 tokens to the system prompt (up to 5 corpus snippets and 3 Wikipedia snippets). Long campaigns or document-heavy RAG turns may push against your model's context window.
+- **Same-account call.** The binding does not leave your Cloudflare account and does not use a third-party search API. Search-every-turn would still burn context tokens, so the per-turn toggle is intentional.
+- **The search worker can still refuse the call.** Its `/ask` route checks Origin, and it checks Turnstile when that worker has a Turnstile secret. A refusal comes back as `sources.web.status` `failed`, with Wikipedia hits intact. A stream that succeeds and has no chunks is `ok` with count 0.
 - **No fact-checking.** Web snippets are supplementary context, not authoritative. The system prompt tells the model so. Verify anything that matters before quoting it.
 - **Wikipedia User-Agent.** The worker identifies itself per Wikimedia's policy. If you fork to a different repo name, update the UA string in `searchWikipedia` so you're not lumped in with anonymous scrapers.
 
 ### When it shines
 
 - **Worldbuilding lore**: "Norse trickster mythology," "Edo period yokai," "Welsh place name etymology." Wikipedia alone covers most of this.
-- **Current events**: who holds an office, what just happened in the news.
-- **Mixed RAG + web**: your campaign uses a setting bible (uploaded as a doc) plus real-world historical detail. Toggle both; the model sees both context blocks.
+- **This org's own docs**: how a Skyphusion repo is put together. That is what the corpus index holds. It is not a news search.
+- **Mixed RAG + web**: your campaign uses a setting bible (uploaded as a doc) plus Wikipedia. Toggle both; the model sees both context blocks.
 - **Niche reference**: "17th-century apothecary daily routine," "Victorian funeral customs," anything where you want flavor without writing it yourself.
 
 ### When to leave it off
@@ -1070,7 +1061,7 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 Built and maintained by [SkyPhusion](https://x.com/rockrockenhaus).
 
-Built on Cloudflare Workers, Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Image generation models courtesy of Black Forest Labs and Leonardo.Ai. Text-to-speech via Deepgram. Speech-to-text via OpenAI Whisper. Web search via self-hosted SearXNG and Wikipedia.
+Built on Cloudflare Workers, Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Image generation models courtesy of Black Forest Labs and Leonardo.Ai. Text-to-speech via Deepgram. Speech-to-text via OpenAI Whisper. Web search via the skyphusion-search Worker and Wikipedia.
 
 ## Hosted instance policies (play.skyphusion.org)
 

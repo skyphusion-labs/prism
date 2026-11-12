@@ -130,8 +130,8 @@ Next steps:
   5.  Set the worker secrets (access mode, the default):
         npx wrangler secret put GATEWAY_ID     (your AI Gateway slug)
         npx wrangler secret put CF_AIG_TOKEN   (AI Gateway Run token, for paid models)
-        Optional web search: SEARXNG_URL (and the two SEARXNG_ACCESS_* halves if
-        the instance is Access-gated). See the README for the full secret list.
+        Optional web search: the SEARCH service binding to skyphusion-search
+        (delete the block if you have no such worker). See the README.
   6.  Verify, then deploy:
         npm run typecheck
         npm test
