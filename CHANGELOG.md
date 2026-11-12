@@ -1,3 +1,50 @@
+## v1.3.1
+
+PATCH: new RAG vector ids carry no identity (#238, prism#232), and operator logs carry no user identity (#239, prism#233).
+
+SemVer. Both are privacy fixes. Request and response shapes do not change, including the caller-visible `retrieval_error` string. Old vector ids keep working, because every reader looks them up through D1 `chunks.vector_id`. The re-key script is optional. It is not a config change: no new binding, var, secret, or schema. A public-mode deploy needs nothing. That is a patch.
+
+**New vector ids are random.** In access mode, ingest minted each Vectorize id as `<email>:<document id>:<chunk index>`, so the raw email sat in the index, in query results, and in any tool that lists or exports ids. Both mint sites now mint `c_` plus 32 hex digits (`src/vector-id.ts`): `ingestDocument` (document upload and ZIP import) and `handleDiscordImport`. Ownership stays on the vector's `user_email` metadata and the D1 `chunks` row. Public-mode ids already carry the opaque `usr_` id, not an email. The re-key leaves those alone.
+
+**Logs carry no user identity.** The zero-join retrieval diagnostic logged the caller's `user_email` and a sample of the matched vector ids. With `VEC_METADATA_FILTER` off, the Vectorize query is global, so those ids can belong to other users, and ids minted before this release can embed an email. The log now carries counts only (`matches`, `project_id` when a project is set, `held_by_caller`, `held_by_other_users`, `not_in_d1`). It does not log an identity, a hash of an identity, or a vector id. If the census query fails, the log says `census=unavailable` and does not include the error text. The unknown `project_id` warning logs the project id only.
+
+There was no `## Unreleased` heading on `main` after v1.3.0. #238 and #239 did not write one. This section is those two commits, and nothing else has landed since the tag.
+
+### Upgrade
+
+Public-mode deploys, including play.skyphusion.org, need nothing. This release changes no binding, var, secret, or schema, and public-mode ids were already opaque.
+
+Access-mode self-hosters who want existing email-bearing ids out of Vectorize run `scripts/vectorize-rekey-vector-ids.mjs`. Run `--dry-run` first. The dry-run field `legacy` is the count of email-bearing ids. The script selects D1 rows whose `vector_id` contains `@`, upserts each vector under a new random id with the same values and metadata (nothing is re-embedded), points the D1 row at the new id, then deletes the old id. It prints counts only and is safe to re-run. Doing nothing is safe: old ids keep working next to new ones.
+
+```bash
+CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
+  node scripts/vectorize-rekey-vector-ids.mjs --index skyphusion-llm-vec --d1 <D1 database uuid> --dry-run
+CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
+  node scripts/vectorize-rekey-vector-ids.mjs --index skyphusion-llm-vec --d1 <D1 database uuid>
+```
+
+The token needs Vectorize Edit and D1 Edit. Exit 0 means every legacy id was re-keyed, or none were found. Exit 1 means gaps or conflicts. Exit 2 means it refused or could not read. Vectorize applies writes asynchronously, so retrieval for a re-keyed chunk can miss for a few seconds after its batch. Run it in a quiet window. The same steps are in MIGRATIONS.md.
+
+### Code
+
+- `src/vector-id.ts` (new): `c_` plus 32 hex digits; no identity in the id
+- `src/routes/rag.ts`: `ingestDocument` mints through `mintVectorId`; the zero-join log is counts only (`zeroJoinCensus`)
+- `src/routes/projects.ts`: Discord import mints through `mintVectorId`; the unknown `project_id` warning logs the project id only
+- `scripts/vectorize-rekey-vector-ids.mjs`, `scripts/vectorize-rekey-vector-ids.d.mts` (new): optional re-key, add before remove, counts only
+- `MIGRATIONS.md`: access-mode re-key steps, dry-run first
+- `tests/rag-vector-id.test.ts`, `tests/vectorize-rekey-vector-ids.test.ts` (new)
+- `tests/rag-retrieval-diagnostic.test.ts`: the diagnostic log carries no identity and no vector id
+- `tests/log-identity-guard.test.ts` (new): source guard over `console.*` in `src/`
+
+### Code (release)
+
+- `package.json`, `package-lock.json` -- 1.3.0 -> 1.3.1
+- `packages/create-prism/package.json` -- 1.3.0 -> 1.3.1
+- `src/version.ts` -- `VERSION` 1.3.0 -> 1.3.1
+- `CHANGELOG.md` -- this section
+
+`npm run typecheck` clean (`tsc --noEmit`, exit 0); `npm test` green (45 files, 532 passed).
+
 ## v1.3.0
 
 MINOR: web search moves from SearXNG to the skyphusion-search `SearchEntrypoint` RPC, and responses gain a `sources` status (#230).
