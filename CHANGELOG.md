@@ -1,5 +1,7 @@
 ## Unreleased
 
+DOCS: the README states prism-control-plane media retention, 30 days (prism-control-plane#91). No code changes.
+
 DOCS: state which public-mode capabilities the host funds (prism#206).
 
 The crew chose to keep the host-funded demo features and write them down. No code changes.

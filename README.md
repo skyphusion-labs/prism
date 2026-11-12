@@ -483,7 +483,7 @@ npm run deploy
 - **You (the host)** pay Cloudflare for Workers, D1, R2, and Vectorize: the storage and compute for the service itself.
 - **Each user** pays for every call that goes through the `aiRun` seam or a provider-native gateway endpoint, on their own Cloudflare account and gateway (v1.1.0): all partner models (Anthropic, xAI, Google, OpenAI, and the other Unified Billing providers, including image, video, and music), Workers AI chat, TTS, Whisper STT, FLUX.1 / Lucid Origin image gen, and the RAG embeddings (`@cf/baai/bge-base-en-v1.5`) behind document upload and retrieval.
 - **You (the host)** pay for the Workers AI paths that call the worker's `AI` binding directly because AI Gateway cannot proxy them, which means the user's account cannot be reached either: the six stream-incompatible image models (FLUX.2 Klein 9B / Klein 4B / Dev, Leonardo Phoenix 1.0, Dreamshaper 8 LCM, SDXL), Deepgram file STT, and the live-voice Flux socket. Bound this with Workers AI limits on your account or remove those models from `src/models.ts` on your instance.
-- **Control-plane users** (`pcp_` key) bill chat through prism-control-plane under its own metering, not through either account above.
+- **Control-plane users** (`pcp_` key) bill chat through prism-control-plane under its own metering, not through either account above. That plane stores no chat text. Media it generates, and reference images uploaded to it, are kept 30 days and then deleted ([its retention section](https://github.com/skyphusion-labs/prism-control-plane/blob/main/docs/CONTRACT.md)).
 
 **How it works.** In `AUTH_MODE=public`, the host funds a named set of demo capabilities on purpose. Every other inference call bills the user's own Cloudflare account.
 
