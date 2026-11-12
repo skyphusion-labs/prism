@@ -12,6 +12,26 @@
 // secret runtime paths surface meaningful errors instead of TypeScript
 // telling deployers they need fields they may legitimately not have set.
 
+// Subset of search-mcp AiSearchChunk that SearchEntrypoint.search returns.
+// Extra fields on the wire are ignored. The mapper lives in
+// src/skyphusion-search.ts.
+export interface SearchChunk {
+  score?: number;
+  text?: string;
+  item?: {
+    key?: string;
+    metadata?: { repo?: string; path?: string };
+  };
+}
+
+// Named RPC entrypoint on the skyphusion-search Worker. The binding
+// field in wrangler is `entrypoint = "SearchEntrypoint"`. The method
+// is search(question), not POST /ask.
+// https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/#named-entrypoints
+export interface SearchEntrypoint extends Rpc.WorkerEntrypointBranded {
+  search(question: string): Promise<{ chunks: SearchChunk[] }>;
+}
+
 export interface Env {
   AI: Ai;
   DB: D1Database;
@@ -57,13 +77,11 @@ export interface Env {
   // stay on Unified Billing and render opaque. No other provider reads a
   // deployer key.
   OPENAI_API_KEY?: string;
-  // Service binding to the skyphusion-search Worker (POST /ask). Optional:
-  // when the binding is absent, web search reports that source as "absent"
-  // and Wikipedia still runs. Declared in wrangler.example.toml as
-  // [[services]] binding = "SEARCH", service = "skyphusion-search".
-  SEARCH?: Fetcher;
-  // Origin header sent on POST /ask. The search worker rejects /ask unless
-  // Origin is on its allowlist. Default in code is https://skyphusion.net,
-  // which the production worker allows. Set this var to override.
-  SEARCH_ASK_ORIGIN?: string;
+  // Service binding to the skyphusion-search Worker, named entrypoint
+  // SearchEntrypoint. Optional: when the binding is absent, web search
+  // reports that source as "absent" and Wikipedia still runs. Declared
+  // in wrangler.example.toml as [[services]] binding = "SEARCH",
+  // service = "skyphusion-search", entrypoint = "SearchEntrypoint".
+  // search(question) returns { chunks }. This is not POST /ask.
+  SEARCH?: Service<SearchEntrypoint>;
 }

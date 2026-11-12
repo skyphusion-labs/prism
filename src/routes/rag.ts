@@ -11,10 +11,7 @@ import type { Env } from "../env";
 import { aiRun, type AiContext } from "../ai-binding";
 import { requireGatewayCredentials } from "../gateway-credentials";
 import { chunkText } from "../chunking";
-import {
-  askSkyphusionSearch,
-  DEFAULT_SEARCH_ASK_ORIGIN,
-} from "../skyphusion-search";
+import { askSkyphusionSearch } from "../skyphusion-search";
 import { r2Put, r2DeleteSafe } from "./shared";
 import type { RetrievedChunk, RetrievedWebResult } from "./shared";
 
@@ -419,11 +416,14 @@ export function formatRetrievalForSystemPrompt(chunks: RetrievedChunk[]): string
 // (WEB_SEARCH_TIMEOUT_MS) prevent a slow upstream from blocking the turn.
 //
 // SEARCH absent is its own status ("absent"), not a failure and not zero
-// hits. A binding error is "failed". A 2xx stream with no chunks is "ok"
-// with count 0. Callers read `sources` to tell those apart. `error` is set
-// only when the web source failed, so a Wikipedia miss does not look like
-// a web-source failure. Wikipedia itself is unchanged: same MediaWiki
-// request, and its hits still return when the web source fails or is absent.
+// hits. A thrown RPC error is "failed". The error string is the RPC
+// message: empty_question, question_too_long, rate_limited,
+// search_unavailable, or whatever else was thrown. An empty chunks
+// array is "ok" with count 0. Callers read `sources` to tell those
+// apart. `error` is set only when the web source failed, so a
+// Wikipedia miss does not look like a web-source failure. Wikipedia
+// itself is unchanged: same MediaWiki request, and its hits still
+// return when the web source fails or is absent.
 //
 // Results are persisted to the existing retrieved_context column alongside
 // RAG chunks, with source_type discriminator. The frontend renders branches
@@ -475,7 +475,6 @@ async function runWebSource(env: Env, query: string): Promise<SourceRun> {
     const hits = await askSkyphusionSearch(env.SEARCH, query, {
       timeoutMs: WEB_SEARCH_TIMEOUT_MS,
       maxResults: SEARCH_MAX_RESULTS,
-      origin: env.SEARCH_ASK_ORIGIN?.trim() || DEFAULT_SEARCH_ASK_ORIGIN,
     });
     return {
       status: "ok",

@@ -64,7 +64,7 @@ template `wrangler.example.toml`.
 
 **Optional**
 
-- `SEARCH` service binding (`service = "skyphusion-search"`) enables the opt-in
+- `SEARCH` service binding (`service = "skyphusion-search"`, `entrypoint = "SearchEntrypoint"`) enables the opt-in
   web-search source. Delete the block if you have no such worker: the source then
   reports `absent`, and keyless Wikipedia still runs.
 

@@ -131,7 +131,7 @@ Next steps:
         npx wrangler secret put GATEWAY_ID     (your AI Gateway slug)
         npx wrangler secret put CF_AIG_TOKEN   (AI Gateway Run token, for paid models)
         Optional web search: the SEARCH service binding to skyphusion-search
-        (delete the block if you have no such worker). See the README.
+        (entrypoint SearchEntrypoint; delete the block if you have no such worker). See the README.
   6.  Verify, then deploy:
         npm run typecheck
         npm test

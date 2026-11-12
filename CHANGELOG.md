@@ -1,30 +1,25 @@
 ## Unreleased
 
-Web search calls the `skyphusion-search` Worker over a service binding (`SEARCH`) instead of the retired search host. `POST /ask` returns an SSE stream; prism reads the `chunks` event. The chat response (and the stream `done` event) now includes `sources.web` and `sources.wikipedia`, each `{ status, count, error? }`. `ok` with count 0 is zero hits. `failed` is a broken call (`web_search_error` is set). `absent` means the binding is not on the worker. Wikipedia is unchanged and still returns when the web source fails or is absent. No version bump (bump-at-release, fleet-chezmoi#1766).
+Web search calls the `skyphusion-search` Worker over a service binding (`SEARCH`) with named entrypoint `SearchEntrypoint`, method `search(question)`. That replaces the retired search host. It does not call `POST /ask`: the live worker requires Turnstile on that route, so a binding fetch would fail every call. The RPC method is not a public route. There is no Origin header and no Turnstile check. It returns `{ chunks }`. Prism maps those chunks to GitHub blob links. The chat response (and the stream `done` event) includes `sources.web` and `sources.wikipedia`, each `{ status, count, error? }`. `ok` with count 0 is zero hits. `failed` is a thrown call (`web_search_error` is set only then). When the RPC throws `empty_question`, `question_too_long`, `rate_limited`, or `search_unavailable`, the error string is that code. `absent` means the binding is not on the worker. Wikipedia is unchanged and still returns when the web source fails or is absent. No version bump (bump-at-release, fleet-chezmoi#1766).
 
-Existing deployers: add this block to the gitignored `wrangler.toml`, or delete it if you have no `skyphusion-search` worker (`wrangler deploy` fails when the service does not exist). Then redeploy. No new secret.
+Existing deployers: add this block to the gitignored `wrangler.toml`, or delete it if you have no `skyphusion-search` worker (`wrangler deploy` fails when the service does not exist). Then redeploy. No new secret. No Origin var.
 
 ```toml
 [[services]]
 binding = "SEARCH"
 service = "skyphusion-search"
-```
-
-Optional, inside the existing `[vars]` table, only if your search worker allowlists a different Origin than the code default `https://skyphusion.net`:
-
-```toml
-SEARCH_ASK_ORIGIN = "https://skyphusion.net"
+entrypoint = "SearchEntrypoint"
 ```
 
 ### Code
 
-- `src/skyphusion-search.ts` (new): service-binding client, SSE `chunks` parser, corpus URL mapper
+- `src/skyphusion-search.ts` (new): service-binding RPC client and corpus URL mapper
 - `src/searxng.ts` (removed)
-- `src/routes/rag.ts`: `searchWeb` returns `sources`; web source is the binding
+- `src/routes/rag.ts`: `searchWeb` returns `sources`; web source is `SEARCH.search`
 - `src/routes/chat.ts`: `sources` on the chat JSON and the stream `done` event
 - `src/routes/shared.ts`: web `source` is `skyphusion-search` (older rows may still say `searxng`)
-- `src/env.ts`: `SEARCH?`, `SEARCH_ASK_ORIGIN?`; the old search URL and access-token fields are gone
-- `wrangler.example.toml`: `[[services]]` binding `SEARCH`
+- `src/env.ts`: `SEARCH?` is `Service<SearchEntrypoint>`; the old search URL, access token, and Origin var are gone
+- `wrangler.example.toml`: `[[services]]` binding `SEARCH`, `entrypoint = "SearchEntrypoint"`
 - `public/app.js`, `public/url-safety.js`: label and comment
 - `tests/skyphusion-search.test.ts` (new); `tests/searxng.test.ts` (removed)
 - `README.md`, `CLAUDE.md`, `docs/legal/INSTANCE-PRIVACY.md`, `packages/create-prism/README.md`, `packages/create-prism/index.js`

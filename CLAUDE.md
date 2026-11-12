@@ -109,7 +109,7 @@ Declared in `wrangler.example.toml` (the committed template; the real `wrangler.
 | `VEC` | `[[vectorize]]` (`skyphusion-llm-vec`) | RAG embeddings, 768-dim (`@cf/baai/bge-base-en-v1.5`), cosine. |
 | `ASSETS` | `[assets]` (`./public`) | Static frontend served via Workers Assets. |
 | `LONGRUN` | `[[workflows]]` (`skyphusion-longrun` / `LongRunWorkflow`) | Durable execution for long-running video/music gen (v0.12.0). |
-| `SEARCH` | `[[services]]` (`skyphusion-search`) | Opt-in web search. `POST /ask` on that Worker. Optional: omit the block and the source reports `absent`; Wikipedia still runs. |
+| `SEARCH` | `[[services]]` (`skyphusion-search`, entrypoint `SearchEntrypoint`) | Opt-in web search. RPC `search(question)`. Optional: omit the block and the source reports `absent`; Wikipedia still runs. |
 
 Also: `[observability] enabled = true` (dashboard log tailing). `compatibility_date` is pinned in the template.
 
@@ -120,7 +120,6 @@ Also: `[observability] enabled = true` (dashboard log tailing). `compatibility_d
 | `GATEWAY_ID` | Yes (private install) / No (public demo) | AI Gateway slug passed to every `env.AI.run` call. In public demo mode (v0.164.0+), omit on the worker; users set their own account id + slug via `/api/prefs` (v1.1.0: account id required). |
 | `CF_AIG_TOKEN` | Yes for paid third-party models (private) / per-user (public demo) | Unified Billing auth for Anthropic, xAI, OpenAI chat, Google, and proxied image/video/music. Bearer token sent as `cf-aig-authorization`. Users store their own token in D1 `user_prefs`; an account-scoped user token needs Workers AI Read (REST) + AI Gateway Run (provider-native). |
 | `OPENAI_API_KEY` | Optional | v0.174.0 sole BYOK carve-out: when set, `openai/gpt-image-*` call `api.openai.com` for transparent PNG. Leave unset on public play; opaque proxy otherwise. |
-| `SEARCH_ASK_ORIGIN` | Optional var | Origin header on the `SEARCH` binding's `POST /ask`. Default in code is `https://skyphusion.net` (on the production search worker allowlist). Set only when a self-hosted search worker allowlists a different origin. |
 
 ## Routes
 

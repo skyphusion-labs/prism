@@ -398,6 +398,7 @@ Web search calls the `skyphusion-search` Worker through a service binding. The c
 [[services]]
 binding = "SEARCH"
 service = "skyphusion-search"
+entrypoint = "SearchEntrypoint"
 ```
 
 Copy that block into your `wrangler.toml`. If you do not run a worker with that script name, delete the block instead: `wrangler deploy` fails when the service does not exist. With the binding absent, the response says that source is `absent` and Wikipedia still runs. Wikipedia needs no config. See [Web search](#web-search) below.
@@ -935,7 +936,7 @@ An opt-in retrieval source (v0.17.0) that retrieves at request time and folds th
 
 When you check the "search the web" toggle next to the run button (chat models only), the worker fires two parallel queries on each turn:
 
-1. **skyphusion-search** for corpus hits. A service binding (`SEARCH`) calls `POST /ask` on the `skyphusion-search` Worker and reads the SSE `chunks` event. With the binding absent, the chat response reports `sources.web.status` `absent`. A non-2xx response, a thrown binding, or an SSE error event reports `failed`. A 2xx stream with no chunks reports `ok` and count 0. Those three are different.
+1. **skyphusion-search** for corpus hits. A service binding (`SEARCH`, entrypoint `SearchEntrypoint`) calls `search(question)` on the `skyphusion-search` Worker and reads `{ chunks }`. With the binding absent, the chat response reports `sources.web.status` `absent`. A thrown call reports `failed`. When the RPC throws `empty_question`, `question_too_long`, `rate_limited`, or `search_unavailable`, the error string is that code. An empty `chunks` array reports `ok` and count 0. Those three are different.
 2. **Wikipedia** for reference and lore. No API key needed. Returns titles + HTML-stripped snippets via the public MediaWiki search endpoint. Unchanged: it still answers when the web source fails or is absent.
 
 Both have an 8-second per-source timeout. If one fails or times out, the other still returns its hits. The chat JSON (and the stream `done` event) includes `sources.web` and `sources.wikipedia`, each `{ status, count, error? }`. `web_search_error` is set only when the web source failed. Results are persisted in the same `retrieved_context` column alongside any RAG chunks from the same turn, with a `source_type` discriminator so the UI can render web results (title + clickable URL + snippet) distinctly from doc chunks.
@@ -950,15 +951,16 @@ Add the service binding to your `wrangler.toml` (already in `wrangler.example.to
 [[services]]
 binding = "SEARCH"
 service = "skyphusion-search"
+entrypoint = "SearchEntrypoint"
 ```
 
-The search worker accepts `POST /ask` only from an Origin on its allowlist. This worker sends `https://skyphusion.net` unless you set `SEARCH_ASK_ORIGIN` in `[vars]`. Delete the `[[services]]` block if that worker is not on your account.
+The binding calls the named entrypoint, not `POST /ask`. There is no Origin header and no Turnstile token. The search worker's script must export `SearchEntrypoint` (search-mcp). Delete the `[[services]]` block if that worker is not on your account.
 
 ### Caveats worth knowing
 
 - **Token budget.** Each turn with web search on adds roughly 2000-4000 tokens to the system prompt (up to 5 corpus snippets and 3 Wikipedia snippets). Long campaigns or document-heavy RAG turns may push against your model's context window.
 - **Same-account call.** The binding does not leave your Cloudflare account and does not use a third-party search API. Search-every-turn would still burn context tokens, so the per-turn toggle is intentional.
-- **The search worker can still refuse the call.** Its `/ask` route checks Origin, and it checks Turnstile when that worker has a Turnstile secret. A refusal comes back as `sources.web.status` `failed`, with Wikipedia hits intact. A stream that succeeds and has no chunks is `ok` with count 0.
+- **The search worker can still refuse the call.** `search` throws `empty_question`, `question_too_long`, `rate_limited`, or `search_unavailable`. A refusal comes back as `sources.web.status` `failed` with that error code, and Wikipedia hits stay. An empty `chunks` array is `ok` with count 0.
 - **No fact-checking.** Web snippets are supplementary context, not authoritative. The system prompt tells the model so. Verify anything that matters before quoting it.
 - **Wikipedia User-Agent.** The worker identifies itself per Wikimedia's policy. If you fork to a different repo name, update the UA string in `searchWikipedia` so you're not lumped in with anonymous scrapers.
 
