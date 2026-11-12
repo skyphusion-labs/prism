@@ -54,6 +54,18 @@ bucket_name = "skyphusion-llm"
 binding = "VEC"
 index_name = "skyphusion-llm-vec"
 
+# Opt-in web search. Service binding to the skyphusion-search Worker,
+# named entrypoint SearchEntrypoint, method search(question). Source
+# repo skyphusion-labs/search-mcp. This is not POST /ask: that route
+# checks Origin and Turnstile. Self-hosters who do not run that worker
+# delete this block: wrangler deploy fails when the named service does
+# not exist. With the binding absent, that source reports status
+# "absent" and Wikipedia still runs.
+[[services]]
+binding = "SEARCH"
+service = "skyphusion-search"
+entrypoint = "SearchEntrypoint"
+
 # Static frontend (HTML, CSS, JS).
 [assets]
 directory = "./public"
@@ -195,12 +207,5 @@ enabled = true
 #   CF_AIG_TOKEN (required for Anthropic, xAI, OpenAI chat, Google, and proxied
 #                 image/video/music on Unified Billing when using worker-level
 #                 credentials; optional in public demo mode where users supply
-#                 their own token via /api/prefs; v0.93.0+),
-#   SEARXNG_URL (optional, v0.166.0; base URL of a self-hosted SearXNG instance
-#                for the opt-in web-search source, e.g. https://search.skyphusion.org.
-#                May be a plain [vars] entry instead of a secret. Skipped when
-#                unset; Wikipedia still runs keyless),
-#   SEARXNG_ACCESS_CLIENT_ID / SEARXNG_ACCESS_CLIENT_SECRET (optional, v0.166.0;
-#                Cloudflare Access service-token halves for a gated SearXNG
-#                instance. Sent as CF-Access-Client-Id / CF-Access-Client-Secret
-#                only when BOTH are set; leave unset for an un-gated instance).
+#                 their own token via /api/prefs; v0.93.0+).
+# Web search uses the SEARCH service binding above. It does not take a secret.

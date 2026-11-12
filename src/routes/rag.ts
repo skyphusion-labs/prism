@@ -11,7 +11,7 @@ import type { Env } from "../env";
 import { aiRun, type AiContext } from "../ai-binding";
 import { requireGatewayCredentials } from "../gateway-credentials";
 import { chunkText } from "../chunking";
-import { searchSearxngWeb } from "../searxng";
+import { askSkyphusionSearch } from "../skyphusion-search";
 import { r2Put, r2DeleteSafe } from "./shared";
 import type { RetrievedChunk, RetrievedWebResult } from "./shared";
 
@@ -66,10 +66,9 @@ export function mimeFromName(name: string): string {
 }
 
 // v0.17.0: web-search retrieval limits and timeouts. Each upstream is
-// time-bounded per source so a slow SearXNG doesn't block Wikipedia.
+// time-bounded per source so a slow web source does not block Wikipedia.
 // Counts kept small to bound context-token spend when the toggle is on.
-// v0.166.0: SearXNG replaced the retired Tavily + Brave SaaS sources.
-export const SEARXNG_MAX_RESULTS   = 5;
+export const SEARCH_MAX_RESULTS    = 5;
 export const WIKIPEDIA_MAX_RESULTS = 3;
 export const WEB_SEARCH_TIMEOUT_MS = 8000;
 
@@ -430,58 +429,117 @@ export function formatRetrievalForSystemPrompt(chunks: RetrievedChunk[]): string
 
 // ---------- Web search (v0.17.0) ----------
 //
-// Optional retrieval source: SearXNG (self-hosted metasearch) for general web,
-// Wikipedia for lore / reference. Both run in parallel; failure of one doesn't
-// kill the other. Per-source timeouts (WEB_SEARCH_TIMEOUT_MS) prevent a slow
-// upstream from blocking the whole turn.
+// Optional retrieval source: the skyphusion-search Worker (service binding
+// SEARCH) for corpus hits, Wikipedia for lore / reference. Both run in
+// parallel; failure of one does not kill the other. Per-source timeouts
+// (WEB_SEARCH_TIMEOUT_MS) prevent a slow upstream from blocking the turn.
 //
-// SearXNG requires SEARXNG_URL; when unset, that source is silently skipped.
-// Wikipedia needs no config. (v0.166.0: SearXNG replaced the retired Tavily +
-// Brave SaaS sources; see prism#93.)
+// SEARCH absent is its own status ("absent"), not a failure and not zero
+// hits. A thrown RPC error is "failed". The error string is the RPC
+// message: empty_question, question_too_long, rate_limited,
+// search_unavailable, or whatever else was thrown. An empty chunks
+// array is "ok" with count 0. Callers read `sources` to tell those
+// apart. `error` is set only when the web source failed, so a
+// Wikipedia miss does not look like a web-source failure. Wikipedia
+// itself is unchanged: same MediaWiki request, and its hits still
+// return when the web source fails or is absent.
 //
 // Results are persisted to the existing retrieved_context column alongside
 // RAG chunks, with source_type discriminator. The frontend renders branches
 // on source_type to show the source URL for web results.
 
-export async function searchWeb(
-  env: Env,
-  query: string
-): Promise<{ results: RetrievedWebResult[]; error: string | null }> {
-  const q = query.trim();
-  if (!q) return { results: [], error: null };
+export type WebSourceStatus = "ok" | "failed" | "absent";
 
-  // Each upstream is wrapped in its own timeout + catch so a single failure
-  // doesn't abort the other. Partial results are better than nothing.
-  const searxngPromise: Promise<RetrievedWebResult[]> = env.SEARXNG_URL
-    ? searchSearxng(env, q).catch(() => [])
-    : Promise.resolve([]);
-  const wikipediaPromise: Promise<RetrievedWebResult[]> = searchWikipedia(q).catch(() => []);
-
-  const [searxng, wikipedia] = await Promise.all([searxngPromise, wikipediaPromise]);
-  const results = [...searxng, ...wikipedia];
-
-  // Empty results is fine; it just means the query didn't match anything in
-  // any source. Real per-source failures are swallowed by the .catch above
-  // so the other source can still return its hits.
-  return { results, error: null };
+export interface WebSourceReport {
+  status: WebSourceStatus;
+  count: number;
+  error?: string;
 }
 
-export async function searchSearxng(env: Env, query: string): Promise<RetrievedWebResult[]> {
-  // Access service-token headers are sent only when both halves are set, so an
-  // un-gated self-hosted instance is reached with no headers.
-  const hits = await searchSearxngWeb(env.SEARXNG_URL!, query, {
-    maxResults: SEARXNG_MAX_RESULTS,
-    timeoutMs: WEB_SEARCH_TIMEOUT_MS,
-    accessClientId: env.SEARXNG_ACCESS_CLIENT_ID,
-    accessClientSecret: env.SEARXNG_ACCESS_CLIENT_SECRET,
-  });
-  return hits.map((r): RetrievedWebResult => ({
-    source_type: "web",
-    source: "searxng",
-    url: r.url,
-    title: r.title,
-    snippet: r.snippet,
-  }));
+export interface WebSearchOutcome {
+  results: RetrievedWebResult[];
+  error: string | null;
+  sources: {
+    web: WebSourceReport;
+    wikipedia: WebSourceReport;
+  };
+}
+
+export function noWebSearch(): WebSearchOutcome {
+  return {
+    results: [],
+    error: null,
+    sources: {
+      web: { status: "ok", count: 0 },
+      wikipedia: { status: "ok", count: 0 },
+    },
+  };
+}
+
+interface SourceRun {
+  results: RetrievedWebResult[];
+  status: WebSourceStatus;
+  error?: string;
+}
+
+function reportSource(run: SourceRun): WebSourceReport {
+  const report: WebSourceReport = { status: run.status, count: run.results.length };
+  if (run.error) report.error = run.error;
+  return report;
+}
+
+async function runWebSource(env: Env, query: string): Promise<SourceRun> {
+  if (!env.SEARCH) return { results: [], status: "absent" };
+  try {
+    const hits = await askSkyphusionSearch(env.SEARCH, query, {
+      timeoutMs: WEB_SEARCH_TIMEOUT_MS,
+      maxResults: SEARCH_MAX_RESULTS,
+    });
+    return {
+      status: "ok",
+      results: hits.map((hit): RetrievedWebResult => ({
+        source_type: "web",
+        source: "skyphusion-search",
+        url: hit.url,
+        title: hit.title,
+        snippet: hit.snippet,
+        ...(hit.score !== undefined ? { score: hit.score } : {}),
+      })),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { results: [], status: "failed", error: message };
+  }
+}
+
+async function runWikipedia(query: string): Promise<SourceRun> {
+  try {
+    return { results: await searchWikipedia(query), status: "ok" };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { results: [], status: "failed", error: message };
+  }
+}
+
+export async function searchWeb(env: Env, query: string): Promise<WebSearchOutcome> {
+  const q = query.trim();
+  if (!q) return noWebSearch();
+
+  const [web, wiki] = await Promise.all([runWebSource(env, q), runWikipedia(q)]);
+  if (web.status === "failed") {
+    console.error("searchWeb: skyphusion-search failed:", web.error ?? "unknown");
+  }
+  if (wiki.status === "failed") {
+    console.error("searchWeb: wikipedia failed:", wiki.error ?? "unknown");
+  }
+  return {
+    results: [...web.results, ...wiki.results],
+    error: web.status === "failed" ? (web.error ?? "web search failed") : null,
+    sources: {
+      web: reportSource(web),
+      wikipedia: reportSource(wiki),
+    },
+  };
 }
 
 export async function searchWikipedia(query: string): Promise<RetrievedWebResult[]> {
@@ -552,7 +610,7 @@ export function stripWikipediaSnippet(html: string): string {
 
 export function webSourceSystemLabel(source: RetrievedWebResult["source"]): string {
   switch (source) {
-    case "searxng": return "Web";
+    case "skyphusion-search": return "Web";
     case "wikipedia": return "Wikipedia";
   }
 }

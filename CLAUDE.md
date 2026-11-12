@@ -22,8 +22,9 @@ video / tts / stt / music / voice; re-count from code if it drifts). The interes
 patterns, not the model count: every modality funnels through `env.AI.run()` (the unified AI binding)
 or gateway provider endpoints with **Cloudflare AI Gateway Unified Billing**. Sole deployer BYOK
 exception: optional `OPENAI_API_KEY` for transparent `openai/gpt-image-*` PNG only; chat and all other
-providers stay on Unified Billing. Opt-in web search retrieves from self-hosted SearXNG
-(`SEARXNG_URL`) plus keyless Wikipedia. **Conversation compact** (v0.175.7 train):
+providers stay on Unified Billing. Opt-in web search retrieves from the
+`skyphusion-search` Worker (service binding `SEARCH`) plus keyless Wikipedia.
+**Conversation compact** (v0.175.7 train):
 `POST|DELETE /api/conversations/:id/compact` summarizes older turns for model context; UI transcript
 unchanged.
 
@@ -108,6 +109,7 @@ Declared in `wrangler.example.toml` (the committed template; the real `wrangler.
 | `VEC` | `[[vectorize]]` (`skyphusion-llm-vec`) | RAG embeddings, 768-dim (`@cf/baai/bge-base-en-v1.5`), cosine. |
 | `ASSETS` | `[assets]` (`./public`) | Static frontend served via Workers Assets. |
 | `LONGRUN` | `[[workflows]]` (`skyphusion-longrun` / `LongRunWorkflow`) | Durable execution for long-running video/music gen (v0.12.0). |
+| `SEARCH` | `[[services]]` (`skyphusion-search`, entrypoint `SearchEntrypoint`) | Opt-in web search. RPC `search(question)`. Optional: omit the block and the source reports `absent`; Wikipedia still runs. |
 
 Also: `[observability] enabled = true` (dashboard log tailing). `compatibility_date` is pinned in the template.
 
@@ -118,8 +120,6 @@ Also: `[observability] enabled = true` (dashboard log tailing). `compatibility_d
 | `GATEWAY_ID` | Yes (private install) / No (public demo) | AI Gateway slug passed to every `env.AI.run` call. In public demo mode (v0.164.0+), omit on the worker; users set their own account id + slug via `/api/prefs` (v1.1.0: account id required). |
 | `CF_AIG_TOKEN` | Yes for paid third-party models (private) / per-user (public demo) | Unified Billing auth for Anthropic, xAI, OpenAI chat, Google, and proxied image/video/music. Bearer token sent as `cf-aig-authorization`. Users store their own token in D1 `user_prefs`; an account-scoped user token needs Workers AI Read (REST) + AI Gateway Run (provider-native). |
 | `OPENAI_API_KEY` | Optional | v0.174.0 sole BYOK carve-out: when set, `openai/gpt-image-*` call `api.openai.com` for transparent PNG. Leave unset on public play; opaque proxy otherwise. |
-| `SEARXNG_URL` | Optional | v0.166.0; base URL of a self-hosted SearXNG instance for opt-in web search (the Skyphusion Labs instance at `search.skyphusion.org` was retired 2026-09 and the name no longer resolves; the hosted play instance runs Wikipedia-only web search, and `docs/legal/INSTANCE-PRIVACY.md` says so). May be a `[vars]` entry or a secret. Silently skipped when unset; Wikipedia still runs keyless. |
-| `SEARXNG_ACCESS_CLIENT_ID` / `SEARXNG_ACCESS_CLIENT_SECRET` | Optional | v0.166.0; Cloudflare Access service-token halves for a gated SearXNG instance. Sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret` only when both are set (leave unset for an un-gated instance). |
 
 ## Routes
 

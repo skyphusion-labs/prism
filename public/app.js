@@ -880,7 +880,7 @@ function renderRetrievedChunksHTML(chunks) {
       if (c.source_type === "web") {
         const score = (typeof c.score === "number") ? ` \u00b7 score ${c.score.toFixed(3)}` : "";
         const sourceLabel =
-          c.source === "searxng" ? "web" :
+          c.source === "searxng" || c.source === "skyphusion-search" ? "web" :
           c.source === "wikipedia" ? "wikipedia" : "web";
         return `
         <details class="retrieved-chunk retrieved-web">
@@ -1438,7 +1438,7 @@ async function run() {
     if (m.type === "chat" && useDocsCheckbox.checked && state.documentCount > 0) {
       requestBody.use_docs = true;
     }
-    // v0.17.0: web search. Chat models only; SearXNG + Wikipedia when toggled (v0.166.0).
+    // v0.17.0: web search. Chat models only; skyphusion-search + Wikipedia when toggled.
     if (m.type === "chat" && useWebSearchCheckbox.checked) {
       requestBody.use_web_search = true;
     }

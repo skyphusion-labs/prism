@@ -20,6 +20,31 @@ CI: the hosted deploy (`deploy.yml`) renders `VEC_METADATA_FILTER = "on"` and re
 
 FEAT: RAG retrieval can filter by user inside Vectorize (skyphusion-labs/fleet-chezmoi#1636). With `VEC_METADATA_FILTER = "on"`, `retrieveContext` adds `filter: { user_email }` to the Vectorize query, so a user's top-K is drawn from their own vectors instead of a global top-K that the D1 join can empty out on a shared index. The D1 join still scopes every result. **Off by default:** the filter needs a `user_email` metadata index, plus a re-upsert of vectors written before that index existed (metadata indexes are not retroactive). New `scripts/vectorize-backfill-metadata.mjs` does the re-upsert from D1 `chunks.vector_id`, with no re-embedding: it refuses without the index, prints counts only, and is safe to re-run. The index creation step is now in README, MIGRATIONS.md, `wrangler.example.toml` and create-prism. Existing deployments: follow the new MIGRATIONS.md section before setting the var.
 
+Web search calls the `skyphusion-search` Worker over a service binding (`SEARCH`) with named entrypoint `SearchEntrypoint`, method `search(question)`. That replaces the retired search host. It does not call `POST /ask`: the live worker requires Turnstile on that route, so a binding fetch would fail every call. The RPC method is not a public route. There is no Origin header and no Turnstile check. It returns `{ chunks }`. Prism maps those chunks to GitHub blob links. The chat response (and the stream `done` event) includes `sources.web` and `sources.wikipedia`, each `{ status, count, error? }`. `ok` with count 0 is zero hits. `failed` is a thrown call (`web_search_error` is set only then). When the RPC throws `empty_question`, `question_too_long`, `rate_limited`, or `search_unavailable`, the error string is that code. `absent` means the binding is not on the worker. Wikipedia is unchanged and still returns when the web source fails or is absent. No version bump (bump-at-release, fleet-chezmoi#1766).
+
+Existing deployers: add this block to the gitignored `wrangler.toml`, or delete it if you have no `skyphusion-search` worker (`wrangler deploy` fails when the service does not exist). Then redeploy. No new secret. No Origin var.
+
+```toml
+[[services]]
+binding = "SEARCH"
+service = "skyphusion-search"
+entrypoint = "SearchEntrypoint"
+```
+
+### Code
+
+- `src/skyphusion-search.ts` (new): service-binding RPC client and corpus URL mapper
+- `src/searxng.ts` (removed)
+- `src/routes/rag.ts`: `searchWeb` returns `sources`; web source is `SEARCH.search`
+- `src/routes/chat.ts`: `sources` on the chat JSON and the stream `done` event
+- `src/routes/shared.ts`: web `source` is `skyphusion-search` (older rows may still say `searxng`)
+- `src/env.ts`: `SEARCH?` is `Service<SearchEntrypoint>`; the old search URL, access token, and Origin var are gone
+- `wrangler.example.toml`: `[[services]]` binding `SEARCH`, `entrypoint = "SearchEntrypoint"`
+- `public/app.js`, `public/url-safety.js`: label and comment
+- `tests/skyphusion-search.test.ts` (new); `tests/searxng.test.ts` (removed)
+- `README.md`, `CLAUDE.md`, `docs/legal/INSTANCE-PRIVACY.md`, `packages/create-prism/README.md`, `packages/create-prism/index.js`
+- `CHANGELOG.md` -- this entry
+
 DOCS: the README states prism-control-plane media retention, 30 days (prism-control-plane#91). No code changes.
 
 DOCS: state which public-mode capabilities the host funds (prism#206).

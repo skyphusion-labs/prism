@@ -12,6 +12,26 @@
 // secret runtime paths surface meaningful errors instead of TypeScript
 // telling deployers they need fields they may legitimately not have set.
 
+// Subset of search-mcp AiSearchChunk that SearchEntrypoint.search returns.
+// Extra fields on the wire are ignored. The mapper lives in
+// src/skyphusion-search.ts.
+export interface SearchChunk {
+  score?: number;
+  text?: string;
+  item?: {
+    key?: string;
+    metadata?: { repo?: string; path?: string };
+  };
+}
+
+// Named RPC entrypoint on the skyphusion-search Worker. The binding
+// field in wrangler is `entrypoint = "SearchEntrypoint"`. The method
+// is search(question), not POST /ask.
+// https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/#named-entrypoints
+export interface SearchEntrypoint extends Rpc.WorkerEntrypointBranded {
+  search(question: string): Promise<{ chunks: SearchChunk[] }>;
+}
+
 export interface Env {
   AI: Ai;
   DB: D1Database;
@@ -68,14 +88,11 @@ export interface Env {
   // stay on Unified Billing and render opaque. No other provider reads a
   // deployer key.
   OPENAI_API_KEY?: string;
-  // v0.166.0: base URL of the self-hosted SearXNG instance for the optional
-  // web-search retrieval source (our deploy: https://search.skyphusion.org).
-  // Optional: when unset, the SearXNG source is silently skipped (Wikipedia,
-  // which needs no config, still runs). May be a plain [vars] entry or a secret.
-  SEARXNG_URL?: string;
-  // v0.166.0: Cloudflare Access service-token halves for a gated SearXNG
-  // instance. Sent as CF-Access-Client-Id / CF-Access-Client-Secret ONLY when
-  // both are set; a self-hoster running an un-gated instance leaves them unset.
-  SEARXNG_ACCESS_CLIENT_ID?: string;
-  SEARXNG_ACCESS_CLIENT_SECRET?: string;
+  // Service binding to the skyphusion-search Worker, named entrypoint
+  // SearchEntrypoint. Optional: when the binding is absent, web search
+  // reports that source as "absent" and Wikipedia still runs. Declared
+  // in wrangler.example.toml as [[services]] binding = "SEARCH",
+  // service = "skyphusion-search", entrypoint = "SearchEntrypoint".
+  // search(question) returns { chunks }. This is not POST /ask.
+  SEARCH?: Service<SearchEntrypoint>;
 }
