@@ -13,6 +13,7 @@ import { requireGatewayCredentials } from "../gateway-credentials";
 import { chunkText } from "../chunking";
 import { askSkyphusionSearch } from "../skyphusion-search";
 import { r2Put, r2DeleteSafe } from "./shared";
+import { mintVectorId } from "../vector-id";
 import type { RetrievedChunk, RetrievedWebResult } from "./shared";
 
 // ---------- RAG: document ingestion (Pass 1) ----------
@@ -660,7 +661,7 @@ export async function ingestDocument(env: Env, userEmail: string, filename: stri
   // Store raw bytes in R2 for audit / future re-processing.
   const r2Key = await r2Put(env, "in", mime, bytes, userEmail);
 
-  // Insert document row first so we have its ID for vector_id generation.
+  // Insert document row first so we have its ID for the chunk metadata.
   const docInsert = await env.DB.prepare(
     `INSERT INTO documents
        (user_email, filename, mime, r2_key, size_bytes, total_chars, chunk_count)
@@ -677,7 +678,7 @@ export async function ingestDocument(env: Env, userEmail: string, filename: stri
 
   // Embed in batches and upsert to Vectorize. We tag every vector with
   // user_email + document_id so we can filter on retrieval and clean up on delete.
-  // Vector IDs are scoped: `${userEmail}:${docId}:${chunkIndex}`.
+  // Vector ids are random and carry no identity (src/vector-id.ts, prism#232).
   const vectorIdsWritten: string[] = [];
   const chunkRowsToInsert: {
     chunk_index: number;
@@ -697,7 +698,7 @@ export async function ingestDocument(env: Env, userEmail: string, filename: stri
 
       const vectorizePayload = batch.map((c, i) => {
         const idx = b + i;
-        const vid = `${userEmail}:${docId}:${idx}`;
+        const vid = mintVectorId();
         chunkRowsToInsert.push({
           chunk_index: idx,
           text: c.text,
