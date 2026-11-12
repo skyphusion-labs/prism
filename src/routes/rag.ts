@@ -256,6 +256,26 @@ export function vecMetadataFilterOn(env: Pick<Env, "VEC_METADATA_FILTER">): bool
   return v === "on" || v === "1" || v === "true";
 }
 
+// Ownership census for the zero-join diagnostic (prism#233). Returns a log
+// fragment of counts only: no identity and no vector id ever leaves here.
+async function zeroJoinCensus(env: Env, userEmail: string, ids: string[]): Promise<string> {
+  try {
+    const placeholders = ids.map(() => "?").join(",");
+    const row = await env.DB.prepare(
+      `SELECT COUNT(*) AS held, COALESCE(SUM(user_email = ?), 0) AS own
+         FROM chunks WHERE vector_id IN (${placeholders})`
+    )
+      .bind(userEmail, ...ids)
+      .first<{ held: number; own: number }>();
+    if (!row) return "census=unavailable";
+    const held = Number(row.held) || 0;
+    const own = Number(row.own) || 0;
+    return `held_by_caller=${own} held_by_other_users=${held - own} not_in_d1=${Math.max(0, ids.length - held)}`;
+  } catch {
+    return "census=unavailable";
+  }
+}
+
 export async function retrieveContext(
   env: Env,
   userEmail: string,
@@ -358,21 +378,23 @@ export async function retrieveContext(
     //      documents are members of the requested project.
     // Two messages, deliberately carrying different things.
     //
-    // The Vectorize query above is global: it has no metadata filter, because
-    // the tenant scope is the D1 join (see the note at the top of this
-    // section, which is why this works without a Vectorize metadata index).
-    // So `ids` holds whatever the shared index returned, and vector ids are
-    // minted as `${userEmail}:${docId}:${chunkIndex}`. On a deployment with
-    // more than one tenant, ids in that list can belong to somebody else --
-    // which is precisely the case this branch exists to report on.
-    //
-    // The operator diagnostic keeps them. It is what makes a silent retrieval
-    // failure debuggable, and it goes to a log the operator already owns.
-    const idSample = ids.slice(0, 3).join(", ");
-    const scope = projectId !== undefined ? ` project_id=${projectId},` : "";
+    // OPERATOR LOG (prism#233): counts and opaque row ids only, never an
+    // identity. The Vectorize query can be global (VEC_METADATA_FILTER off),
+    // so the matched ids can belong to other users, and pre-prism#232 ids
+    // embed an email. Neither the ids nor the caller's identity are logged.
+    // An unkeyed hash of an email is not a substitute: it can be reversed by
+    // hashing candidate addresses. The census below answers the question the
+    // old log was for ("were these vectors written under another identity?")
+    // with counts: how many matched ids D1 holds for this caller, for other
+    // users, and not at all.
+    const census = await zeroJoinCensus(env, userEmail, ids);
+    const scope = projectId !== undefined ? ` project_id=${projectId}` : "";
     console.warn(
       "retrieveContext:",
-      `Vectorize returned ${matches.length} matches but D1 join returned 0. user_email='${userEmail}',${scope} sample vector_ids=[${idSample}]. Check whether vectors were upserted under a different user identity, or whether the project has any document members.`,
+      `zero-join matches=${matches.length}${scope} ${census}. ` +
+        "held_by_other_users > 0: vectors were written under a different identity. " +
+        "held_by_caller > 0 with a project: the matched documents are not members of the project. " +
+        "not_in_d1 > 0: vectors with no D1 chunk row.",
     );
 
     // The caller gets a true statement about their own retrieval and nothing

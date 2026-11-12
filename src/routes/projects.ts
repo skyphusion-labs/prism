@@ -122,7 +122,7 @@ export async function resolveProjectForChat(
       .first<ProjectRow>();
     if (!project) {
       console.warn(
-        `Chat referenced unknown project_id=${body.project_id} for user_email='${userEmail}'; ` +
+        `Chat referenced unknown project_id=${body.project_id} (not found for this caller); ` +
         `falling back to no-project semantics (no system prompt fallback, no retrieval scoping).`
       );
     } else {
